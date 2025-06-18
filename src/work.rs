@@ -7,8 +7,8 @@ use trait_async::trait_async;
 
 use crate::task::{ManagesTasks, Task, TaskError, TaskOutput, TaskStatus};
 
-const POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(15);
-const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
+const POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(10);
+const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[trait_async]
 pub trait RunsTasks {
@@ -61,14 +61,13 @@ impl RunsTasks for Worker {
                         }
                         // No pending tasks found
                         Ok(None) => {
+                            info!("No pending tasks found, sleeping {} sec ...", POLLING_INTERVAL_NO_TASKS.as_secs());
                             select! {
                                 _ = token.cancelled() => {
                                     warn!("Worker was stopped ...");
                                     return;
                                 }
-                                _ = tokio::time::sleep(POLLING_INTERVAL_NO_TASKS) => {
-                                    info!("No pending tasks found, sleeping...");
-                                }
+                                _ = tokio::time::sleep(POLLING_INTERVAL_NO_TASKS) => {}
                             }
                         }
                         // Unexpected error when fetching a task
