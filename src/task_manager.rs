@@ -1,8 +1,9 @@
+use crate::task::{Task, TaskError, TaskOutput};
+use mockall::automock;
 use trait_async::trait_async;
 
-use crate::task::{Task, TaskError, TaskOutput};
-
 #[trait_async]
+#[automock]
 pub trait ManagesTasks: Send + Sync {
     async fn fetch(&self) -> Result<Option<Task>, TaskError>;
     async fn submit_result(&self, task: TaskOutput) -> Result<(), TaskError>;
