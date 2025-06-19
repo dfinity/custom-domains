@@ -1,11 +1,11 @@
 use derive_new::new;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use trait_async::trait_async;
 
 #[derive(Debug, Error)]
 pub enum TaskError {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Domain(pub String);
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ pub struct Task {
     pub failures: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TaskStatus {
     Succeeded,
     TimedOut,
@@ -34,11 +34,4 @@ pub enum TaskStatus {
 pub struct TaskOutput {
     pub task: Task,
     pub status: TaskStatus,
-}
-
-#[trait_async]
-pub trait ManagesTasks: Send + Sync {
-    async fn fetch(&self) -> Result<Option<Task>, TaskError>;
-    async fn submit_result(&self, task: TaskOutput) -> Result<(), TaskError>;
-    async fn try_add(&self, task: Task) -> Result<(), TaskError>;
 }

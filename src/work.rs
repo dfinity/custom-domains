@@ -5,10 +5,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use trait_async::trait_async;
 
-use crate::task::{ManagesTasks, Task, TaskError, TaskOutput, TaskStatus};
+use crate::{
+    task::{Task, TaskError, TaskOutput, TaskStatus},
+    task_manager::ManagesTasks,
+};
 
 const POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(10);
-const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(20);
+const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[trait_async]
 pub trait RunsTasks {
