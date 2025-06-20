@@ -6,8 +6,8 @@ use tracing::{error, info, warn};
 use trait_async::trait_async;
 
 use crate::{
-    task::{Task, TaskError, TaskOutput, TaskStatus},
-    task_manager::ManagesTasks,
+    repository::{Repository, RepositoryError},
+    task::{Task, TaskOutput, TaskStatus},
 };
 
 const POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(10);
@@ -19,7 +19,7 @@ pub trait RunsTasks {
 }
 
 pub struct Worker {
-    pub task_manager: Arc<dyn ManagesTasks>,
+    pub state: Arc<dyn Repository>,
     pub token: CancellationToken,
 }
 
@@ -28,7 +28,7 @@ impl RunsTasks for Worker {
     async fn run(&self) {
         loop {
             let token = self.token.clone();
-            let task_manager = self.task_manager.clone();
+            let task_manager = self.state.clone();
 
             tokio::select! {
                 // Stop the worker upon cancellation
@@ -37,7 +37,7 @@ impl RunsTasks for Worker {
                     return;
                 }
                 // Poll for a pending task
-                task = task_manager.fetch() => {
+                task = task_manager.fetch_task() => {
                     match task {
                         // Pending task found
                         Ok(Some(task)) => {
@@ -53,7 +53,7 @@ impl RunsTasks for Worker {
                                 result = execute(task) => {
                                     match result {
                                         Ok(result) => {
-                                            let _ = task_manager.submit_result(result).await;
+                                            let _ = task_manager.submit_task_result(result).await;
                                         }
                                         Err(err) => {
                                             error!("Failed to execute task: {:?}", err);
@@ -84,7 +84,7 @@ impl RunsTasks for Worker {
     }
 }
 
-async fn execute(mut task: Task) -> Result<TaskOutput, TaskError> {
+async fn execute(mut task: Task) -> Result<TaskOutput, RepositoryError> {
     info!("start execution of task {:?} started", task);
     sleep(Duration::from_secs(10)).await;
     info!("end execution of task {:?} started", task);

@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    task::{Domain, Task, TaskError, TaskName},
-    task_manager::ManagesTasks,
+    repository::{Repository, RepositoryError},
+    task::{Domain, Task, TaskName},
 };
 
 #[derive(Clone)]
 pub struct AppState {
-    pub task_manager: Arc<dyn ManagesTasks>,
+    pub state: Arc<dyn Repository>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -20,19 +25,33 @@ pub struct PostPayload {
 }
 
 pub async fn post_handler(
-    state: State<AppState>,
+    State(AppState { state }): State<AppState>,
     Json(PostPayload { domain }): Json<PostPayload>,
 ) -> impl IntoResponse {
     let task = Task::new(TaskName::Create, domain, 0);
 
-    match state.task_manager.try_add(task).await {
-        Ok(()) => (StatusCode::ACCEPTED, Json(json!({}))),
+    match state.try_add_task(task).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
         Err(err) => match err {
-            TaskError::AlreadyCreated => {
+            RepositoryError::TaskAlreadyCreated => {
                 let body = json!({"error": "resource was already created"});
-                (StatusCode::CONFLICT, Json(body))
+                (StatusCode::CONFLICT, Json(body)).into_response()
             }
         },
+    }
+}
+
+pub async fn get_handler(
+    Path(domain): Path<Domain>,
+    State(AppState { state }): State<AppState>,
+) -> impl IntoResponse {
+    match state.get_entry(domain).await {
+        Ok(Some(entry)) => {
+            let body = json!({ "status": entry.status });
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_err) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -51,12 +70,12 @@ mod tests {
 
     use crate::{
         api::{AppState, post_handler},
-        task::{Domain, Task, TaskError, TaskName},
-        task_manager::{ManagesTasks, MockManagesTasks},
+        repository::{MockRepository, Repository, RepositoryError},
+        task::{Domain, Task, TaskName},
     };
 
-    fn create_test_router(task_manager: Arc<dyn ManagesTasks>) -> Router {
-        let app_state = AppState { task_manager };
+    fn create_test_router(repository: Arc<dyn Repository>) -> Router {
+        let app_state = AppState { state: repository };
         Router::new()
             .route("/domains", post(post_handler))
             .with_state(app_state)
@@ -64,17 +83,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_accepted_and_conflict() {
-        let mut mock_task_manager = MockManagesTasks::new();
+        let mut mock_repository = MockRepository::new();
         let expected_task = Task::new(TaskName::Create, Domain("example.org".to_string()), 0);
-        mock_task_manager
-            .expect_try_add()
+        mock_repository
+            .expect_try_add_task()
             .withf(move |task| *task == expected_task)
             .returning(|_| Box::pin(async { Ok(()) }));
-        mock_task_manager
-            .expect_try_add()
-            .returning(|_| Box::pin(async { Err(TaskError::AlreadyCreated) }));
+        mock_repository
+            .expect_try_add_task()
+            .returning(|_| Box::pin(async { Err(RepositoryError::TaskAlreadyCreated) }));
 
-        let router = create_test_router(Arc::new(mock_task_manager));
+        let router = create_test_router(Arc::new(mock_repository));
 
         // Status accepted 202
         let body = json!({"domain":"example.org"});

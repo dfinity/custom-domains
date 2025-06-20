@@ -1,12 +1,5 @@
 use derive_new::new;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum TaskError {
-    #[error("Task already created")]
-    AlreadyCreated,
-}
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Domain(pub String);
