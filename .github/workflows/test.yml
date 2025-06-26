@@ -1,0 +1,37 @@
+name: "Code tests"
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - labeled
+  merge_group:
+    types: [checks_requested]
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always # colorized output in logs
+  CARGO_NET_RETRY: 10 # retries fetching Rust crates on network failures
+  SCCACHE_GHA_ENABLED: "true" # enables github actions-specific logic in sccache
+  RUSTC_WRAPPER: "sccache" # wraps the Rust compiler to use sccache for caching
+
+jobs:
+  test-rust:
+    name: "Test Rust Project"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.8
+      - name: "Run Clippy (Lint)"
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: "Run Cargo Tests"
+        run: cargo test --locked
