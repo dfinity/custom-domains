@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -13,6 +14,12 @@ use crate::{
     repository::{Repository, RepositoryError},
     task::{Domain, Task, TaskName},
 };
+
+#[derive(Serialize)]
+pub enum RegistrationStatus {
+    Processing,
+    Registered,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,15 +35,16 @@ pub async fn post_handler(
     State(AppState { state }): State<AppState>,
     Json(PostPayload { domain }): Json<PostPayload>,
 ) -> impl IntoResponse {
-    let task = Task::new(TaskName::Create, domain, 0);
+    let task = Task::new(TaskName::Create, domain);
 
     match state.try_add_task(task).await {
         Ok(()) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
         Err(err) => match err {
-            RepositoryError::TaskAlreadyCreated => {
+            RepositoryError::TaskAlreadyExists => {
                 let body = json!({"error": "resource was already created"});
                 (StatusCode::CONFLICT, Json(body)).into_response()
             }
+            _ => todo!(),
         },
     }
 }
@@ -45,9 +53,12 @@ pub async fn get_handler(
     Path(domain): Path<Domain>,
     State(AppState { state }): State<AppState>,
 ) -> impl IntoResponse {
-    match state.get_entry(domain).await {
+    match state.get_domain(domain).await {
         Ok(Some(entry)) => {
-            let body = json!({ "status": entry.status });
+            let status = entry.task.map_or(RegistrationStatus::Registered, |_| {
+                RegistrationStatus::Processing
+            });
+            let body = json!({ "status": status, "certificate": entry.certificate });
             (StatusCode::OK, Json(body)).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
@@ -55,47 +66,65 @@ pub async fn get_handler(
     }
 }
 
+pub async fn delete_handler(
+    Path(domain): Path<Domain>,
+    State(AppState { state }): State<AppState>,
+) -> impl IntoResponse {
+    let task = Task::new(TaskName::Delete, domain);
+
+    match state.try_add_task(task).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
+        Err(err) => match err {
+            RepositoryError::DomainNotFound => {
+                let body = json!({"error": "resource was not found"});
+                (StatusCode::NOT_FOUND, Json(body)).into_response()
+            }
+            _ => todo!(),
+        },
+    }
+}
+
+pub fn create_router(repository: Arc<dyn Repository>) -> Router {
+    let app_state = AppState { state: repository };
+    Router::new()
+        .route("/domains", post(post_handler))
+        .route("/domains/{:id}/status", get(get_handler))
+        .route("/domains/{:id}", delete(delete_handler))
+        .with_state(app_state)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use axum::{
-        Router,
         body::{Body, to_bytes},
         http::{Request, StatusCode},
-        routing::post,
     };
     use serde_json::json;
     use tower::util::ServiceExt;
 
     use crate::{
-        api::{AppState, post_handler},
-        repository::{MockRepository, Repository, RepositoryError},
+        api::create_router,
+        repository::{MockRepository, RepositoryError},
         task::{Domain, Task, TaskName},
     };
-
-    fn create_test_router(repository: Arc<dyn Repository>) -> Router {
-        let app_state = AppState { state: repository };
-        Router::new()
-            .route("/domains", post(post_handler))
-            .with_state(app_state)
-    }
 
     #[tokio::test]
     async fn test_post_accepted_and_conflict() {
         let mut mock_repository = MockRepository::new();
-        let expected_task = Task::new(TaskName::Create, Domain("example.org".to_string()), 0);
+        let expected_task = Task::new(TaskName::Create, Domain("example.org".to_string()));
         mock_repository
             .expect_try_add_task()
             .withf(move |task| *task == expected_task)
             .returning(|_| Box::pin(async { Ok(()) }));
         mock_repository
             .expect_try_add_task()
-            .returning(|_| Box::pin(async { Err(RepositoryError::TaskAlreadyCreated) }));
+            .returning(|_| Box::pin(async { Err(RepositoryError::TaskAlreadyExists) }));
 
-        let router = create_test_router(Arc::new(mock_repository));
+        let router = create_router(Arc::new(mock_repository));
 
-        // Status accepted 202
+        // Status 202, accepted
         let body = json!({"domain":"example.org"});
 
         let request = Request::builder()
@@ -108,7 +137,7 @@ mod tests {
         let response = router.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::ACCEPTED);
 
-        // Status conflict 409
+        // Status 409, conflict
         let body = json!({"domain":"example_1.org"});
 
         let request = Request::builder()

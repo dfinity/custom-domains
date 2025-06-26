@@ -2,11 +2,16 @@ use candid::Principal;
 use reqwest::{Client, Method, Request, Url};
 use thiserror::Error;
 use trust_dns_resolver::{
-    AsyncResolver, error::ResolveErrorKind, name_server::ConnectionProvider, proto::rr::RecordType,
+    AsyncResolver,
+    config::{ResolverConfig, ResolverOpts},
+    error::ResolveErrorKind,
+    name_server::{ConnectionProvider, TokioConnectionProvider},
+    proto::rr::RecordType,
 };
 
 use anyhow::anyhow;
 
+const DELEGATION_DOMAIN: &str = "icp2.io";
 const ACME_CHALLENGE_PREFIX: &str = "_acme-challenge";
 const CANISTER_ID_PREFIX: &str = "_canister-id";
 
@@ -33,6 +38,15 @@ pub enum ValidationError {
 pub struct Validator<T: ConnectionProvider> {
     delegation_domain: String,
     resolver: AsyncResolver<T>,
+}
+
+impl Default for Validator<TokioConnectionProvider> {
+    fn default() -> Self {
+        Self {
+            delegation_domain: DELEGATION_DOMAIN.to_string(),
+            resolver: AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
+        }
+    }
 }
 
 impl<T: ConnectionProvider> Validator<T> {
@@ -62,18 +76,18 @@ impl<T: ConnectionProvider> Validator<T> {
         self.validate_no_txt_challenge(domain).await?;
         self.validate_cname_delegation(domain).await?;
         let canister_id = self.validate_canister_mapping(domain).await?;
-        self.validate_canister(canister_id, domain).await?;
+        self.validate_canister_owner(canister_id, domain).await?;
 
         Ok(canister_id)
     }
 
-    async fn validate_canister(
+    async fn validate_canister_owner(
         &self,
         canister_id: Principal,
         domain: &str,
     ) -> Result<(), ValidationError> {
         // Verify domain name is stored inside the canister, confirming canister ownership
-        // TODO: verify ic-certification is handled
+        // TODO: verify ic-certification is handled already
         let client = Client::builder()
             .build()
             .map_err(|err| ValidationError::UnexpectedError(err.into()))?;
@@ -101,6 +115,7 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 
     async fn validate_no_txt_challenge(&self, domain: &str) -> Result<(), ValidationError> {
+        // TODO: first try to remove all existing txt records?
         let txt_src = format!("{}.{}.", ACME_CHALLENGE_PREFIX, domain);
 
         match self.resolver.lookup(&txt_src, RecordType::TXT).await {

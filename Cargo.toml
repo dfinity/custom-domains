@@ -10,6 +10,9 @@ axum = "0.8.4"
 axum-server = "0.7.2"
 candid = "0.10.14"
 derive-new = "0.7.0"
+ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", features = [
+    "acme_dns",
+] }
 mockall = "0.13.1"
 reqwest = "0.12.20"
 serde = { version = "1.0.219", features = ["derive"] }

@@ -16,18 +16,17 @@ pub enum TaskName {
 pub struct Task {
     pub name: TaskName,
     pub domain_name: Domain,
-    pub failures: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskStatus {
     Succeeded,
-    TimedOut,
     Failed,
 }
 
-#[derive(Debug, Clone)]
-pub struct TaskOutput {
+#[derive(Debug, Clone, new)]
+pub struct TaskResult {
     pub task: Task,
     pub status: TaskStatus,
+    pub certificate: Option<Vec<u8>>,
 }
