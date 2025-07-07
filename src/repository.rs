@@ -1,31 +1,52 @@
-use derive_new::new;
+use fqdn::FQDN;
 use mockall::automock;
 use thiserror::Error;
 use trait_async::trait_async;
 
-use crate::task::{Domain, Task, TaskName, TaskResult};
+use crate::{
+    task::{InputTask, ScheduledTask, TaskKind, TaskResult},
+    time::Timestamp,
+};
 
-#[derive(Debug, Clone, new)]
+#[derive(Debug, Clone, Default)]
 pub struct DomainEntry {
-    pub task: Option<TaskName>,
+    pub task: Option<TaskKind>,
+    pub created_at: Timestamp,
+    pub taken_at: Option<Timestamp>,
     pub certificate: Option<Vec<u8>>,
+    pub not_before: Option<Timestamp>,
+    pub not_after: Option<Timestamp>,
+}
+
+impl DomainEntry {
+    pub fn new(task: TaskKind, created_at: Timestamp) -> Self {
+        Self {
+            task: Some(task),
+            created_at,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Error)]
 pub enum RepositoryError {
-    #[error("Task already exists")]
-    TaskAlreadyExists,
-    #[error("Domain not found")]
-    DomainNotFound,
+    #[error("Another task is in progress for domain: {0}")]
+    AnotherTaskInProgress(FQDN),
+    #[error("Certificate already issued for domain: {0}")]
+    CertificateAlreadyIssued(FQDN),
+    #[error("Domain not found: {0}")]
+    DomainNotFound(FQDN),
+    #[error("Failed to submit result of a non-existing task with ID: {0}")]
+    NonExistingTaskSubmitted(Timestamp),
     #[error(transparent)]
-    UnexpectedError(#[from] anyhow::Error),
+    InternalError(#[from] anyhow::Error),
 }
 
 #[trait_async]
 #[automock]
 pub trait Repository: Send + Sync {
-    async fn get_domain(&self, domain: Domain) -> Result<Option<DomainEntry>, RepositoryError>;
-    async fn fetch_next_task(&self) -> Result<Option<Task>, RepositoryError>;
+    async fn get_domain(&self, domain: &FQDN) -> Result<Option<DomainEntry>, RepositoryError>;
+    async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError>;
     async fn submit_task_result(&self, task: TaskResult) -> Result<(), RepositoryError>;
-    async fn try_add_task(&self, task: Task) -> Result<(), RepositoryError>;
+    async fn try_add_task(&self, task: InputTask) -> Result<(), RepositoryError>;
 }

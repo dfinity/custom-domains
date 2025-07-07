@@ -1,21 +1,30 @@
 use derive_new::new;
-use serde::{Deserialize, Serialize};
+use fqdn::FQDN;
+use strum::{self, Display, EnumIter, EnumString};
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct Domain(pub String);
+use crate::time::Timestamp;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskName {
-    Create,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumIter, EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub enum TaskKind {
+    Issue,
     Renew,
     Update,
     Delete,
 }
 
+/// A task submitted by user for further scheduling and execution.
 #[derive(Debug, Clone, PartialEq, Eq, new)]
-pub struct Task {
-    pub name: TaskName,
-    pub domain_name: Domain,
+pub struct InputTask {
+    pub kind: TaskKind,
+    pub domain: FQDN,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, new)]
+pub struct ScheduledTask {
+    pub kind: TaskKind,
+    pub domain: FQDN,
+    pub id: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,9 +33,26 @@ pub enum TaskStatus {
     Failed,
 }
 
+/// The result of task execution submitted by a worker back to the repository.
+///
+/// Contains all necessary information about task completion: status, outputs, etc.
 #[derive(Debug, Clone, new)]
 pub struct TaskResult {
-    pub task: Task,
+    pub domain: FQDN,
     pub status: TaskStatus,
-    pub certificate: Option<Vec<u8>>,
+    pub output: TaskOutput,
+    pub task_id: Timestamp,
+}
+
+#[derive(Debug, Clone)]
+pub enum TaskOutput {
+    Issue(IssueCertificateOutput),
+    Delete,
+}
+
+#[derive(Debug, Clone, new, Default)]
+pub struct IssueCertificateOutput {
+    pub certificate: Vec<u8>,
+    pub not_before: Timestamp,
+    pub not_after: Timestamp,
 }

@@ -8,7 +8,7 @@ use ic_bn_lib::{
     },
 };
 use reqwest::Url;
-use std::{env, sync::Arc};
+use std::{env, sync::Arc, time::Duration};
 
 const CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4/";
 const INSECURE_TLS: bool = false;
@@ -32,7 +32,11 @@ pub async fn create_acme_client() -> Result<Client> {
         .create_account("mailto:test_account@testing.org")
         .await?;
 
-    let client = builder.build().await?;
+    let client = builder
+        .with_order_timeout(Duration::from_secs(120))
+        .with_token_timeout(Duration::from_secs(120))
+        .build()
+        .await?;
 
     Ok(client)
 }

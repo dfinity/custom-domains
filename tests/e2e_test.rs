@@ -6,7 +6,9 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, Response, StatusCode},
 };
-use custom_domains::{api::create_router, helpers::retry_async, state::State, work::Worker};
+use custom_domains::{
+    api::create_router, helpers::retry_async, state::State, time::MockTime, work::Worker,
+};
 use serde_json::json;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
@@ -109,7 +111,8 @@ async fn basic_registration_scenario() {
     env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
     setup_tracing();
     // Initialize router
-    let state = Arc::new(State::default());
+    let mock_time = Arc::new(MockTime::new(1));
+    let state = Arc::new(State::new(mock_time));
     let router = create_router(state.clone());
 
     info!("user submits domain={domain} for registration");
