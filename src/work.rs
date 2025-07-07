@@ -1,19 +1,23 @@
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Error;
+use anyhow::Context;
 use derive_new::new;
+use fqdn::FQDN;
+use pem::parse_many;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+use x509_parser::parse_x509_certificate;
 
 use crate::{
     acme::create_acme_client,
     repository::Repository,
-    task::{Task, TaskName, TaskResult, TaskStatus},
+    task::{IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
+    time::Timestamp,
 };
 
 const POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(15);
-const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(120);
+const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(250);
 
 #[derive(new)]
 pub struct Worker {
@@ -81,48 +85,117 @@ impl Worker {
     }
 }
 
-async fn execute(task: Task) -> Result<TaskResult, Error> {
+async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
     use crate::validation::Validator;
 
-    let domain: &str = &task.domain_name.0;
+    let domain = task.domain;
+    let task_id = task.id;
 
-    info!("executing task_name={:?} for domain {domain}", task.name);
+    info!(
+        domain = %domain,
+        task_execution = %task.kind,
+    );
 
-    match task.name {
-        TaskName::Create => {
+    match task.kind {
+        TaskKind::Issue => {
             let validator = Validator::default();
-            match validator.validate(domain).await {
-                Ok(canister_id) => {
-                    // TODO: try to delete challenge records upfront
-                    sleep(Duration::from_secs(10)).await;
-                    info!("validation for domain {domain} and canister {canister_id} succeeded");
-                    let acme_client = create_acme_client().await?;
-                    let certificate = acme_client.issue(&vec![domain.into()], None).await?;
+            match validator.validate(&domain).await {
+                Ok(_) => {
+                    let output = issue_certificate(&domain).await?;
                     info!(
-                        "successfully obtained certificate for domain={domain}, certificate={:?}",
-                        certificate.cert
+                            domain = %domain,
+                            task_execution = %task.kind,
+                            output = ?output
                     );
-                    let result = TaskResult::new(
-                        task.clone(),
-                        TaskStatus::Succeeded,
-                        Some(certificate.cert),
-                    );
+                    let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
                     return Ok(result);
                 }
                 Err(err) => {
-                    error!("validation of domain {domain} failed: {err}");
+                    error!(
+                        domain = %domain,
+                        executing_task = %task.kind,
+                        "validation failed: {err}",
+                    );
                 }
             }
             todo!();
         }
-        TaskName::Renew => todo!(),
-        TaskName::Update => todo!(),
-        TaskName::Delete => {
+        TaskKind::Renew => {
+            // ATM this task is the same as `Issue`
+            let validator = Validator::default();
+            match validator.validate(&domain).await {
+                Ok(_) => {
+                    let output = issue_certificate(&domain).await?;
+                    info!(
+                            domain = %domain,
+                            task_execution = %task.kind,
+                            output = ?output
+                    );
+                    let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
+                    return Ok(result);
+                }
+                Err(err) => {
+                    error!(
+                        domain = %domain,
+                        executing_task = %task.kind,
+                        "validation failed: {err}",
+                    );
+                }
+            }
+            todo!();
+        }
+        TaskKind::Update => todo!(),
+        TaskKind::Delete => {
             // TODO: revoke certificate
-            sleep(Duration::from_secs(5)).await;
-            info!("deletion of domain {domain} succeeded");
-            let result = TaskResult::new(task.clone(), TaskStatus::Succeeded, None);
+            info!(
+                domain = %domain,
+                "deletion succeeded",
+            );
+            let result =
+                TaskResult::new(domain, TaskStatus::Succeeded, TaskOutput::Delete, task_id);
             Ok(result)
         }
     }
+}
+
+async fn issue_certificate(domain: &FQDN) -> anyhow::Result<TaskOutput> {
+    let domain = domain.to_string();
+    // Initialize ACME client
+    let acme_client = create_acme_client()
+        .await
+        .context("Failed to create ACME client")?;
+
+    // Issue certificate
+    let certificate = acme_client
+        .issue(&vec![domain.clone()], None)
+        .await
+        .context(format!("Failed to issue certificate for domain={domain}"))?;
+
+    // Parse certificate chain
+    let pem_str =
+        std::str::from_utf8(&certificate.cert).context("Certificate contains invalid UTF-8")?;
+
+    let pems = parse_many(pem_str).context("Failed to parse PEM certificates")?;
+
+    let Some(first_cert) = pems.first() else {
+        anyhow::bail!("No certificates found in PEM chain");
+    };
+
+    // Extract validity period
+    let (_, cert) = parse_x509_certificate(first_cert.contents())
+        .context("Failed to parse X509 certificate")?;
+
+    let validity = cert.validity();
+    let not_before = validity.not_before.to_datetime().unix_timestamp();
+    let not_after = validity.not_after.to_datetime().unix_timestamp();
+
+    if not_after <= not_before {
+        anyhow::bail!("Invalid certificate validity period: not_after <= not_before");
+    }
+
+    Ok(TaskOutput::Issue(IssueCertificateOutput::new(
+        certificate.cert,
+        not_before as Timestamp,
+        not_after as Timestamp,
+    )))
 }

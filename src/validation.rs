@@ -1,6 +1,8 @@
 use candid::Principal;
+use fqdn::FQDN;
 use reqwest::{Client, Method, Request, Url};
 use thiserror::Error;
+use tracing::info;
 use trust_dns_resolver::{
     AsyncResolver,
     config::{ResolverConfig, ResolverOpts},
@@ -66,17 +68,17 @@ impl<T: ConnectionProvider> Validator<T> {
         })
     }
 
-    pub async fn validate(&self, domain: &str) -> Result<Principal, ValidationError> {
-        if domain.is_empty() {
-            return Err(ValidationError::UnexpectedError(anyhow!(
-                "Domain cannot be empty"
-            )));
-        }
-
+    pub async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
         self.validate_no_txt_challenge(domain).await?;
         self.validate_cname_delegation(domain).await?;
         let canister_id = self.validate_canister_mapping(domain).await?;
         self.validate_canister_owner(canister_id, domain).await?;
+
+        info!(
+            domain = %domain,
+            canister_id = %canister_id,
+            "validation succeeded"
+        );
 
         Ok(canister_id)
     }
@@ -84,7 +86,7 @@ impl<T: ConnectionProvider> Validator<T> {
     async fn validate_canister_owner(
         &self,
         canister_id: Principal,
-        domain: &str,
+        domain: &FQDN,
     ) -> Result<(), ValidationError> {
         // Verify domain name is stored inside the canister, confirming canister ownership
         // TODO: verify ic-certification is handled already
@@ -109,12 +111,12 @@ impl<T: ConnectionProvider> Validator<T> {
             .map_err(|err| ValidationError::UnexpectedError(err.into()))?;
 
         response
-            .contains(domain)
+            .contains(&domain.to_string())
             .then_some(())
             .ok_or(ValidationError::MissingKnownDomains { id: canister_id })
     }
 
-    async fn validate_no_txt_challenge(&self, domain: &str) -> Result<(), ValidationError> {
+    async fn validate_no_txt_challenge(&self, domain: &FQDN) -> Result<(), ValidationError> {
         // TODO: first try to remove all existing txt records?
         let txt_src = format!("{}.{}.", ACME_CHALLENGE_PREFIX, domain);
 
@@ -141,7 +143,7 @@ impl<T: ConnectionProvider> Validator<T> {
         }
     }
 
-    async fn validate_cname_delegation(&self, domain: &str) -> Result<(), ValidationError> {
+    async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
         let cname_src = format!("{}.{}.", ACME_CHALLENGE_PREFIX, domain);
         let cname_dst = format!(
             "{ACME_CHALLENGE_PREFIX}.{domain}.{}.",
@@ -176,7 +178,7 @@ impl<T: ConnectionProvider> Validator<T> {
             })
     }
 
-    async fn validate_canister_mapping(&self, domain: &str) -> Result<Principal, ValidationError> {
+    async fn validate_canister_mapping(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
         let txt_src = format!("{CANISTER_ID_PREFIX}.{domain}");
 
         // Resolve TXT record
