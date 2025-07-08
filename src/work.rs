@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
+use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
 use pem::parse_many;
@@ -92,31 +93,20 @@ async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
     let domain = task.domain;
     let task_id = task.id;
 
-    info!(
-        domain = %domain,
-        task_execution = %task.kind,
-    );
+    info!(domain = %domain, task_execution = %task.kind);
 
     match task.kind {
         TaskKind::Issue => {
             let validator = Validator::default();
             match validator.validate(&domain).await {
-                Ok(_) => {
-                    let output = issue_certificate(&domain).await?;
-                    info!(
-                            domain = %domain,
-                            task_execution = %task.kind,
-                            output = ?output
-                    );
+                Ok(canister_id) => {
+                    let output = issue_certificate(&domain, canister_id).await?;
+                    info!(domain = %domain, task_execution = %task.kind, output = ?output);
                     let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
                     return Ok(result);
                 }
                 Err(err) => {
-                    error!(
-                        domain = %domain,
-                        executing_task = %task.kind,
-                        "validation failed: {err}",
-                    );
+                    error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
                 }
             }
             todo!();
@@ -125,33 +115,36 @@ async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
             // ATM this task is the same as `Issue`
             let validator = Validator::default();
             match validator.validate(&domain).await {
-                Ok(_) => {
-                    let output = issue_certificate(&domain).await?;
-                    info!(
-                            domain = %domain,
-                            task_execution = %task.kind,
-                            output = ?output
-                    );
+                Ok(canister_id) => {
+                    let output = issue_certificate(&domain, canister_id).await?;
+                    info!(domain = %domain, task_execution = %task.kind, output = ?output);
                     let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
                     return Ok(result);
                 }
                 Err(err) => {
-                    error!(
-                        domain = %domain,
-                        executing_task = %task.kind,
-                        "validation failed: {err}",
-                    );
+                    error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
                 }
             }
             todo!();
         }
-        TaskKind::Update => todo!(),
+        TaskKind::Update => {
+            let validator = Validator::default();
+            match validator.validate(&domain).await {
+                Ok(canister_id) => {
+                    let output = TaskOutput::Update(canister_id);
+                    info!(domain = %domain, task_execution = %task.kind, output = ?output);
+                    let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
+                    return Ok(result);
+                }
+                Err(err) => {
+                    error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
+                }
+            }
+            todo!();
+        }
         TaskKind::Delete => {
             // TODO: revoke certificate
-            info!(
-                domain = %domain,
-                "deletion succeeded",
-            );
+            info!(domain = %domain, "deletion succeeded");
             let result =
                 TaskResult::new(domain, TaskStatus::Succeeded, TaskOutput::Delete, task_id);
             Ok(result)
@@ -159,7 +152,7 @@ async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
     }
 }
 
-async fn issue_certificate(domain: &FQDN) -> anyhow::Result<TaskOutput> {
+async fn issue_certificate(domain: &FQDN, canister_id: Principal) -> anyhow::Result<TaskOutput> {
     let domain = domain.to_string();
     // Initialize ACME client
     let acme_client = create_acme_client()
@@ -201,6 +194,7 @@ async fn issue_certificate(domain: &FQDN) -> anyhow::Result<TaskOutput> {
     let priv_key_enc = crypt.encrypt(certificate.key.as_slice())?;
 
     Ok(TaskOutput::Issue(IssueCertificateOutput::new(
+        canister_id,
         cert_enc,
         priv_key_enc,
         not_before,

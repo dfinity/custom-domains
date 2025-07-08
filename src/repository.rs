@@ -1,3 +1,4 @@
+use candid::Principal;
 use fqdn::FQDN;
 use mockall::automock;
 use thiserror::Error;
@@ -11,6 +12,7 @@ use crate::{
 #[derive(Debug, Clone, Default)]
 pub struct DomainEntry {
     pub task: Option<TaskKind>,
+    pub canister_id: Option<Principal>,
     pub created_at: Timestamp,
     pub taken_at: Option<Timestamp>,
     pub certificate: Option<Vec<u8>>,
