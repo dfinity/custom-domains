@@ -423,7 +423,7 @@ mod tests {
 
         // Act: submit execution results for these tasks
         let cert_expiry = 1_000_000;
-        let output = TaskOutput::Issue(IssueCertificateOutput::new(vec![], 1, cert_expiry));
+        let output = TaskOutput::Issue(IssueCertificateOutput::new(vec![], vec![], 1, cert_expiry));
         let result_a = TaskResult::new(domain_a, TaskStatus::Succeeded, output.clone(), init_time);
         let result_b = TaskResult::new(domain_b, TaskStatus::Succeeded, output, init_time);
         state.submit_task_result(result_a).await?;
@@ -473,7 +473,7 @@ mod tests {
             .expect("no pending task found");
 
         // Act: submit executed task. Submission is accepted as IDs match expectations and tasks haven't expired yet
-        let output = TaskOutput::Issue(IssueCertificateOutput::new(vec![], 100, 100));
+        let output = TaskOutput::Issue(IssueCertificateOutput::new(vec![], vec![], 100, 100));
         let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task.id);
         state.submit_task_result(result).await?;
 

@@ -14,6 +14,7 @@ pub struct DomainEntry {
     pub created_at: Timestamp,
     pub taken_at: Option<Timestamp>,
     pub certificate: Option<Vec<u8>>,
+    pub private_key: Option<Vec<u8>>,
     pub not_before: Option<Timestamp>,
     pub not_after: Option<Timestamp>,
 }

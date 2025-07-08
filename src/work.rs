@@ -11,6 +11,7 @@ use x509_parser::parse_x509_certificate;
 
 use crate::{
     acme::create_acme_client,
+    crypto::{CertificateCrypto, Crypto},
     repository::Repository,
     task::{IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
     time::Timestamp,
@@ -186,16 +187,23 @@ async fn issue_certificate(domain: &FQDN) -> anyhow::Result<TaskOutput> {
         .context("Failed to parse X509 certificate")?;
 
     let validity = cert.validity();
-    let not_before = validity.not_before.to_datetime().unix_timestamp();
-    let not_after = validity.not_after.to_datetime().unix_timestamp();
+    let not_before = validity.not_before.to_datetime().unix_timestamp() as Timestamp;
+    let not_after = validity.not_after.to_datetime().unix_timestamp() as Timestamp;
 
     if not_after <= not_before {
         anyhow::bail!("Invalid certificate validity period: not_after <= not_before");
     }
 
+    // TODO: do real encryption
+    let crypt = Crypto::new();
+
+    let cert_enc = crypt.encrypt(certificate.cert.as_slice())?;
+    let priv_key_enc = crypt.encrypt(certificate.key.as_slice())?;
+
     Ok(TaskOutput::Issue(IssueCertificateOutput::new(
-        certificate.cert,
-        not_before as Timestamp,
-        not_after as Timestamp,
+        cert_enc,
+        priv_key_enc,
+        not_before,
+        not_after,
     )))
 }

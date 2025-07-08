@@ -53,6 +53,7 @@ pub enum TaskOutput {
 #[derive(Debug, Clone, new, Default)]
 pub struct IssueCertificateOutput {
     pub certificate: Vec<u8>,
+    pub private_key: Vec<u8>,
     pub not_before: Timestamp,
     pub not_after: Timestamp,
 }
