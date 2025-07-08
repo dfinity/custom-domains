@@ -38,6 +38,17 @@ impl State {
 }
 
 impl State {
+    pub fn add_entry(&self, domain: &FQDN, entry: DomainEntry) -> Result<(), RepositoryError> {
+        let mut mutex = self.storage.lock()?;
+        mutex.insert(domain.clone(), entry);
+        Ok(())
+    }
+
+    pub fn get_entry(&self, domain: &FQDN) -> Result<Option<DomainEntry>, RepositoryError> {
+        let mutex = self.storage.lock()?;
+        Ok(mutex.get(domain).cloned())
+    }
+
     /// Set the certificate field in DomainEntry.
     pub fn set_certificate_field(
         &self,
@@ -235,7 +246,7 @@ impl Repository for State {
                 // Insert new domain entry
                 mutex.insert(
                     domain.clone(),
-                    DomainEntry::new(task.kind, self.time.unix_timestamp()),
+                    DomainEntry::new(Some(task.kind), self.time.unix_timestamp()),
                 );
             }
         }
@@ -258,7 +269,7 @@ mod tests {
     use fqdn::FQDN;
 
     use crate::{
-        repository::{Repository, RepositoryError},
+        repository::{DomainEntry, Repository, RepositoryError},
         state::{CERT_RENEWAL_BEFORE_EXPIRY, State, TASK_EXPIRATION_TIMEOUT},
         task::{
             InputTask, IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult,
@@ -479,7 +490,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_submit_task_result_succeeds() -> anyhow::Result<()> {
+    async fn test_submit_issue_task_result_succeeds() -> anyhow::Result<()> {
         // Arrange: create a new repository with a domain containing an `Issue` task
         let (mock_time, state) = create_state_with_mock_time(1);
         let domain = FQDN::from_str("example.org")?;
@@ -493,7 +504,7 @@ mod tests {
             .await?
             .expect("no pending task found");
 
-        // Act: submit executed task. Submission is accepted as IDs match expectations and tasks haven't expired yet
+        // Act: submit executed task. Submission is accepted as IDs match expectations and task hasn't expired yet
         let canister_id = Principal::from_text("aaaaa-aa")?;
         let output = TaskOutput::Issue(IssueCertificateOutput::new(
             canister_id,
@@ -504,6 +515,30 @@ mod tests {
         ));
         let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task.id);
         state.submit_task_result(result).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_submit_update_task_result_succeeds() -> anyhow::Result<()> {
+        // Arrange: create a new repository with a domain containing an `Update` task
+        let (_, state) = create_state_with_mock_time(1);
+        let domain = FQDN::from_str("example.org")?;
+        let task_id = 1;
+        let entry = {
+            let mut entry = DomainEntry::new(None, 1);
+            entry.taken_at = Some(task_id);
+            entry
+        };
+        state.add_entry(&domain, entry)?;
+
+        // Act: submit executed task. Submission is accepted as IDs match expectations and task hasn't expired yet
+        let canister_id = Principal::from_text("aaaaa-aa")?;
+        let output = TaskOutput::Update(canister_id);
+        let result = TaskResult::new(domain.clone(), TaskStatus::Succeeded, output, task_id);
+        state.submit_task_result(result).await?;
+        let entry = state.get_entry(&domain)?.expect("domain not found");
+        assert_eq!(entry.canister_id, Some(canister_id));
 
         Ok(())
     }

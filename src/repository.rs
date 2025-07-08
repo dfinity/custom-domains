@@ -22,9 +22,9 @@ pub struct DomainEntry {
 }
 
 impl DomainEntry {
-    pub fn new(task: TaskKind, created_at: Timestamp) -> Self {
+    pub fn new(task: Option<TaskKind>, created_at: Timestamp) -> Self {
         Self {
-            task: Some(task),
+            task,
             created_at,
             ..Default::default()
         }
