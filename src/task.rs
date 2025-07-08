@@ -1,3 +1,4 @@
+use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
 use strum::{self, Display, EnumIter, EnumString};
@@ -47,12 +48,15 @@ pub struct TaskResult {
 #[derive(Debug, Clone)]
 pub enum TaskOutput {
     Issue(IssueCertificateOutput),
+    Update(Principal),
     Delete,
 }
 
-#[derive(Debug, Clone, new, Default)]
+#[derive(Debug, Clone, new)]
 pub struct IssueCertificateOutput {
+    pub canister_id: Principal,
     pub certificate: Vec<u8>,
+    pub private_key: Vec<u8>,
     pub not_before: Timestamp,
     pub not_after: Timestamp,
 }

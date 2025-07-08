@@ -51,6 +51,25 @@ pub async fn post_handler(
     }
 }
 
+pub async fn update_handler(
+    Path(domain): Path<String>,
+    State(AppState { state }): State<AppState>,
+) -> impl IntoResponse {
+    let domain = FQDN::from_str(&domain).expect("TODO 400");
+    let task = InputTask::new(TaskKind::Update, domain);
+
+    match state.try_add_task(task).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
+        Err(err) => match err {
+            RepositoryError::AnotherTaskInProgress(_) => {
+                let body = json!({"error": err.to_string()});
+                (StatusCode::CONFLICT, Json(body)).into_response()
+            }
+            _ => todo!(),
+        },
+    }
+}
+
 pub async fn get_handler(
     Path(domain): Path<String>,
     State(AppState { state }): State<AppState>,
@@ -94,6 +113,7 @@ pub fn create_router(repository: Arc<dyn Repository>) -> Router {
     Router::new()
         .route("/domains", post(post_handler))
         .route("/domains/{:id}/status", get(get_handler))
+        .route("/domains/{:id}/update", post(update_handler))
         .route("/domains/{:id}", delete(delete_handler))
         .with_state(app_state)
 }
