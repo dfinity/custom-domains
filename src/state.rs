@@ -504,7 +504,7 @@ mod tests {
             .await?
             .expect("no pending task found");
 
-        // Act: submit executed task. Submission is accepted as IDs match expectations and task hasn't expired yet
+        // Act: submit executed task. Submission is accepted as ID matches expectation and task hasn't expired yet
         let canister_id = Principal::from_text("aaaaa-aa")?;
         let output = TaskOutput::Issue(IssueCertificateOutput::new(
             canister_id,
@@ -526,13 +526,13 @@ mod tests {
         let domain = FQDN::from_str("example.org")?;
         let task_id = 1;
         let entry = {
-            let mut entry = DomainEntry::new(None, 1);
+            let mut entry = DomainEntry::new(Some(TaskKind::Update), 1);
             entry.taken_at = Some(task_id);
             entry
         };
         state.add_entry(&domain, entry)?;
 
-        // Act: submit executed task. Submission is accepted as IDs match expectations and task hasn't expired yet
+        // Act: submit executed task. Submission is accepted as ID matches expectation and task hasn't expired yet
         let canister_id = Principal::from_text("aaaaa-aa")?;
         let output = TaskOutput::Update(canister_id);
         let result = TaskResult::new(domain.clone(), TaskStatus::Succeeded, output, task_id);
