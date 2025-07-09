@@ -27,7 +27,7 @@ pub async fn create_acme_client() -> Result<Client> {
         .with_acme_url(acme_url)
         .with_token_manager(token_manager);
 
-    // TODO: save/load account
+    // TODO: save/load account, it should be shared between all workers, otherwise certificate revocation calls would fail
     let (builder, _) = builder
         .create_account("mailto:test_account@testing.org")
         .await?;

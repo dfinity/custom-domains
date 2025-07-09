@@ -139,7 +139,11 @@ impl Repository for State {
                     entry.taken_at.is_none().then(|| {
                         let taken_at = self.time.unix_timestamp();
                         entry.taken_at = Some(taken_at);
-                        ScheduledTask::new(task_kind, domain.clone(), taken_at)
+                        // Only `Delete` task needs certificate for revocation
+                        let certificate = (task_kind == TaskKind::Delete)
+                            .then(|| entry.certificate.clone())
+                            .flatten();
+                        ScheduledTask::new(task_kind, domain.clone(), taken_at, certificate)
                     })
                 })
             })
@@ -177,6 +181,7 @@ impl Repository for State {
                     );
                     entry.canister_id = Some(output.canister_id);
                     entry.certificate = Some(output.certificate);
+                    entry.private_key = Some(output.private_key);
                     entry.not_before = Some(output.not_before);
                     entry.not_after = Some(output.not_after);
                     entry.task = None;
@@ -441,7 +446,7 @@ mod tests {
 
         let expected_tasks: Vec<_> = domains
             .iter()
-            .map(|d| ScheduledTask::new(TaskKind::Issue, d.clone(), 1))
+            .map(|d| ScheduledTask::new(TaskKind::Issue, d.clone(), 1, None))
             .collect();
 
         assert_eq!(tasks, expected_tasks);
@@ -481,7 +486,7 @@ mod tests {
 
         let expected_tasks: Vec<_> = domains
             .iter()
-            .map(|d| ScheduledTask::new(TaskKind::Renew, d.clone(), new_time))
+            .map(|d| ScheduledTask::new(TaskKind::Renew, d.clone(), new_time, None))
             .collect();
 
         assert_eq!(tasks, expected_tasks);

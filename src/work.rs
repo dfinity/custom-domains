@@ -4,14 +4,18 @@ use anyhow::Context;
 use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
+use ic_bn_lib::tls::acme::{
+    client::Client,
+    instant_acme::{RevocationReason, RevocationRequest},
+};
 use pem::parse_many;
+use rustls_pki_types::CertificateDer;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use x509_parser::parse_x509_certificate;
 
 use crate::{
-    acme::create_acme_client,
     crypto::{CertificateCrypto, Crypto},
     repository::Repository,
     task::{IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
@@ -24,6 +28,7 @@ const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(250);
 #[derive(new)]
 pub struct Worker {
     pub state: Arc<dyn Repository>,
+    pub acme_client: Arc<Client>,
     pub token: CancellationToken,
 }
 
@@ -53,7 +58,7 @@ impl Worker {
                                     error!("Task timed out");
                                     // TODO: submit some result
                                 }
-                                result = execute(task) => {
+                                result = execute(task, self.acme_client.clone()) => {
                                     match result {
                                         Ok(result) => {
                                             let _ = task_manager.submit_task_result(result).await;
@@ -87,7 +92,7 @@ impl Worker {
     }
 }
 
-async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
+async fn execute(task: ScheduledTask, acme_client: Arc<Client>) -> anyhow::Result<TaskResult> {
     use crate::validation::Validator;
 
     let domain = task.domain;
@@ -100,7 +105,7 @@ async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
             let validator = Validator::default();
             match validator.validate(&domain).await {
                 Ok(canister_id) => {
-                    let output = issue_certificate(&domain, canister_id).await?;
+                    let output = issue_certificate(&domain, canister_id, acme_client).await?;
                     info!(domain = %domain, task_execution = %task.kind, output = ?output);
                     let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
                     return Ok(result);
@@ -116,7 +121,7 @@ async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
             let validator = Validator::default();
             match validator.validate(&domain).await {
                 Ok(canister_id) => {
-                    let output = issue_certificate(&domain, canister_id).await?;
+                    let output = issue_certificate(&domain, canister_id, acme_client).await?;
                     info!(domain = %domain, task_execution = %task.kind, output = ?output);
                     let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
                     return Ok(result);
@@ -143,21 +148,50 @@ async fn execute(task: ScheduledTask) -> anyhow::Result<TaskResult> {
             todo!();
         }
         TaskKind::Delete => {
-            // TODO: revoke certificate
-            info!(domain = %domain, "deletion succeeded");
-            let result =
-                TaskResult::new(domain, TaskStatus::Succeeded, TaskOutput::Delete, task_id);
+            // Revoke certificate
+            if let Some(certificate) = task.certificate {
+                // Parse certificate chain
+                let pem_str = std::str::from_utf8(&certificate)
+                    .context("Certificate contains invalid UTF-8")?;
+
+                let pems = parse_many(pem_str).context("Failed to parse PEM certificates")?;
+
+                let Some(first_cert) = pems.first() else {
+                    anyhow::bail!("No certificates found in PEM chain");
+                };
+
+                // Only the end-entity certificate is needed to initiate revocation
+                let cert_der = CertificateDer::from(first_cert.contents().to_vec());
+
+                let revocation_request = RevocationRequest {
+                    certificate: &cert_der,
+                    reason: Some(RevocationReason::CessationOfOperation),
+                };
+
+                acme_client
+                    .revoke(revocation_request)
+                    .await
+                    .context("revocation failed")?;
+
+                info!(domain = %domain, "revocation succeeded");
+            }
+
+            let task_output = TaskOutput::Delete;
+
+            info!(domain = %domain, task_execution = %task.kind, output = ?task_output);
+
+            let result = TaskResult::new(domain, TaskStatus::Succeeded, task_output, task_id);
             Ok(result)
         }
     }
 }
 
-async fn issue_certificate(domain: &FQDN, canister_id: Principal) -> anyhow::Result<TaskOutput> {
+async fn issue_certificate(
+    domain: &FQDN,
+    canister_id: Principal,
+    acme_client: Arc<Client>,
+) -> anyhow::Result<TaskOutput> {
     let domain = domain.to_string();
-    // Initialize ACME client
-    let acme_client = create_acme_client()
-        .await
-        .context("Failed to create ACME client")?;
 
     // Issue certificate
     let certificate = acme_client

@@ -26,6 +26,7 @@ pub struct ScheduledTask {
     pub kind: TaskKind,
     pub domain: FQDN,
     pub id: Timestamp,
+    pub certificate: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -117,8 +117,7 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 
     async fn validate_no_txt_challenge(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        // TODO: first try to remove all existing txt records?
-        let txt_src = format!("{}.{}.", ACME_CHALLENGE_PREFIX, domain);
+        let txt_src = format!("{ACME_CHALLENGE_PREFIX}.{domain}.");
 
         match self.resolver.lookup(&txt_src, RecordType::TXT).await {
             Ok(lookup) => {
@@ -144,7 +143,7 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 
     async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        let cname_src = format!("{}.{}.", ACME_CHALLENGE_PREFIX, domain);
+        let cname_src = format!("{ACME_CHALLENGE_PREFIX}.{domain}.");
         let cname_dst = format!(
             "{ACME_CHALLENGE_PREFIX}.{domain}.{}.",
             self.delegation_domain
