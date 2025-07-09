@@ -7,7 +7,8 @@ use axum::{
     http::{Request, Response, StatusCode},
 };
 use custom_domains::{
-    api::create_router, helpers::retry_async, state::State, time::MockTime, work::Worker,
+    acme::create_acme_client, api::create_router, helpers::retry_async, state::State,
+    time::MockTime, work::Worker,
 };
 use serde_json::json;
 use tokio::spawn;
@@ -34,7 +35,7 @@ pub async fn submit_registration(router: &Router, domain: &str) -> Response<Body
 }
 
 async fn get_status(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/domains/{}/status", domain);
+    let uri = format!("/domains/{domain}/status");
 
     let request = Request::builder()
         .method("GET")
@@ -47,7 +48,7 @@ async fn get_status(router: &Router, domain: &str) -> Response<Body> {
 }
 
 async fn delete_domain(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/domains/{}", domain);
+    let uri = format!("/domains/{domain}");
 
     let request = Request::builder()
         .method("DELETE")
@@ -104,7 +105,7 @@ fn setup_tracing() {
 
 #[tokio::test]
 #[ignore]
-async fn basic_registration_scenario() {
+async fn basic_registration_scenario() -> anyhow::Result<()> {
     // For this domain a certificate will be obtained
     let domain = &env::var("DOMAIN_NAME").expect("DOMAIN_NAME var is not set");
     // API cloudflare token is required to perform an acme dns-01 challenge
@@ -128,7 +129,12 @@ async fn basic_registration_scenario() {
 
     info!("starting worker, which peforms all tasks ...");
     let token = CancellationToken::new();
-    let worker = Worker::new(state, token.clone());
+    let acme_client = Arc::new(
+        create_acme_client()
+            .await
+            .context("Failed to create ACME client")?,
+    );
+    let worker = Worker::new(state, acme_client, token.clone());
     spawn(async move { worker.run().await });
 
     info!("awaiting the worker to obtain a certificate ...");
@@ -142,4 +148,6 @@ async fn basic_registration_scenario() {
     await_registration_deletion(router, domain).await;
 
     token.cancel();
+
+    Ok(())
 }
