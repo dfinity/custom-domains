@@ -45,6 +45,14 @@ pub enum RepositoryError {
     InternalError(#[from] anyhow::Error),
 }
 
+#[derive(Debug, Clone)]
+pub struct RegisteredDomain {
+    pub domain: FQDN,
+    pub canister_id: Principal,
+    pub cert_enc: Vec<u8>,
+    pub private_key_enc: Vec<u8>,
+}
+
 #[trait_async]
 #[automock]
 pub trait Repository: Send + Sync {
@@ -52,4 +60,16 @@ pub trait Repository: Send + Sync {
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError>;
     async fn submit_task_result(&self, task: TaskResult) -> Result<(), RepositoryError>;
     async fn try_add_task(&self, task: InputTask) -> Result<(), RepositoryError>;
+    /// Fetches all registered domains with valid certificates if any domain has changed (deleted/updated/or received new certificate) since the given timestamp.
+    ///
+    /// # Arguments
+    /// * `last_sync` - Optional timestamp to check for any domain modifications since this time.
+    ///
+    /// # Returns
+    /// * `Ok(Some(Vec<RegisteredDomain>))` containing all domains with valid certificates, if `last_sync` is `None` or if changes happened after `last_sync`.
+    /// * `Ok(None)` if no domains have changed since `last_sync`.
+    async fn all_registrations(
+        &self,
+        last_sync: Option<Timestamp>,
+    ) -> Result<Option<Vec<RegisteredDomain>>, RepositoryError>;
 }
