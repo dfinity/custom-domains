@@ -1,42 +1,102 @@
-use anyhow::Result;
+use std::{sync::Arc, time::Duration};
+
 use ic_bn_lib::{
     http::dns::{Options, Resolver},
     tls::acme::{
         AcmeUrl,
         client::{Client, ClientBuilder},
-        dns::{TokenManagerDns, cloudflare::Cloudflare},
+        dns::TokenManagerDns,
     },
 };
+
+use ic_bn_lib::tls::acme::dns::cloudflare::Cloudflare;
 use reqwest::Url;
-use std::{env, sync::Arc, time::Duration};
 
-const CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4/";
-const INSECURE_TLS: bool = false;
+const DEFAULT_POLL_ORDER_TIMEOUT: Duration = Duration::from_secs(140);
+const DEFAULT_POLL_TOKEN_TIMEOUT: Duration = Duration::from_secs(140);
+const DEFAULT_CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4/";
 
-pub async fn create_acme_client() -> Result<Client> {
-    let api_token = env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
-    let cloudflare_url = Url::parse(CLOUDFLARE_URL)?;
-    let cloudflare = Arc::new(Cloudflare::new(cloudflare_url, api_token)?);
-    let resolver_opts = Options::default();
-    let resolver = Resolver::new(resolver_opts);
-    let token_manager = Arc::new(TokenManagerDns::new(Arc::new(resolver), cloudflare));
-    // TODO: make configurable
-    let acme_url = AcmeUrl::LetsEncryptStaging;
+#[derive(Debug, Clone)]
+pub struct AcmeClientConfig {
+    /// Cloudflare API token for authentication
+    pub cloudflare_api_token: String,
+    /// Base URL for Cloudflare API requests
+    pub cloudflare_url: Url,
+    /// ACME provider URL, e.g. staging letsencrypt https://acme-staging-v02.api.letsencrypt.org/directory
+    pub acme_url: AcmeUrl,
+    /// Whether to allow insecure TLS connections
+    pub insecure_tls: bool,
+    /// Timeout for polling ACME order status
+    pub poll_order_timeout: Duration,
+    /// Timeout for token polling, which verifies the dns record is correct
+    pub poll_token_timeout: Duration,
+}
 
-    let builder = ClientBuilder::new(INSECURE_TLS)
-        .with_acme_url(acme_url)
-        .with_token_manager(token_manager);
+impl AcmeClientConfig {
+    pub fn new(cloudflare_api_token: String) -> Self {
+        AcmeClientConfig {
+            cloudflare_api_token,
+            cloudflare_url: Url::parse(DEFAULT_CLOUDFLARE_URL).unwrap(),
+            acme_url: AcmeUrl::LetsEncryptStaging,
+            insecure_tls: false,
+            poll_order_timeout: DEFAULT_POLL_ORDER_TIMEOUT,
+            poll_token_timeout: DEFAULT_POLL_TOKEN_TIMEOUT,
+        }
+    }
 
-    // TODO: save/load account, it should be shared between all workers, otherwise certificate revocation calls would fail
-    let (builder, _) = builder
-        .create_account("mailto:test_account@testing.org")
-        .await?;
+    pub fn with_cloudflare_url(mut self, url: Url) -> Self {
+        self.cloudflare_url = url;
+        self
+    }
 
-    let client = builder
-        .with_order_timeout(Duration::from_secs(120))
-        .with_token_timeout(Duration::from_secs(120))
-        .build()
-        .await?;
+    pub fn with_acme_url(mut self, acme_url: AcmeUrl) -> Self {
+        self.acme_url = acme_url;
+        self
+    }
 
-    Ok(client)
+    pub fn with_insecure_tls(mut self, insecure: bool) -> Self {
+        self.insecure_tls = insecure;
+        self
+    }
+
+    pub fn with_poll_order_timeout(mut self, timeout: Duration) -> Self {
+        self.poll_order_timeout = timeout;
+        self
+    }
+
+    pub fn with_poll_token_timeout(mut self, timeout: Duration) -> Self {
+        self.poll_token_timeout = timeout;
+        self
+    }
+}
+
+impl AcmeClientConfig {
+    pub async fn build(self) -> anyhow::Result<Client> {
+        let cloudflare = Arc::new(Cloudflare::new(
+            self.cloudflare_url,
+            self.cloudflare_api_token,
+        )?);
+
+        // DNS resolver
+        let resolver_opts = Options::default();
+        let dns_resolver = Resolver::new(resolver_opts);
+        let token_manager = Arc::new(TokenManagerDns::new(Arc::new(dns_resolver), cloudflare));
+
+        let builder = ClientBuilder::new(self.insecure_tls)
+            .with_acme_url(self.acme_url.clone())
+            .with_token_manager(token_manager);
+
+        // TODO: save/load account, it should be shared between all workers, otherwise certificate revocation calls would fail
+        let (builder, _) = builder
+            .create_account("mailto:test_account@testing.org")
+            .await?;
+
+        let client = builder
+            .with_order_timeout(self.poll_order_timeout)
+            .with_token_timeout(self.poll_token_timeout)
+            .build()
+            .await?;
+
+        Ok(client)
+    }
 }

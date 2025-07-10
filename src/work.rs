@@ -22,18 +22,34 @@ use crate::{
     time::Timestamp,
 };
 
-const POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(15);
-const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(250);
+const DEFAULT_POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(20);
+const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(180);
+
+#[derive(Debug, Clone, new)]
+pub struct WorkerConfig {
+    pub polling_interval_no_tasks: Duration,
+    pub task_timeout: Duration,
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        WorkerConfig::new(DEFAULT_POLLING_INTERVAL_NO_TASKS, DEFAULT_TASK_TIMEOUT)
+    }
+}
 
 #[derive(new)]
 pub struct Worker {
     pub state: Arc<dyn Repository>,
     pub acme_client: Arc<Client>,
     pub token: CancellationToken,
+    pub config: WorkerConfig,
 }
 
 impl Worker {
     pub async fn run(&self) {
+        let idle_interval = self.config.polling_interval_no_tasks;
+        let task_timeout = self.config.task_timeout;
+
         loop {
             let token = self.token.clone();
             let task_manager = self.state.clone();
@@ -54,7 +70,7 @@ impl Worker {
                                     warn!("Worker was stopped ...");
                                     return;
                                 }
-                                _ = sleep(TASK_EXECUTION_TIMEOUT) => {
+                                _ = sleep(task_timeout) => {
                                     error!("Task timed out");
                                     // TODO: submit some result
                                 }
@@ -72,13 +88,13 @@ impl Worker {
                         }
                         // No pending tasks found
                         Ok(None) => {
-                            info!("No pending tasks found, sleeping {} sec ...", POLLING_INTERVAL_NO_TASKS.as_secs());
+                            info!("No pending tasks found, sleeping {} sec ...", idle_interval.as_secs());
                             select! {
                                 _ = token.cancelled() => {
                                     warn!("Worker was stopped ...");
                                     return;
                                 }
-                                _ = tokio::time::sleep(POLLING_INTERVAL_NO_TASKS) => {}
+                                _ = tokio::time::sleep(idle_interval) => {}
                             }
                         }
                         // Unexpected error when fetching a task
