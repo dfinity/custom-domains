@@ -6,23 +6,23 @@ use trait_async::trait_async;
 
 use crate::{
     task::{InputTask, ScheduledTask, TaskKind, TaskResult},
-    time::Timestamp,
+    time::UtcTimestamp,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct DomainEntry {
     pub task: Option<TaskKind>,
     pub canister_id: Option<Principal>,
-    pub created_at: Timestamp,
-    pub taken_at: Option<Timestamp>,
+    pub created_at: UtcTimestamp,
+    pub taken_at: Option<UtcTimestamp>,
     pub certificate: Option<Vec<u8>>,
     pub private_key: Option<Vec<u8>>,
-    pub not_before: Option<Timestamp>,
-    pub not_after: Option<Timestamp>,
+    pub not_before: Option<UtcTimestamp>,
+    pub not_after: Option<UtcTimestamp>,
 }
 
 impl DomainEntry {
-    pub fn new(task: Option<TaskKind>, created_at: Timestamp) -> Self {
+    pub fn new(task: Option<TaskKind>, created_at: UtcTimestamp) -> Self {
         Self {
             task,
             created_at,
@@ -40,9 +40,17 @@ pub enum RepositoryError {
     #[error("Domain not found: {0}")]
     DomainNotFound(FQDN),
     #[error("Failed to submit result of a non-existing task with ID: {0}")]
-    NonExistingTaskSubmitted(Timestamp),
+    NonExistingTaskSubmitted(UtcTimestamp),
     #[error(transparent)]
     InternalError(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Clone)]
+pub struct RegisteredDomain {
+    pub domain: FQDN,
+    pub canister_id: Principal,
+    pub cert_enc: Vec<u8>,
+    pub private_key_enc: Vec<u8>,
 }
 
 #[trait_async]
@@ -52,4 +60,8 @@ pub trait Repository: Send + Sync {
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError>;
     async fn submit_task_result(&self, task: TaskResult) -> Result<(), RepositoryError>;
     async fn try_add_task(&self, task: InputTask) -> Result<(), RepositoryError>;
+    /// Retrieves the timestamp of the last change accross all registration records.
+    async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError>;
+    /// Fetches all registered domains with valid certificates.
+    async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError>;
 }
