@@ -9,9 +9,9 @@ use tracing::{info, warn};
 use trait_async::trait_async;
 
 use crate::{
-    repository::{DomainEntry, RegisteredDomain, Repository, RepositoryError},
+    repository::{DomainEntry, Repository, RepositoryError},
     task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
-    time::{Timestamp, UnixTimestamp},
+    time::UnixTimestamp,
 };
 
 // The certificate renewal task is initiated this far ahead of the expiration
@@ -257,13 +257,6 @@ impl Repository for State {
         }
 
         Ok(())
-    }
-
-    async fn all_registrations(
-        &self,
-        _last_change_time: Option<Timestamp>,
-    ) -> Result<Option<Vec<RegisteredDomain>>, RepositoryError> {
-        todo!();
     }
 }
 
