@@ -7,8 +7,12 @@ use axum::{
     http::{Request, Response, StatusCode},
 };
 use custom_domains::{
-    acme::create_acme_client, api::create_router, helpers::retry_async, state::State,
-    time::MockTime, work::Worker,
+    acme::AcmeClientConfig,
+    api::create_router,
+    helpers::retry_async,
+    state::State,
+    time::MockTime,
+    work::{Worker, WorkerConfig},
 };
 use serde_json::json;
 use tokio::spawn;
@@ -109,7 +113,8 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     // For this domain a certificate will be obtained
     let domain = &env::var("DOMAIN_NAME").expect("DOMAIN_NAME var is not set");
     // API cloudflare token is required to perform an acme dns-01 challenge
-    env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
+    let cloudflare_api_token =
+        env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
     setup_tracing();
     // Initialize router
     let mock_time = Arc::new(MockTime::new(1));
@@ -129,12 +134,8 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
 
     info!("starting worker, which peforms all tasks ...");
     let token = CancellationToken::new();
-    let acme_client = Arc::new(
-        create_acme_client()
-            .await
-            .context("Failed to create ACME client")?,
-    );
-    let worker = Worker::new(state, acme_client, token.clone());
+    let acme_client = Arc::new(AcmeClientConfig::new(cloudflare_api_token).build().await?);
+    let worker = Worker::new(state, acme_client, token.clone(), WorkerConfig::default());
     spawn(async move { worker.run().await });
 
     info!("awaiting the worker to obtain a certificate ...");
