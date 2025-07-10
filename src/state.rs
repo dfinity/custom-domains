@@ -11,7 +11,7 @@ use trait_async::trait_async;
 use crate::{
     repository::{DomainEntry, RegisteredDomain, Repository, RepositoryError},
     task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
-    time::{Timestamp, UnixTimestamp},
+    time::{UtcTimestampProvider, UtcTimestamp},
 };
 
 // The certificate renewal task is initiated this far ahead of the expiration
@@ -24,12 +24,12 @@ const TASK_EXPIRATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub struct State {
     storage: Arc<Mutex<HashMap<FQDN, DomainEntry>>>,
-    time: Arc<dyn UnixTimestamp>,
+    time: Arc<dyn UtcTimestampProvider>,
 }
 
 impl State {
     /// Creates a new state with an empty storage and the provided time source.
-    pub fn new(time: Arc<dyn UnixTimestamp>) -> Self {
+    pub fn new(time: Arc<dyn UtcTimestampProvider>) -> Self {
         Self {
             storage: Default::default(),
             time,
@@ -259,11 +259,12 @@ impl Repository for State {
         Ok(())
     }
 
-    async fn all_registrations(
-        &self,
-        _last_change_time: Option<Timestamp>,
-    ) -> Result<Option<Vec<RegisteredDomain>>, RepositoryError> {
-        todo!();
+    async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError> {
+        todo!()
+    }
+
+    async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError> {
+        todo!()
     }
 }
 
@@ -287,10 +288,10 @@ mod tests {
             InputTask, IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult,
             TaskStatus,
         },
-        time::{MockTime, Timestamp},
+        time::{MockTime, UtcTimestamp},
     };
 
-    fn create_state_with_mock_time(init_time: Timestamp) -> (Arc<MockTime>, State) {
+    fn create_state_with_mock_time(init_time: UtcTimestamp) -> (Arc<MockTime>, State) {
         let mock_time = Arc::new(MockTime::new(init_time));
         (mock_time.clone(), State::new(mock_time))
     }

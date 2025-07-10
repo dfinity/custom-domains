@@ -19,7 +19,7 @@ use crate::{
     crypto::{CertificateCrypto, Crypto},
     repository::Repository,
     task::{IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
-    time::Timestamp,
+    time::UtcTimestamp,
 };
 
 const POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(15);
@@ -214,8 +214,8 @@ async fn issue_certificate(
         .context("Failed to parse X509 certificate")?;
 
     let validity = cert.validity();
-    let not_before = validity.not_before.to_datetime().unix_timestamp() as Timestamp;
-    let not_after = validity.not_after.to_datetime().unix_timestamp() as Timestamp;
+    let not_before = validity.not_before.to_datetime().unix_timestamp() as UtcTimestamp;
+    let not_after = validity.not_after.to_datetime().unix_timestamp() as UtcTimestamp;
 
     if not_after <= not_before {
         anyhow::bail!("Invalid certificate validity period: not_after <= not_before");

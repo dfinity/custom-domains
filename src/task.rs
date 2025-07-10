@@ -3,7 +3,7 @@ use derive_new::new;
 use fqdn::FQDN;
 use strum::{self, Display, EnumIter, EnumString};
 
-use crate::time::Timestamp;
+use crate::time::UtcTimestamp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumIter, EnumString)]
 #[strum(serialize_all = "snake_case")]
@@ -25,7 +25,7 @@ pub struct InputTask {
 pub struct ScheduledTask {
     pub kind: TaskKind,
     pub domain: FQDN,
-    pub id: Timestamp,
+    pub id: UtcTimestamp,
     pub certificate: Option<Vec<u8>>,
 }
 
@@ -43,7 +43,7 @@ pub struct TaskResult {
     pub domain: FQDN,
     pub status: TaskStatus,
     pub output: TaskOutput,
-    pub task_id: Timestamp,
+    pub task_id: UtcTimestamp,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +58,6 @@ pub struct IssueCertificateOutput {
     pub canister_id: Principal,
     pub certificate: Vec<u8>,
     pub private_key: Vec<u8>,
-    pub not_before: Timestamp,
-    pub not_after: Timestamp,
+    pub not_before: UtcTimestamp,
+    pub not_after: UtcTimestamp,
 }
