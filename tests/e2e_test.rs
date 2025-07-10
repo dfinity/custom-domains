@@ -7,12 +7,7 @@ use axum::{
     http::{Request, Response, StatusCode},
 };
 use custom_domains::{
-    acme::AcmeClientConfig,
-    api::create_router,
-    helpers::retry_async,
-    state::State,
-    time::MockTime,
-    work::{Worker, WorkerConfig},
+    acme::AcmeClientConfig, api::routes::create_router, helpers::retry_async, state::State, time::MockTime, work::{Worker, WorkerConfig}
 };
 use serde_json::json;
 use tokio::spawn;
