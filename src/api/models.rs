@@ -42,7 +42,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::InternalServerError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
-        (status, Json(ApiResponse::<()>::error(message))).into_response()
+        (status, Json(message)).into_response()
     }
 }
 
@@ -67,6 +67,12 @@ impl From<RepositoryError> for ApiError {
 pub enum RegistrationStatus {
     Processing,
     Registered,
+}
+
+#[derive(Serialize)]
+pub enum ValidationStatus {
+    ValidationSucceeded,
+    ValidationFailed(String),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
