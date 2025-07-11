@@ -11,7 +11,7 @@ use trait_async::trait_async;
 use crate::{
     repository::{DomainEntry, RegisteredDomain, Repository, RepositoryError},
     task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
-    time::{UtcTimestampProvider, UtcTimestamp},
+    time::{UtcTimestamp, UtcTimestampProvider},
 };
 
 // The certificate renewal task is initiated this far ahead of the expiration

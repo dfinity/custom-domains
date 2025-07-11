@@ -8,7 +8,7 @@ use axum::{
 };
 use custom_domains::{
     acme::AcmeClientConfig,
-    api::create_router,
+    api::routes::create_router,
     helpers::retry_async,
     state::State,
     time::MockTime,
