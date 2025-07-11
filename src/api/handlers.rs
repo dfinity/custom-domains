@@ -8,7 +8,7 @@ use tracing::info;
 use crate::{
     api::{
         backend_service::BackendService,
-        models::{ApiError, ApiResponse, PostPayload, RegistrationStatus},
+        models::{ApiError, ApiResponse, PostPayload, RegistrationStatus, ValidationStatus},
     },
     task::TaskKind,
 };
@@ -57,6 +57,25 @@ pub async fn get_handler(
     info!("Received request for domain status: {}", domain);
     let status = backend_service.get_registration_status(&domain).await?;
     Ok((StatusCode::OK, Json(ApiResponse::success(status))))
+}
+
+/// GET /domains/{id}/validate
+///
+/// Validates if the specified domain is eligible for registration.
+///
+/// This endpoint checks whether all DNS records for the given domain are correctly configured by the owner,
+/// and whether canister ownership is confirmed.
+/// Always returns 200 OK with the validation result in the response body.
+pub async fn validate_handler(
+    State(backend_service): State<BackendService>,
+    Path(domain): Path<String>,
+) -> HandlerResult<ValidationStatus> {
+    info!("Received request for domain validation: {}", domain);
+    let validation_status = backend_service.validate_domain(&domain).await?;
+    Ok((
+        StatusCode::OK,
+        Json(ApiResponse::success(validation_status)),
+    ))
 }
 
 /// DELETE /domains/{id}

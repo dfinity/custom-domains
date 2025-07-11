@@ -4,9 +4,10 @@ use std::sync::Arc;
 use derive_new::new;
 use fqdn::FQDN;
 
-use crate::api::models::{ApiError, RegistrationStatus};
+use crate::api::models::{ApiError, RegistrationStatus, ValidationStatus};
 use crate::repository::Repository;
 use crate::task::{InputTask, TaskKind};
+use crate::validation::Validator;
 
 #[derive(Clone, new)]
 pub struct BackendService {
@@ -36,6 +37,15 @@ impl BackendService {
             }),
             Ok(None) => Err(ApiError::NotFound(format!("Domain {domain} not found"))),
             Err(_) => Err(ApiError::InternalServerError("Internal error".into())),
+        }
+    }
+
+    pub async fn validate_domain(&self, domain: &str) -> Result<ValidationStatus, ApiError> {
+        let domain = parse_domain(domain)?;
+        let validator = Validator::default();
+        match validator.validate(&domain).await {
+            Ok(_) => Ok(ValidationStatus::ValidationSucceeded),
+            Err(err) => Ok(ValidationStatus::ValidationFailed(err.to_string())),
         }
     }
 }

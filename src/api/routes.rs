@@ -8,7 +8,7 @@ use axum::{
 use crate::{
     api::{
         backend_service::BackendService,
-        handlers::{create_handler, delete_handler, get_handler, update_handler},
+        handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
     },
     repository::Repository,
 };
@@ -20,6 +20,7 @@ pub fn create_router(repository: Arc<dyn Repository>) -> Router {
         .route("/domains/{:id}/status", get(get_handler))
         .route("/domains/{:id}/update", post(update_handler))
         .route("/domains/{:id}", delete(delete_handler))
+        .route("/domains/{:id}/validate", get(validate_handler))
         .with_state(backend_service)
 }
 
