@@ -6,17 +6,21 @@ use axum::{
 };
 
 use crate::{
-    api::{handlers::{get_handler, post_handler, delete_handler}, models::AppState}, repository::Repository
+    api::{
+        backend_service::BackendService,
+        handlers::{create_handler, delete_handler, get_handler, update_handler},
+    },
+    repository::Repository,
 };
 
 pub fn create_router(repository: Arc<dyn Repository>) -> Router {
-    let app_state = AppState { state: repository };
+    let backend_service = BackendService::new(repository);
     Router::new()
-        .route("/domains", post(post_handler))
+        .route("/domains", post(create_handler))
         .route("/domains/{:id}/status", get(get_handler))
-        .route("/domains/{:id}/update", post(post_handler))
+        .route("/domains/{:id}/update", post(update_handler))
         .route("/domains/{:id}", delete(delete_handler))
-        .with_state(app_state)
+        .with_state(backend_service)
 }
 
 #[cfg(test)]
@@ -32,7 +36,9 @@ mod tests {
     use tower::util::ServiceExt;
 
     use crate::{
-        api::routes::create_router, repository::{MockRepository, RepositoryError}, task::{InputTask, TaskKind}
+        api::routes::create_router,
+        repository::{MockRepository, RepositoryError},
+        task::{InputTask, TaskKind},
     };
 
     const BODY_LIMIT: usize = 5000;

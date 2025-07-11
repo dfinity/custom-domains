@@ -1,31 +1,8 @@
-use std::sync::Arc;
-
 use axum::{Json, response::IntoResponse};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::repository::Repository;
-
-#[derive(Serialize)]
-pub struct StatusResponse {
-    pub status: RegistrationStatus,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct PostPayload {
-    pub domain: String,
-}
-
-#[derive(Serialize)]
-pub enum RegistrationStatus {
-    Processing,
-    Registered,
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    pub state: Arc<dyn Repository>,
-}
+use crate::repository::RepositoryError;
 
 #[derive(Serialize)]
 pub struct ApiResponse<T> {
@@ -67,4 +44,32 @@ impl IntoResponse for ApiError {
         };
         (status, Json(ApiResponse::<()>::error(message))).into_response()
     }
+}
+
+impl From<RepositoryError> for ApiError {
+    fn from(err: RepositoryError) -> Self {
+        match err {
+            RepositoryError::CertificateAlreadyIssued(domain) => {
+                ApiError::Conflict(format!("Certificate for {domain} already issued"))
+            }
+            RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict(format!(
+                "Another task for {domain} is currently in progress"
+            )),
+            RepositoryError::DomainNotFound(domain) => {
+                ApiError::NotFound(format!("Domain {domain} not found"))
+            }
+            _ => ApiError::InternalServerError("Internal error".into()),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub enum RegistrationStatus {
+    Processing,
+    Registered,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PostPayload {
+    pub domain: String,
 }
