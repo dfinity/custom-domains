@@ -13,7 +13,7 @@ use crate::{
     task::TaskKind,
 };
 
-/// Genetic yype for all HTTP handlers.
+/// Generic type for all HTTP handlers.
 pub type HandlerResult<T> = Result<(StatusCode, Json<ApiResponse<T>>), ApiError>;
 
 /// POST /domains
