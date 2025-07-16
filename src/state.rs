@@ -9,8 +9,11 @@ use tracing::{info, warn};
 use trait_async::trait_async;
 
 use crate::{
-    repository::{DomainEntry, RegisteredDomain, Repository, RepositoryError},
-    task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
+    repository::{
+        DomainEntry, DomainStatus, RegisteredDomain, RegistrationStatus, Repository,
+        RepositoryError,
+    },
+    task::{InputTask, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult},
     time::{UtcTimestamp, UtcTimestampProvider},
 };
 
@@ -82,10 +85,37 @@ impl State {
 
 #[trait_async]
 impl Repository for State {
-    /// Retrieves a domain's entry, if it exists.
-    async fn get_domain(&self, domain: &FQDN) -> Result<Option<DomainEntry>, RepositoryError> {
+    async fn get_domain_status(
+        &self,
+        domain: &FQDN,
+    ) -> Result<Option<DomainStatus>, RepositoryError> {
         let mutex = self.storage.lock()?;
-        Ok(mutex.get(domain).cloned())
+
+        match mutex.get(domain) {
+            Some(entry) => {
+                let status = if entry.task.is_none() && entry.certificate.is_some() {
+                    RegistrationStatus::Registered
+                } else if entry.task.is_some() {
+                    RegistrationStatus::Processing
+                } else {
+                    RegistrationStatus::Failure(
+                        entry
+                            .last_failure_reason
+                            .clone()
+                            .map_or("".to_string(), |failure| failure.to_string()),
+                    )
+                };
+
+                let domain_status = DomainStatus {
+                    domain: domain.clone(),
+                    canister_id: entry.canister_id,
+                    status,
+                };
+
+                Ok(Some(domain_status))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Fetches the next task ready for execution.
@@ -169,10 +199,10 @@ impl Repository for State {
             return Err(RepositoryError::NonExistingTaskSubmitted(task_id));
         }
 
-        // Handle task result based on output and status
-        match task_result.output {
-            TaskOutput::Issue(output) => {
-                if task_result.status == TaskStatus::Succeeded {
+        // Handle task result based on the output or failure
+        if let Some(output) = task_result.output {
+            match output {
+                TaskOutput::Issue(output) => {
                     info!(
                         domain = %domain,
                         not_before = output.not_before,
@@ -186,31 +216,28 @@ impl Repository for State {
                     entry.not_after = Some(output.not_after);
                     entry.task = None;
                     entry.taken_at = None;
-                } else {
-                    // TODO: implement fail scenario
-                    todo!()
+                    entry.last_failure_reason = None;
                 }
-            }
-            TaskOutput::Delete => {
-                if task_result.status == TaskStatus::Succeeded {
+                TaskOutput::Delete => {
                     info!(
                         domain = %domain,
                         "Domain deleted"
                     );
                     mutex.remove(domain);
-                } else {
-                    // TODO: implement fail scenario
-                    todo!()
                 }
-            }
-            TaskOutput::Update(canister_id) => {
-                if task_result.status == TaskStatus::Succeeded {
+                TaskOutput::Update(canister_id) => {
                     entry.canister_id = Some(canister_id);
                     entry.task = None;
                     entry.taken_at = None;
-                } else {
-                    // TODO: implement fail scenario, should we clean the canister_id?
-                    todo!()
+                }
+            }
+        } else if let Some(failure) = task_result.failure {
+            match &failure {
+                // This is a non-recoverable error, so we delete the task. User can resubmit the request.
+                TaskFailReason::ValidationFailed(_) => {
+                    entry.last_failure_reason = Some(failure);
+                    entry.taken_at = None;
+                    entry.task = None;
                 }
             }
         }
@@ -231,7 +258,7 @@ impl Repository for State {
                 }
                 // Prevent explicit certificate re-issuance
                 // TODO: maybe useful functionality for the admin?
-                if task.kind == TaskKind::Issue {
+                if task.kind == TaskKind::Issue && entry.certificate.is_some() {
                     return Err(RepositoryError::CertificateAlreadyIssued(domain.clone()));
                 }
                 // Require existing certificate for Update task
@@ -286,10 +313,17 @@ mod tests {
         state::{CERT_RENEWAL_BEFORE_EXPIRY, State, TASK_EXPIRATION_TIMEOUT},
         task::{
             InputTask, IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult,
-            TaskStatus,
         },
         time::{MockTime, UtcTimestamp},
     };
+
+    impl State {
+        /// Retrieves the domain's entry, if it exists.
+        async fn get_domain(&self, domain: &FQDN) -> Result<Option<DomainEntry>, RepositoryError> {
+            let mutex = self.storage.lock()?;
+            Ok(mutex.get(domain).cloned())
+        }
+    }
 
     fn create_state_with_mock_time(init_time: UtcTimestamp) -> (Arc<MockTime>, State) {
         let mock_time = Arc::new(MockTime::new(init_time));
@@ -339,14 +373,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_reissue_task_fails() -> anyhow::Result<()> {
-        // Arrange: create a state repository with a completed `Issue` task
+        // Arrange: create a state repository with an issued certificate
         let (_, state) = create_state_with_mock_time(1);
         let domain = FQDN::from_str("example.org")?;
-        let task = InputTask::new(TaskKind::Issue, domain.clone());
-        state.try_add_task(task.clone()).await?;
-        state.clear_task_field(&domain)?; // unset `task` field, making the task completed
+        let entry = DomainEntry {
+            certificate: Some(vec![]),
+            ..Default::default()
+        };
+        state.add_entry(&domain, entry)?;
 
         // Act: attempt to add another `Issue` task
+        let task = InputTask::new(TaskKind::Issue, domain.clone());
         let result = state.try_add_task(task).await;
 
         // Assert: call fails with CertificateAlreadyIssued
@@ -469,8 +506,8 @@ mod tests {
             1,
             cert_expiry,
         ));
-        let result_a = TaskResult::new(domain_a, TaskStatus::Succeeded, output.clone(), init_time);
-        let result_b = TaskResult::new(domain_b, TaskStatus::Succeeded, output, init_time);
+        let result_a = TaskResult::new(domain_a, Some(output.clone()), None, init_time)?;
+        let result_b = TaskResult::new(domain_b, Some(output), None, init_time)?;
         state.submit_task_result(result_a).await?;
         state.submit_task_result(result_b).await?;
         // check no renewal tasks appeared immediately after submission
@@ -526,7 +563,7 @@ mod tests {
             100,
             100,
         ));
-        let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task.id);
+        let result = TaskResult::new(domain, Some(output), None, task.id)?;
         state.submit_task_result(result).await?;
 
         Ok(())
@@ -548,7 +585,7 @@ mod tests {
         // Act: submit executed task. Submission is accepted as ID matches expectation and task hasn't expired yet
         let canister_id = Principal::from_text("aaaaa-aa")?;
         let output = TaskOutput::Update(canister_id);
-        let result = TaskResult::new(domain.clone(), TaskStatus::Succeeded, output, task_id);
+        let result = TaskResult::new(domain.clone(), Some(output), None, task_id)?;
         state.submit_task_result(result).await?;
         let entry = state.get_entry(&domain)?.expect("domain not found");
         assert_eq!(entry.canister_id, Some(canister_id));
@@ -592,12 +629,7 @@ mod tests {
             1,
             1,
         ));
-        let task_result = TaskResult::new(
-            domain.clone(),
-            TaskStatus::Succeeded,
-            output,
-            task_to_timeout.id,
-        );
+        let task_result = TaskResult::new(domain.clone(), Some(output), None, task_to_timeout.id)?;
         let result = state.submit_task_result(task_result).await;
         // verify the submission fails
         assert!(
@@ -612,12 +644,8 @@ mod tests {
             1,
             1,
         ));
-        let valid_result = TaskResult::new(
-            domain.clone(),
-            TaskStatus::Succeeded,
-            output,
-            task_to_complete.id,
-        );
+        let valid_result =
+            TaskResult::new(domain.clone(), Some(output), None, task_to_complete.id)?;
         state.submit_task_result(valid_result).await?;
 
         Ok(())

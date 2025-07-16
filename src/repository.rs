@@ -1,17 +1,19 @@
 use candid::Principal;
 use fqdn::FQDN;
 use mockall::automock;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use trait_async::trait_async;
 
 use crate::{
-    task::{InputTask, ScheduledTask, TaskKind, TaskResult},
+    task::{InputTask, ScheduledTask, TaskFailReason, TaskKind, TaskResult},
     time::UtcTimestamp,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct DomainEntry {
     pub task: Option<TaskKind>,
+    pub last_failure_reason: Option<TaskFailReason>,
     pub canister_id: Option<Principal>,
     pub created_at: UtcTimestamp,
     pub taken_at: Option<UtcTimestamp>,
@@ -53,12 +55,34 @@ pub struct RegisteredDomain {
     pub private_key_enc: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationStatus {
+    Processing,
+    Registered,
+    Failure(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct DomainStatus {
+    pub domain: FQDN,
+    pub canister_id: Option<Principal>,
+    pub status: RegistrationStatus,
+}
+
 #[trait_async]
 #[automock]
 pub trait Repository: Send + Sync {
-    async fn get_domain(&self, domain: &FQDN) -> Result<Option<DomainEntry>, RepositoryError>;
+    // Retrieves domain status.
+    async fn get_domain_status(
+        &self,
+        domain: &FQDN,
+    ) -> Result<Option<DomainStatus>, RepositoryError>;
+    /// Fetch next pending task for execution.
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError>;
+    /// Submits task execution result.
     async fn submit_task_result(&self, task: TaskResult) -> Result<(), RepositoryError>;
+    /// Tries to submit a new task of certain kind for a domain.
     async fn try_add_task(&self, task: InputTask) -> Result<(), RepositoryError>;
     /// Retrieves the timestamp of the last change accross all registration records.
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError>;

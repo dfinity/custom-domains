@@ -12,6 +12,7 @@ use custom_domains::{
     helpers::retry_async,
     state::State,
     time::MockTime,
+    validation::Validator,
     work::{Worker, WorkerConfig},
 };
 use serde_json::json;
@@ -70,7 +71,7 @@ async fn await_registration_ready(router: &Router, domain: &str) {
         let response = get_status(router, domain).await;
         let body_bytes = to_bytes(response.into_body(), LIMIT).await.unwrap();
         let body_str = std::str::from_utf8(&body_bytes).unwrap();
-        if body_str.contains("Registered") {
+        if body_str.contains("registered") {
             info!("registration is ready: {body_str}");
             return Ok(());
         }
@@ -119,7 +120,8 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     // Initialize router
     let mock_time = Arc::new(MockTime::new(1));
     let state = Arc::new(State::new(mock_time));
-    let router = create_router(state.clone());
+    let validator = Arc::new(Validator::default());
+    let router = create_router(state.clone(), validator.clone());
 
     info!("user submits domain={domain} for registration");
     let response = submit_registration(&router, domain).await;
@@ -130,12 +132,18 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
     let body_bytes = to_bytes(response.into_body(), LIMIT).await.unwrap();
     let body_str = std::str::from_utf8(&body_bytes).unwrap();
-    assert!(body_str.contains("Processing"));
+    assert!(body_str.contains("processing"));
 
     info!("starting worker, which peforms all tasks ...");
     let token = CancellationToken::new();
     let acme_client = Arc::new(AcmeClientConfig::new(cloudflare_api_token).build().await?);
-    let worker = Worker::new(state, acme_client, token.clone(), WorkerConfig::default());
+    let worker = Worker::new(
+        state,
+        validator,
+        acme_client,
+        token.clone(),
+        WorkerConfig::default(),
+    );
     spawn(async move { worker.run().await });
 
     info!("awaiting the worker to obtain a certificate ...");

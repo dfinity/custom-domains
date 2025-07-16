@@ -1,8 +1,10 @@
 use candid::Principal;
 use fqdn::FQDN;
+use mockall::automock;
 use reqwest::{Client, Method, Request, Url};
 use thiserror::Error;
 use tracing::info;
+use trait_async::trait_async;
 use trust_dns_resolver::{
     AsyncResolver,
     config::{ResolverConfig, ResolverOpts},
@@ -37,6 +39,30 @@ pub enum ValidationError {
     UnexpectedError(#[from] anyhow::Error),
 }
 
+#[trait_async]
+#[automock]
+pub trait ValidatesDomains: Send + Sync {
+    async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError>;
+}
+
+#[trait_async]
+impl ValidatesDomains for Validator<TokioConnectionProvider> {
+    async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
+        self.validate_no_txt_challenge(domain).await?;
+        self.validate_cname_delegation(domain).await?;
+        let canister_id = self.validate_canister_mapping(domain).await?;
+        self.validate_canister_owner(canister_id, domain).await?;
+
+        info!(
+            domain = %domain,
+            canister_id = %canister_id,
+            "validation succeeded"
+        );
+
+        Ok(canister_id)
+    }
+}
+
 pub struct Validator<T: ConnectionProvider> {
     delegation_domain: String,
     resolver: AsyncResolver<T>,
@@ -66,21 +92,6 @@ impl<T: ConnectionProvider> Validator<T> {
             delegation_domain,
             resolver,
         })
-    }
-
-    pub async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
-        self.validate_no_txt_challenge(domain).await?;
-        self.validate_cname_delegation(domain).await?;
-        let canister_id = self.validate_canister_mapping(domain).await?;
-        self.validate_canister_owner(canister_id, domain).await?;
-
-        info!(
-            domain = %domain,
-            canister_id = %canister_id,
-            "validation succeeded"
-        );
-
-        Ok(canister_id)
     }
 
     async fn validate_canister_owner(

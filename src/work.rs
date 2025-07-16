@@ -18,8 +18,11 @@ use x509_parser::parse_x509_certificate;
 use crate::{
     crypto::{CertificateCrypto, Crypto},
     repository::Repository,
-    task::{IssueCertificateOutput, ScheduledTask, TaskKind, TaskOutput, TaskResult, TaskStatus},
+    task::{
+        IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult,
+    },
     time::UtcTimestamp,
+    validation::ValidatesDomains,
 };
 
 const DEFAULT_POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(20);
@@ -40,6 +43,7 @@ impl Default for WorkerConfig {
 #[derive(new)]
 pub struct Worker {
     pub state: Arc<dyn Repository>,
+    pub validator: Arc<dyn ValidatesDomains>,
     pub acme_client: Arc<Client>,
     pub token: CancellationToken,
     pub config: WorkerConfig,
@@ -74,7 +78,7 @@ impl Worker {
                                     error!("Task timed out");
                                     // TODO: submit some result
                                 }
-                                result = execute(task, self.acme_client.clone()) => {
+                                result = execute(task, self.acme_client.clone(), self.validator.clone()) => {
                                     match result {
                                         Ok(result) => {
                                             let _ = task_manager.submit_task_result(result).await;
@@ -108,61 +112,68 @@ impl Worker {
     }
 }
 
-async fn execute(task: ScheduledTask, acme_client: Arc<Client>) -> anyhow::Result<TaskResult> {
-    use crate::validation::Validator;
-
+async fn execute(
+    task: ScheduledTask,
+    acme_client: Arc<Client>,
+    validator: Arc<dyn ValidatesDomains>,
+) -> anyhow::Result<TaskResult> {
     let domain = task.domain;
     let task_id = task.id;
 
     info!(domain = %domain, task_execution = %task.kind);
 
     match task.kind {
-        TaskKind::Issue => {
-            let validator = Validator::default();
-            match validator.validate(&domain).await {
-                Ok(canister_id) => {
-                    let output = issue_certificate(&domain, canister_id, acme_client).await?;
-                    info!(domain = %domain, task_execution = %task.kind, output = ?output);
-                    let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
-                    return Ok(result);
-                }
-                Err(err) => {
-                    error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
-                }
+        TaskKind::Issue => match validator.validate(&domain).await {
+            Ok(canister_id) => {
+                let output = issue_certificate(&domain, canister_id, acme_client).await?;
+                info!(domain = %domain, task_execution = %task.kind, output = ?output);
+                TaskResult::new(domain, Some(output), None, task_id)
             }
-            todo!();
-        }
+            Err(err) => {
+                error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
+                TaskResult::new(
+                    domain,
+                    None,
+                    Some(TaskFailReason::ValidationFailed(err.to_string())),
+                    task_id,
+                )
+            }
+        },
         TaskKind::Renew => {
             // ATM this task is the same as `Issue`
-            let validator = Validator::default();
             match validator.validate(&domain).await {
                 Ok(canister_id) => {
                     let output = issue_certificate(&domain, canister_id, acme_client).await?;
                     info!(domain = %domain, task_execution = %task.kind, output = ?output);
-                    let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
-                    return Ok(result);
+                    TaskResult::new(domain, Some(output), None, task_id)
                 }
                 Err(err) => {
                     error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
+                    TaskResult::new(
+                        domain,
+                        None,
+                        Some(TaskFailReason::ValidationFailed(err.to_string())),
+                        task_id,
+                    )
                 }
             }
-            todo!();
         }
-        TaskKind::Update => {
-            let validator = Validator::default();
-            match validator.validate(&domain).await {
-                Ok(canister_id) => {
-                    let output = TaskOutput::Update(canister_id);
-                    info!(domain = %domain, task_execution = %task.kind, output = ?output);
-                    let result = TaskResult::new(domain, TaskStatus::Succeeded, output, task_id);
-                    return Ok(result);
-                }
-                Err(err) => {
-                    error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
-                }
+        TaskKind::Update => match validator.validate(&domain).await {
+            Ok(canister_id) => {
+                let output = TaskOutput::Update(canister_id);
+                info!(domain = %domain, task_execution = %task.kind, output = ?output);
+                TaskResult::new(domain, Some(output), None, task_id)
             }
-            todo!();
-        }
+            Err(err) => {
+                error!(domain = %domain, executing_task = %task.kind, "validation failed: {err}");
+                TaskResult::new(
+                    domain,
+                    None,
+                    Some(TaskFailReason::ValidationFailed(err.to_string())),
+                    task_id,
+                )
+            }
+        },
         TaskKind::Delete => {
             // Revoke certificate
             if let Some(certificate) = task.certificate {
@@ -196,8 +207,7 @@ async fn execute(task: ScheduledTask, acme_client: Arc<Client>) -> anyhow::Resul
 
             info!(domain = %domain, task_execution = %task.kind, output = ?task_output);
 
-            let result = TaskResult::new(domain, TaskStatus::Succeeded, task_output, task_id);
-            Ok(result)
+            TaskResult::new(domain, Some(task_output), None, task_id)
         }
     }
 }
