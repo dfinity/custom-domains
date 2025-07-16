@@ -24,7 +24,7 @@ use crate::{
 /// {
 ///   "status": "success",
 ///   "code": 202,
-///   "message": "Update domain registration request accepted and may take a few minutes to process",
+///   "message": "Domain registration request accepted and may take a few minutes to process",
 ///   "data": {
 ///     "domain": "example.org",
 ///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
@@ -277,12 +277,12 @@ pub async fn validate_handler(
     }
 }
 
-// /// DELETE /domains/{id}
-// ///
-// /// Deletes an existing domain registration and revokes its certificate.
-// /// Responds with 202 Accepted to indicate async revocation.
-// ///
-// /// 202 Accepted:
+//  DELETE /domains/{id}
+// 
+//  Deletes an existing domain registration and revokes its certificate.
+//  Responds with 202 Accepted to indicate async revocation.
+// 
+//  202 Accepted:
 /// {
 ///   "status": "success",
 ///   "code": 202,
