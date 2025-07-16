@@ -1,78 +1,138 @@
 use axum::{Json, response::IntoResponse};
+use candid::Principal;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use strum::Display;
 
-use crate::repository::RepositoryError;
+use crate::{
+    repository::{RegistrationStatus, RepositoryError},
+    validation::ValidationError,
+};
 
+// Generic API response
 #[derive(Serialize)]
 pub struct ApiResponse<T> {
+    status: String,
+    code: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<T>,
-    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    errors: Option<String>,
 }
 
-impl<T: Serialize> ApiResponse<T> {
-    pub fn success(data: T) -> Self {
-        Self {
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(error: impl Into<String>) -> Self {
-        Self {
-            data: None,
-            error: Some(error.into()),
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ApiError {
-    BadRequest(String),
-    Conflict(String),
-    NotFound(String),
-    InternalServerError(String),
+    BadRequest { details: String },
+    NotFound { details: String },
+    Conflict { details: String },
+    UnprocessableEntity { details: String },
+    InternalServerError { details: String },
 }
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> axum::response::Response {
-        let (status, message) = match self {
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            ApiError::InternalServerError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-        };
-        (status, Json(message)).into_response()
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApiError::BadRequest { details } => write!(f, "bad_request: {details}"),
+            ApiError::NotFound { details } => write!(f, "not_found: {details}"),
+            ApiError::Conflict { details } => write!(f, "conflict: {details}"),
+            ApiError::UnprocessableEntity { details } => {
+                write!(f, "unprocessable_entity: {details}")
+            }
+            ApiError::InternalServerError { .. } => write!(f, ""),
+        }
     }
+}
+
+// Response data for all handlers
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct DomainData {
+    pub domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canister_id: Option<Principal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_status: Option<ValidationStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_status: Option<RegistrationStatus>,
 }
 
 impl From<RepositoryError> for ApiError {
     fn from(err: RepositoryError) -> Self {
         match err {
-            RepositoryError::CertificateAlreadyIssued(domain) => {
-                ApiError::Conflict(format!("Certificate for {domain} already issued"))
-            }
-            RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict(format!(
-                "Another task for {domain} is currently in progress"
-            )),
-            RepositoryError::DomainNotFound(domain) => {
-                ApiError::NotFound(format!("Domain {domain} not found"))
-            }
-            _ => ApiError::InternalServerError("Internal error".into()),
+            RepositoryError::CertificateAlreadyIssued(domain) => ApiError::Conflict {
+                details: format!("Certificate for {domain} already issued"),
+            },
+            RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict {
+                details: format!("Another task for {domain} is currently in progress"),
+            },
+            RepositoryError::DomainNotFound(domain) => ApiError::NotFound {
+                details: format!("Domain {domain} not found"),
+            },
+            _ => ApiError::InternalServerError {
+                details: "".to_string(),
+            },
         }
     }
 }
 
-#[derive(Serialize)]
-pub enum RegistrationStatus {
-    Processing,
-    Registered,
+impl From<ValidationError> for ApiError {
+    fn from(value: ValidationError) -> Self {
+        Self::BadRequest {
+            details: value.to_string(),
+        }
+    }
 }
 
-#[derive(Serialize)]
+pub fn success_response<T: Serialize>(
+    code: StatusCode,
+    data: T,
+    message: Option<String>,
+) -> axum::response::Response {
+    let json: Json<ApiResponse<T>> = Json(ApiResponse {
+        status: "success".to_string(),
+        code: code.as_u16(),
+        message,
+        data: Some(data),
+        errors: None,
+    });
+
+    (code, json).into_response()
+}
+
+pub fn error_response<T: Serialize>(
+    error: ApiError,
+    data: T,
+    message: Option<String>,
+) -> axum::response::Response {
+    let code = match error {
+        ApiError::BadRequest { .. } => StatusCode::BAD_REQUEST,
+        ApiError::NotFound { .. } => StatusCode::NOT_FOUND,
+        ApiError::Conflict { .. } => StatusCode::CONFLICT,
+        ApiError::UnprocessableEntity { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        ApiError::InternalServerError { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+
+    let json: Json<ApiResponse<T>> = Json(ApiResponse {
+        status: "error".to_string(),
+        code: code.as_u16(),
+        message,
+        data: Some(data),
+        errors: Some(error.to_string()),
+    });
+
+    (code, json).into_response()
+}
+
+// Domain validation status
+#[derive(Debug, Clone, Display, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ValidationStatus {
-    ValidationSucceeded,
-    ValidationFailed(String),
+    Valid,
+    Invalid(String),
 }
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -11,10 +11,14 @@ use crate::{
         handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
     },
     repository::Repository,
+    validation::ValidatesDomains,
 };
 
-pub fn create_router(repository: Arc<dyn Repository>) -> Router {
-    let backend_service = BackendService::new(repository);
+pub fn create_router(
+    repository: Arc<dyn Repository>,
+    validator: Arc<dyn ValidatesDomains>,
+) -> Router {
+    let backend_service = BackendService::new(repository, validator);
     Router::new()
         .route("/domains", post(create_handler))
         .route("/domains/{:id}/status", get(get_handler))
@@ -32,6 +36,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
+    use candid::Principal;
     use fqdn::FQDN;
     use serde_json::json;
     use tower::util::ServiceExt;
@@ -40,12 +45,18 @@ mod tests {
         api::routes::create_router,
         repository::{MockRepository, RepositoryError},
         task::{InputTask, TaskKind},
+        validation::MockValidatesDomains,
     };
 
     const BODY_LIMIT: usize = 5000;
 
     #[tokio::test]
     async fn test_post_accepted_and_conflict() {
+        let mut mock_validator = MockValidatesDomains::new();
+        mock_validator.expect_validate().returning(|_| {
+            Box::pin(async { Ok(Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap()) })
+        });
+
         let mut mock_repository = MockRepository::new();
         let domain = FQDN::from_str("example.org").unwrap();
         let expected_task = InputTask::new(TaskKind::Issue, domain.clone());
@@ -63,7 +74,7 @@ mod tests {
             Box::pin(async { Err(RepositoryError::CertificateAlreadyIssued(domain)) })
         });
 
-        let router = create_router(Arc::new(mock_repository));
+        let router = create_router(Arc::new(mock_repository), Arc::new(mock_validator));
 
         // Status 202, accepted
         let body = json!({"domain":"example.org"});
@@ -76,9 +87,10 @@ mod tests {
             .unwrap();
 
         let response = router.clone().oneshot(request).await.unwrap();
+        println!("response {response:?}");
         assert_eq!(response.status(), StatusCode::ACCEPTED);
 
-        // Status 409, conflict
+        // // Status 409, conflict
         let body = json!({"domain":"example_1.org"});
 
         let request = Request::builder()
