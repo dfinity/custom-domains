@@ -138,7 +138,7 @@ impl<T: ConnectionProvider> Validator<T> {
         let txt_src = format!("{CANISTER_ID_PREFIX}.{domain}.");
 
         match self.resolver.lookup(&txt_src, RecordType::TXT).await {
-            Ok(_) => return Err(ValidationError::ExistingDnsTxtCanisterId { src: txt_src }),
+            Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: txt_src }),
             Err(err) => match err.kind() {
                 ResolveErrorKind::NoRecordsFound { .. } => Ok(()),
                 _ => Err(ValidationError::UnexpectedError(anyhow!(
