@@ -16,7 +16,6 @@ use tracing::{error, info, warn};
 use x509_parser::parse_x509_certificate;
 
 use crate::{
-    crypto::{CertificateCrypto, Crypto},
     repository::Repository,
     task::{
         IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult,
@@ -174,41 +173,52 @@ async fn execute(
                 )
             }
         },
-        TaskKind::Delete => {
-            // Revoke certificate
-            if let Some(certificate) = task.certificate {
-                // Parse certificate chain
-                let pem_str = std::str::from_utf8(&certificate)
-                    .context("Certificate contains invalid UTF-8")?;
+        TaskKind::Delete => match validator.validate_deletion(&domain).await {
+            Ok(()) => {
+                // Revoke certificate if present
+                if let Some(certificate) = task.certificate {
+                    // Parse certificate chain
+                    let pem_str = std::str::from_utf8(&certificate)
+                        .context("Certificate contains invalid UTF-8")?;
 
-                let pems = parse_many(pem_str).context("Failed to parse PEM certificates")?;
+                    let pems = parse_many(pem_str).context("Failed to parse PEM certificates")?;
 
-                let Some(first_cert) = pems.first() else {
-                    anyhow::bail!("No certificates found in PEM chain");
-                };
+                    let Some(first_cert) = pems.first() else {
+                        anyhow::bail!("No certificates found in PEM chain");
+                    };
 
-                // Only the end-entity certificate is needed to initiate revocation
-                let cert_der = CertificateDer::from(first_cert.contents().to_vec());
+                    // Only the end-entity certificate is needed to initiate revocation
+                    let cert_der = CertificateDer::from(first_cert.contents().to_vec());
 
-                let revocation_request = RevocationRequest {
-                    certificate: &cert_der,
-                    reason: Some(RevocationReason::CessationOfOperation),
-                };
+                    let revocation_request = RevocationRequest {
+                        certificate: &cert_der,
+                        reason: Some(RevocationReason::CessationOfOperation),
+                    };
 
-                acme_client
-                    .revoke(revocation_request)
-                    .await
-                    .context("revocation failed")?;
+                    acme_client
+                        .revoke(revocation_request)
+                        .await
+                        .context("revocation failed")?;
 
-                info!(domain = %domain, "revocation succeeded");
+                    info!(domain = %domain, "revocation succeeded");
+                }
+
+                let task_output = TaskOutput::Delete;
+
+                info!(domain = %domain, task_execution = %task.kind, output = ?task_output);
+
+                TaskResult::new(domain, Some(task_output), None, task_id)
             }
-
-            let task_output = TaskOutput::Delete;
-
-            info!(domain = %domain, task_execution = %task.kind, output = ?task_output);
-
-            TaskResult::new(domain, Some(task_output), None, task_id)
-        }
+            Err(err) => {
+                error!(domain = %domain, executing_task = %task.kind, "delete validation failed: {err}");
+                TaskResult::new(
+                    domain,
+                    None,
+                    Some(TaskFailReason::ValidationFailed(err.to_string())),
+                    task_id,
+                )
+            }
+        },
     }
 }
 
@@ -247,16 +257,10 @@ async fn issue_certificate(
         anyhow::bail!("Invalid certificate validity period: not_after <= not_before");
     }
 
-    // TODO: do real encryption
-    let crypt = Crypto::new();
-
-    let cert_enc = crypt.encrypt(certificate.cert.as_slice())?;
-    let priv_key_enc = crypt.encrypt(certificate.key.as_slice())?;
-
     Ok(TaskOutput::Issue(IssueCertificateOutput::new(
         canister_id,
-        cert_enc,
-        priv_key_enc,
+        certificate.cert,
+        certificate.key,
         not_before,
         not_after,
     )))

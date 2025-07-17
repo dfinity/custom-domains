@@ -31,7 +31,7 @@ use crate::{
 ///     "status_endpoint": "/domains/example.org/status"
 ///   }
 /// }
-/// 
+///
 /// 400 Bad Request:
 /// {
 ///   "status": "error",
@@ -42,7 +42,7 @@ use crate::{
 ///   },
 ///   "errors": "bad_request: missing DNS CNAME record from _acme-challenge.example.org. to _acme-challenge.example.org.icp2.io."
 /// }
-/// 
+///
 /// 409 Conflict (submitted after issue finishes):
 /// {
 ///   "status": "error",
@@ -53,7 +53,7 @@ use crate::{
 ///   },
 ///   "errors": "conflict: Certificate for example.org already issued"
 /// }
-/// 
+///
 /// 409 Conflict (submitted before issue finishes):
 /// {
 ///   "status": "error",
@@ -170,7 +170,7 @@ pub async fn update_handler(
 ///     "registration_status": "registered" | "processing"
 ///   }
 /// }
-/// 
+///
 /// 200 OK:
 /// {
 ///   "status": "success",
@@ -233,7 +233,7 @@ pub async fn get_handler(
 ///     "validation_status": "valid"
 ///   }
 /// }
-/// 
+///
 /// 422 Unprocessable Entity
 /// {
 ///   "status": "error",
@@ -250,7 +250,9 @@ pub async fn validate_handler(
 ) -> axum::response::Response {
     info!("Received request for domain validation: {}", domain);
 
-    let message = "Verifies all DNS records and canister ownership (domain name in ./well-known/ic-domains)".to_string();
+    let message =
+        "Verifies all DNS records and canister ownership (domain name in ./well-known/ic-domains)"
+            .to_string();
     match backend_service.validate(&domain).await {
         Ok((canister_id, validation_status)) => success_response(
             StatusCode::OK,
@@ -278,10 +280,10 @@ pub async fn validate_handler(
 }
 
 //  DELETE /domains/{id}
-// 
+//
 //  Deletes an existing domain registration and revokes its certificate.
 //  Responds with 202 Accepted to indicate async revocation.
-// 
+//
 //  202 Accepted:
 /// {
 ///   "status": "success",
@@ -297,15 +299,14 @@ pub async fn delete_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
 ) -> axum::response::Response {
-    // TODO: FIX validation
     info!("Received request to delete domain: {}", domain);
 
-    match backend_service.submit_task(&domain, TaskKind::Delete).await {
-        Ok(canister_id) => success_response(
+    match backend_service.submit_delete_task(&domain).await {
+        Ok(()) => success_response(
             StatusCode::ACCEPTED,
             DomainData {
                 domain: domain.clone(),
-                canister_id: Some(canister_id),
+                canister_id: None,
                 status_endpoint: Some(format!("/domains/{domain}/status")),
                 validation_status: None,
                 registration_status: None,
