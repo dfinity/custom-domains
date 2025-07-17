@@ -28,7 +28,6 @@ use crate::{
 ///   "data": {
 ///     "domain": "example.org",
 ///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "status_endpoint": "/domains/example.org/status"
 ///   }
 /// }
 ///
@@ -76,7 +75,6 @@ pub async fn create_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: Some(canister_id),
-                status_endpoint: Some(format!("/domains/{domain}/status")),
                 validation_status: None,
                 registration_status: None,
             },
@@ -90,7 +88,6 @@ pub async fn create_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -114,7 +111,6 @@ pub async fn create_handler(
 ///   "data": {
 ///     "domain": "example.org",
 ///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "status_endpoint": "/domains/example.org/status"
 ///   }
 /// }
 pub async fn update_handler(
@@ -129,7 +125,6 @@ pub async fn update_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: Some(canister_id),
-                status_endpoint: Some(format!("/domains/{domain}/status")),
                 validation_status: None,
                 registration_status: None,
             },
@@ -143,7 +138,6 @@ pub async fn update_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -194,7 +188,6 @@ pub async fn get_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: domains_status.canister_id,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: Some(domains_status.status),
             },
@@ -205,7 +198,6 @@ pub async fn get_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -259,7 +251,6 @@ pub async fn validate_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: Some(canister_id),
-                status_endpoint: None,
                 validation_status: Some(validation_status),
                 registration_status: None,
             },
@@ -270,7 +261,6 @@ pub async fn validate_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -292,7 +282,6 @@ pub async fn validate_handler(
 ///   "data": {
 ///     "domain": "example.org",
 ///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "status_endpoint": "/domains/example.org/status"
 ///   }
 /// }
 pub async fn delete_handler(
@@ -307,7 +296,6 @@ pub async fn delete_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: None,
-                status_endpoint: Some(format!("/domains/{domain}/status")),
                 validation_status: None,
                 registration_status: None,
             },
@@ -321,7 +309,6 @@ pub async fn delete_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
