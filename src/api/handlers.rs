@@ -242,9 +242,6 @@ pub async fn validate_handler(
 ) -> axum::response::Response {
     info!("Received request for domain validation: {}", domain);
 
-    let message =
-        "Verifies all DNS records and canister ownership (domain name in ./well-known/ic-domains)"
-            .to_string();
     match backend_service.validate(&domain).await {
         Ok((canister_id, validation_status)) => success_response(
             StatusCode::OK,
@@ -254,7 +251,7 @@ pub async fn validate_handler(
                 validation_status: Some(validation_status),
                 registration_status: None,
             },
-            Some(message),
+            Some("Domain is eligible for registration: DNS records are valid and canister ownership is verified.".to_string()),
         ),
         Err(err) => error_response(
             err,
@@ -264,7 +261,7 @@ pub async fn validate_handler(
                 validation_status: None,
                 registration_status: None,
             },
-            Some(message),
+            Some("Failed to validate DNS records or verify canister ownership.".to_string()),
         ),
     }
 }
