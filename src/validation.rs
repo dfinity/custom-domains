@@ -21,6 +21,8 @@ const CANISTER_ID_PREFIX: &str = "_canister-id";
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
+    #[error("existing DNS TXT _canister-id record at {src}")]
+    ExistingDnsTxtCanisterId { src: String },
     #[error("existing DNS TXT challenge record at {src}")]
     ExistingDnsTxtChallenge { src: String },
     #[error("missing DNS CNAME record from {src} to {dst}")]
@@ -43,6 +45,7 @@ pub enum ValidationError {
 #[automock]
 pub trait ValidatesDomains: Send + Sync {
     async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError>;
+    async fn validate_deletion(&self, domain: &FQDN) -> Result<(), ValidationError>;
 }
 
 #[trait_async]
@@ -60,6 +63,10 @@ impl ValidatesDomains for Validator<TokioConnectionProvider> {
         );
 
         Ok(canister_id)
+    }
+
+    async fn validate_deletion(&self, domain: &FQDN) -> Result<(), ValidationError> {
+        self.validate_no_canister_id_record(domain).await
     }
 }
 
@@ -125,6 +132,22 @@ impl<T: ConnectionProvider> Validator<T> {
             .contains(&domain.to_string())
             .then_some(())
             .ok_or(ValidationError::MissingKnownDomains { id: canister_id })
+    }
+
+    async fn validate_no_canister_id_record(&self, domain: &FQDN) -> Result<(), ValidationError> {
+        let txt_src = format!("{CANISTER_ID_PREFIX}.{domain}.");
+
+        match self.resolver.lookup(&txt_src, RecordType::TXT).await {
+            Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: txt_src }),
+            Err(err) => match err.kind() {
+                ResolveErrorKind::NoRecordsFound { .. } => Ok(()),
+                _ => Err(ValidationError::UnexpectedError(anyhow!(
+                    "Failed to resolve TXT record for {}: {}",
+                    txt_src,
+                    err
+                ))),
+            },
+        }
     }
 
     async fn validate_no_txt_challenge(&self, domain: &FQDN) -> Result<(), ValidationError> {

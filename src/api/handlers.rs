@@ -28,10 +28,9 @@ use crate::{
 ///   "data": {
 ///     "domain": "example.org",
 ///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "status_endpoint": "/domains/example.org/status"
 ///   }
 /// }
-/// 
+///
 /// 400 Bad Request:
 /// {
 ///   "status": "error",
@@ -42,7 +41,7 @@ use crate::{
 ///   },
 ///   "errors": "bad_request: missing DNS CNAME record from _acme-challenge.example.org. to _acme-challenge.example.org.icp2.io."
 /// }
-/// 
+///
 /// 409 Conflict (submitted after issue finishes):
 /// {
 ///   "status": "error",
@@ -53,7 +52,7 @@ use crate::{
 ///   },
 ///   "errors": "conflict: Certificate for example.org already issued"
 /// }
-/// 
+///
 /// 409 Conflict (submitted before issue finishes):
 /// {
 ///   "status": "error",
@@ -76,7 +75,6 @@ pub async fn create_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: Some(canister_id),
-                status_endpoint: Some(format!("/domains/{domain}/status")),
                 validation_status: None,
                 registration_status: None,
             },
@@ -90,7 +88,6 @@ pub async fn create_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -114,7 +111,6 @@ pub async fn create_handler(
 ///   "data": {
 ///     "domain": "example.org",
 ///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "status_endpoint": "/domains/example.org/status"
 ///   }
 /// }
 pub async fn update_handler(
@@ -129,7 +125,6 @@ pub async fn update_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: Some(canister_id),
-                status_endpoint: Some(format!("/domains/{domain}/status")),
                 validation_status: None,
                 registration_status: None,
             },
@@ -143,7 +138,6 @@ pub async fn update_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -170,7 +164,7 @@ pub async fn update_handler(
 ///     "registration_status": "registered" | "processing"
 ///   }
 /// }
-/// 
+///
 /// 200 OK:
 /// {
 ///   "status": "success",
@@ -194,7 +188,6 @@ pub async fn get_handler(
             DomainData {
                 domain: domain.clone(),
                 canister_id: domains_status.canister_id,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: Some(domains_status.status),
             },
@@ -205,7 +198,6 @@ pub async fn get_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -233,7 +225,7 @@ pub async fn get_handler(
 ///     "validation_status": "valid"
 ///   }
 /// }
-/// 
+///
 /// 422 Unprocessable Entity
 /// {
 ///   "status": "error",
@@ -250,38 +242,35 @@ pub async fn validate_handler(
 ) -> axum::response::Response {
     info!("Received request for domain validation: {}", domain);
 
-    let message = "Verifies all DNS records and canister ownership (domain name in ./well-known/ic-domains)".to_string();
     match backend_service.validate(&domain).await {
         Ok((canister_id, validation_status)) => success_response(
             StatusCode::OK,
             DomainData {
                 domain: domain.clone(),
                 canister_id: Some(canister_id),
-                status_endpoint: None,
                 validation_status: Some(validation_status),
                 registration_status: None,
             },
-            Some(message),
+            Some("Domain is eligible for registration: DNS records are valid and canister ownership is verified.".to_string()),
         ),
         Err(err) => error_response(
             err,
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },
-            Some(message),
+            Some("Failed to validate DNS records or verify canister ownership.".to_string()),
         ),
     }
 }
 
 //  DELETE /domains/{id}
-// 
+//
 //  Deletes an existing domain registration and revokes its certificate.
 //  Responds with 202 Accepted to indicate async revocation.
-// 
+//
 //  202 Accepted:
 /// {
 ///   "status": "success",
@@ -290,23 +279,20 @@ pub async fn validate_handler(
 ///   "data": {
 ///     "domain": "example.org",
 ///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "status_endpoint": "/domains/example.org/status"
 ///   }
 /// }
 pub async fn delete_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
 ) -> axum::response::Response {
-    // TODO: FIX validation
     info!("Received request to delete domain: {}", domain);
 
-    match backend_service.submit_task(&domain, TaskKind::Delete).await {
-        Ok(canister_id) => success_response(
+    match backend_service.submit_delete_task(&domain).await {
+        Ok(()) => success_response(
             StatusCode::ACCEPTED,
             DomainData {
                 domain: domain.clone(),
-                canister_id: Some(canister_id),
-                status_endpoint: Some(format!("/domains/{domain}/status")),
+                canister_id: None,
                 validation_status: None,
                 registration_status: None,
             },
@@ -320,7 +306,6 @@ pub async fn delete_handler(
             DomainData {
                 domain,
                 canister_id: None,
-                status_endpoint: None,
                 validation_status: None,
                 registration_status: None,
             },

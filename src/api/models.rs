@@ -53,8 +53,6 @@ pub struct DomainData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canister_id: Option<Principal>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub status_endpoint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub validation_status: Option<ValidationStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registration_status: Option<RegistrationStatus>,

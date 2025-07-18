@@ -26,6 +26,16 @@ impl BackendService {
         }
     }
 
+    pub async fn submit_delete_task(&self, domain: &str) -> Result<(), ApiError> {
+        let fqdn = parse_domain(domain)?;
+        self.validator.validate_deletion(&fqdn).await?;
+        let task = InputTask::new(TaskKind::Delete, fqdn);
+        match self.repository.try_add_task(task).await {
+            Ok(()) => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
     pub async fn get_domain_status(&self, domain: &str) -> Result<DomainStatus, ApiError> {
         let fqdn = parse_domain(domain)?;
         match self.repository.get_domain_status(&fqdn).await {
