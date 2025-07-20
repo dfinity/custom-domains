@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
@@ -45,22 +44,22 @@ pub struct TaskResult {
 }
 
 impl TaskResult {
-    pub fn new(
-        domain: FQDN,
-        output: Option<TaskOutput>,
-        failure: Option<TaskFailReason>,
-        task_id: UtcTimestamp,
-    ) -> anyhow::Result<Self> {
-        if output.is_some() && failure.is_some() || output.is_none() && failure.is_none() {
-            return Err(anyhow!("Task should be either failed or succeeded"));
-        }
-
-        Ok(Self {
+    pub fn success(domain: FQDN, output: TaskOutput, task_id: UtcTimestamp) -> Self {
+        Self {
             domain,
-            output,
-            failure,
+            output: Some(output),
+            failure: None,
             task_id,
-        })
+        }
+    }
+
+    pub fn failure(domain: FQDN, failure: TaskFailReason, task_id: UtcTimestamp) -> Self {
+        Self {
+            domain,
+            output: None,
+            failure: Some(failure),
+            task_id,
+        }
     }
 }
 
@@ -71,11 +70,15 @@ pub enum TaskOutput {
     Delete,
 }
 
-#[derive(Debug, Clone, Display)]
+#[derive(Debug, Clone, Display, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskFailReason {
     #[strum(to_string = "validation_failed: {0}")]
     ValidationFailed(String),
+    #[strum(to_string = "timeout: duration_sec={duration_secs}")]
+    Timeout { duration_secs: u64 },
+    #[strum(to_string = "generic_error: {0}")]
+    GenericFailure(String),
 }
 
 #[derive(Debug, Clone, new)]

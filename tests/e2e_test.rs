@@ -19,7 +19,7 @@ use serde_json::json;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
-use tracing::info;
+use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 const LIMIT: usize = 20000;
@@ -66,7 +66,7 @@ async fn delete_domain(router: &Router, domain: &str) -> Response<Body> {
 }
 
 async fn await_registration_ready(router: &Router, domain: &str) {
-    let msg = format!("awaiting registration for domain {domain}");
+    let msg = &format!("awaiting registration for domain {domain}");
     let closure = || async {
         let response = get_status(router, domain).await;
         let body_bytes = to_bytes(response.into_body(), LIMIT).await.unwrap();
@@ -78,14 +78,20 @@ async fn await_registration_ready(router: &Router, domain: &str) {
         bail!("certificate is not ready yet");
     };
 
-    retry_async(msg, AWAIT_TIMEOUT, RETRY_INTERVAL, closure)
-        .await
-        .context(anyhow!("failed to await for registration"))
-        .unwrap();
+    retry_async(
+        Some(msg),
+        Some(Level::INFO),
+        AWAIT_TIMEOUT,
+        RETRY_INTERVAL,
+        closure,
+    )
+    .await
+    .context(anyhow!("failed to await for registration"))
+    .unwrap();
 }
 
 async fn await_registration_deletion(router: Router, domain: &str) {
-    let msg = format!("awaiting deletion of domain {domain}");
+    let msg = &format!("awaiting deletion of domain {domain}");
     let closure = || async {
         let response = get_status(&router, domain).await;
         if response.status() == StatusCode::NOT_FOUND {
@@ -94,10 +100,16 @@ async fn await_registration_deletion(router: Router, domain: &str) {
         bail!("domain is not deleted yet");
     };
 
-    retry_async(msg, AWAIT_TIMEOUT, RETRY_INTERVAL, closure)
-        .await
-        .context(anyhow!("failed to await for registration"))
-        .unwrap();
+    retry_async(
+        Some(msg),
+        Some(Level::INFO),
+        AWAIT_TIMEOUT,
+        RETRY_INTERVAL,
+        closure,
+    )
+    .await
+    .context(anyhow!("failed to await for registration"))
+    .unwrap();
 }
 
 fn setup_tracing() {

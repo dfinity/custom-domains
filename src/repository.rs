@@ -10,10 +10,11 @@ use crate::{
     time::UtcTimestamp,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DomainEntry {
     pub task: Option<TaskKind>,
     pub last_failure_reason: Option<TaskFailReason>,
+    pub failures_count: u32,
     pub canister_id: Option<Principal>,
     pub created_at: UtcTimestamp,
     pub taken_at: Option<UtcTimestamp>,
@@ -43,6 +44,8 @@ pub enum RepositoryError {
     DomainNotFound(FQDN),
     #[error("Failed to submit result of a non-existing task with ID: {0}")]
     NonExistingTaskSubmitted(UtcTimestamp),
+    #[error("Update task requires an existing certificate for domain: {0}")]
+    MissingCertificateForUpdate(FQDN),
     #[error(transparent)]
     InternalError(#[from] anyhow::Error),
 }
