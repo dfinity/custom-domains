@@ -70,14 +70,18 @@ pub enum TaskOutput {
     Delete,
 }
 
+// The `to_string()` output is user-facing.
+// Only validation failures are actionable by the user.
+// All other errors suggest retrying or contacting support.
+// TODO: add request_id to the body? (should be already in the header once intergrated into ic-gateway)
 #[derive(Debug, Clone, Display, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskFailReason {
-    #[strum(to_string = "validation_failed: {0}")]
+    #[strum(to_string = "Validation failed: {0}. Please review your settings and try again.")]
     ValidationFailed(String),
-    #[strum(to_string = "timeout: duration_sec={duration_secs}")]
+    #[strum(to_string = "An unexpected error occurred. Please try again later or contact support")]
     Timeout { duration_secs: u64 },
-    #[strum(to_string = "generic_error: {0}")]
+    #[strum(to_string = "An unexpected error occurred. Please try again later or contact support")]
     GenericFailure(String),
 }
 
