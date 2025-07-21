@@ -1,6 +1,6 @@
 use std::{env, sync::Arc, time::Duration};
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, bail};
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -86,7 +86,7 @@ async fn await_registration_ready(router: &Router, domain: &str) {
         closure,
     )
     .await
-    .context(anyhow!("failed to await for registration"))
+    .with_context(|| "failed to await for registration")
     .unwrap();
 }
 
@@ -108,7 +108,7 @@ async fn await_registration_deletion(router: Router, domain: &str) {
         closure,
     )
     .await
-    .context(anyhow!("failed to await for registration"))
+    .with_context(|| "failed to await for registration")
     .unwrap();
 }
 
