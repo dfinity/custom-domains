@@ -15,9 +15,9 @@ use trust_dns_resolver::{
 
 use anyhow::anyhow;
 
-const DELEGATION_DOMAIN: &str = "icp2.io";
-const ACME_CHALLENGE_PREFIX: &str = "_acme-challenge";
-const CANISTER_ID_PREFIX: &str = "_canister-id";
+const DEFAULT_DELEGATION_DOMAIN: &str = "icp2.io";
+const DEFAULT_ACME_CHALLENGE_PREFIX: &str = "_acme-challenge";
+const DEFAULT_CANISTER_ID_PREFIX: &str = "_canister-id";
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -70,34 +70,47 @@ impl ValidatesDomains for Validator<TokioConnectionProvider> {
     }
 }
 
+pub struct DnsConfig {
+    pub delegation_domain: String,
+    pub acme_challenge_prefix: String,
+    pub canister_id_prefix: String,
+}
+
+impl Default for DnsConfig {
+    fn default() -> Self {
+        Self {
+            delegation_domain: DEFAULT_DELEGATION_DOMAIN.to_string(),
+            acme_challenge_prefix: DEFAULT_ACME_CHALLENGE_PREFIX.to_string(),
+            canister_id_prefix: DEFAULT_CANISTER_ID_PREFIX.to_string(),
+        }
+    }
+}
+
 pub struct Validator<T: ConnectionProvider> {
-    delegation_domain: String,
     resolver: AsyncResolver<T>,
+    dns_config: DnsConfig,
 }
 
 impl Default for Validator<TokioConnectionProvider> {
     fn default() -> Self {
         Self {
-            delegation_domain: DELEGATION_DOMAIN.to_string(),
             resolver: AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
+            dns_config: DnsConfig::default(),
         }
     }
 }
 
 impl<T: ConnectionProvider> Validator<T> {
-    pub fn new(
-        delegation_domain: String,
-        resolver: AsyncResolver<T>,
-    ) -> Result<Self, ValidationError> {
-        if delegation_domain.is_empty() {
+    pub fn new(resolver: AsyncResolver<T>, dns_config: DnsConfig) -> Result<Self, ValidationError> {
+        if dns_config.delegation_domain.is_empty() {
             return Err(ValidationError::UnexpectedError(anyhow!(
                 "Delegation domain cannot be empty"
             )));
         }
 
         Ok(Self {
-            delegation_domain,
             resolver,
+            dns_config,
         })
     }
 
@@ -135,7 +148,7 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 
     async fn validate_no_canister_id_record(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        let txt_src = format!("{CANISTER_ID_PREFIX}.{domain}.");
+        let txt_src = format!("{}.{domain}.", self.dns_config.canister_id_prefix);
 
         match self.resolver.lookup(&txt_src, RecordType::TXT).await {
             Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: txt_src }),
@@ -151,7 +164,7 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 
     async fn validate_no_txt_challenge(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        let txt_src = format!("{ACME_CHALLENGE_PREFIX}.{domain}.");
+        let txt_src = format!("{}.{domain}.", self.dns_config.acme_challenge_prefix);
 
         match self.resolver.lookup(&txt_src, RecordType::TXT).await {
             Ok(lookup) => {
@@ -160,7 +173,7 @@ impl<T: ConnectionProvider> Validator<T> {
                     .record_iter()
                     .all(|rec| {
                         let name = rec.name().to_string().trim_end_matches('.').to_owned();
-                        name.ends_with(&self.delegation_domain)
+                        name.ends_with(&self.dns_config.delegation_domain)
                     })
                     .then_some(())
                     .ok_or(ValidationError::ExistingDnsTxtChallenge { src: txt_src })
@@ -177,10 +190,10 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 
     async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        let cname_src = format!("{ACME_CHALLENGE_PREFIX}.{domain}.");
+        let cname_src = format!("{}.{domain}.", self.dns_config.acme_challenge_prefix);
         let cname_dst = format!(
-            "{ACME_CHALLENGE_PREFIX}.{domain}.{}.",
-            self.delegation_domain
+            "{}.{domain}.{}.",
+            self.dns_config.acme_challenge_prefix, self.dns_config.delegation_domain
         );
 
         // Resolve CNAME record
@@ -212,7 +225,7 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 
     async fn validate_canister_mapping(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
-        let txt_src = format!("{CANISTER_ID_PREFIX}.{domain}");
+        let txt_src = format!("{}.{domain}", self.dns_config.canister_id_prefix);
 
         // Resolve TXT record
         let records = self
