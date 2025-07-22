@@ -53,7 +53,7 @@ pub async fn metrics_middleware(
     let path = matched_path
         .as_ref()
         .map(|mp| mp.as_str())
-        .unwrap_or("unknown");
+        .unwrap_or_else(|| "unknown");
 
     let response = next.run(req).await;
     let status = response.status().to_string();

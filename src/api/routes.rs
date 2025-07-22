@@ -39,7 +39,7 @@ pub fn create_router(
 
     let metrics_router = if with_metrics_endpoint {
         Router::new()
-            .route("/metrics", axum::routing::get(metrics_handler))
+            .route("/metrics", get(metrics_handler))
             .with_state(registry)
     } else {
         Router::new()
