@@ -13,6 +13,7 @@ use crate::{
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DomainEntry {
     pub task: Option<TaskKind>,
+    pub last_fail_time: Option<UtcTimestamp>,
     pub last_failure_reason: Option<TaskFailReason>,
     pub failures_count: u32,
     pub canister_id: Option<Principal>,

@@ -12,12 +12,12 @@ use crate::{
         DomainEntry, DomainStatus, RegisteredDomain, RegistrationStatus, Repository,
         RepositoryError,
     },
-    task::{InputTask, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult},
+    task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult},
     time::{UtcTimestamp, UtcTimestampProvider},
 };
 
 // The certificate renewal task is initiated this far ahead of the expiration
-const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(3 * 24 * 60 * 60);
+const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 // The task expires (times out) after this time window if its result isn't submitted.
 // This allows the task to be rescheduled if a worker fails.
@@ -30,6 +30,9 @@ const UNREGISTERED_DOMAIN_EXPIRATION_TIME: Duration = Duration::from_secs(24 * 6
 // If a task fails this many times with a recoverable error, it is no longer rescheduled.
 // User is expected to resubmit the task.
 const MAX_TASK_FAILURES: u32 = 20;
+
+// If a task fails, it will not be rescheduled earlier than this interval.
+const MIN_TASK_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 pub struct State {
     storage: Arc<Mutex<HashMap<FQDN, DomainEntry>>>,
@@ -138,23 +141,36 @@ impl Repository for State {
 
         // Select the first available task and mark it as taken.
         // TODO: Consider prioritizing tasks (e.g., failed tasks) or randomizing selection.
-        let scheduled_task = mutex
-            .iter_mut()
-            .find_map(|(domain, entry)| {
-                entry.task.and_then(|task_kind| {
-                    entry.taken_at.is_none().then(|| {
-                        let taken_at = self.time.unix_timestamp();
-                        entry.taken_at = Some(taken_at);
-                        // Include certificate for `Delete` tasks (needed for certificate revocation).
-                        let certificate = (task_kind == TaskKind::Delete)
-                            .then(|| entry.certificate.clone())
-                            .flatten();
-                        ScheduledTask::new(task_kind, domain.clone(), taken_at, certificate)
-                    })
-                })
-            })
-            .map(Some)
-            .unwrap_or(None);
+        let scheduled_task = mutex.iter_mut().find_map(|(domain, entry)| {
+            // Skip if there's no task or it is already taken.
+            let task_kind = match &entry.task {
+                Some(task) if entry.taken_at.is_none() => task,
+                _ => return None,
+            };
+
+            // Check if the task can be retried now.
+            if let Some(last_fail) = entry.last_fail_time {
+                let next_allowed = last_fail.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
+                if now < next_allowed {
+                    return None;
+                }
+            }
+
+            // mark the task as taken
+            entry.taken_at = Some(now);
+
+            let certificate = match task_kind {
+                TaskKind::Delete => entry.certificate.clone(),
+                _ => None,
+            };
+
+            Some(ScheduledTask::new(
+                *task_kind,
+                domain.clone(),
+                now,
+                certificate,
+            ))
+        });
 
         Ok(scheduled_task)
     }
@@ -162,6 +178,7 @@ impl Repository for State {
     /// Submits task result, updating the DomainEntry (or removing it) based on the task kind and status.
     async fn submit_task_result(&self, task_result: TaskResult) -> Result<(), RepositoryError> {
         let mut mutex = self.storage.lock()?;
+        let now = self.time.unix_timestamp();
 
         let domain = &task_result.domain;
         let task_id = task_result.task_id;
@@ -182,6 +199,7 @@ impl Repository for State {
             entry.taken_at = None;
             entry.last_failure_reason = None;
             entry.failures_count = 0;
+            entry.last_fail_time = None;
 
             match output {
                 TaskOutput::Issue(output) => {
@@ -210,21 +228,9 @@ impl Repository for State {
             }
         } else if let Some(failure) = task_result.failure {
             entry.failures_count += 1;
-
-            match &failure {
-                // TODO: consider if we should still retry it
-                TaskFailReason::ValidationFailed(_) => {
-                    entry.last_failure_reason = Some(failure);
-                    entry.taken_at = None;
-                    // Since this is an irrecoverable error, we remove task from further rescheduling
-                    entry.task = None;
-                }
-                TaskFailReason::GenericFailure(_) | TaskFailReason::Timeout { .. } => {
-                    entry.last_failure_reason = Some(failure);
-                    entry.taken_at = None;
-                }
-            }
-
+            entry.last_failure_reason = Some(failure);
+            entry.taken_at = None;
+            entry.last_fail_time = Some(now);
             // delete the task if the retry limit is reached
             if entry.failures_count >= MAX_TASK_FAILURES {
                 entry.task = None;
@@ -299,8 +305,8 @@ mod tests {
     use crate::{
         repository::{DomainEntry, Repository, RepositoryError},
         state::{
-            CERT_RENEWAL_BEFORE_EXPIRY, MAX_TASK_FAILURES, State, TASK_EXPIRATION_TIMEOUT,
-            UNREGISTERED_DOMAIN_EXPIRATION_TIME,
+            CERT_RENEWAL_BEFORE_EXPIRY, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY, State,
+            TASK_EXPIRATION_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
         },
         task::{
             InputTask, IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput,
@@ -558,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_next_tasks_succeeds() -> anyhow::Result<()> {
         // Arrange: create a repository with different domains containing `Issue` tasks
-        let init_time = 1;
+        let init_time = 2;
         let (mock_time, state) = create_state_with_mock_time(init_time);
         let domain_a = FQDN::from_str("a.com")?;
         let domain_b = FQDN::from_str("b.com")?;
@@ -579,20 +585,20 @@ mod tests {
 
         let expected_tasks: Vec<_> = domains
             .iter()
-            .map(|d| ScheduledTask::new(TaskKind::Issue, d.clone(), 1, None))
+            .map(|d| ScheduledTask::new(TaskKind::Issue, d.clone(), init_time, None))
             .collect();
 
         assert_eq!(tasks, expected_tasks);
 
         // Act: submit execution results for these tasks
-        let cert_expiry = 1_000_000;
+        let not_after = init_time + CERT_RENEWAL_BEFORE_EXPIRY.as_secs() + 1;
         let canister_id = Principal::from_text("aaaaa-aa")?;
         let output = TaskOutput::Issue(IssueCertificateOutput::new(
             canister_id,
             vec![],
             vec![],
             1,
-            cert_expiry,
+            not_after,
         ));
         let result_a = TaskResult::success(domain_a, output.clone(), init_time);
         let result_b = TaskResult::success(domain_b, output, init_time);
@@ -601,12 +607,12 @@ mod tests {
         // check no renewal tasks appeared immediately after submission
         assert!(state.fetch_next_task().await.is_ok_and(|x| x.is_none()));
         // set current time on the edge of the renewal time
-        let new_time = cert_expiry.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs()) - 1;
+        let new_time = not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs()) - 1;
         mock_time.set_time(new_time);
         // assert still no renewal tasks appeared
         assert!(state.fetch_next_task().await.is_ok_and(|x| x.is_none()));
         // finally set current time to expiry, this will trigger creation of renewal tasks
-        let new_time = cert_expiry.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs());
+        let new_time = not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs());
         mock_time.set_time(new_time);
 
         // collect all pending tasks
@@ -827,12 +833,19 @@ mod tests {
                 task: Some(TaskKind::Update), // failed task still exists, as it will be rescheduled
                 failures_count: i + 1,
                 last_failure_reason: Some(failure),
+                last_fail_time: Some(time),
                 created_at,
                 ..Default::default()
             };
             assert_eq!(entry, expected);
 
-            // Fetch scheduled task for retry
+            // Set the time to just before retry can be scheduled
+            time += MIN_TASK_RETRY_DELAY.as_secs() - 1;
+            mock_time.set_time(time);
+            let task = state.fetch_next_task().await?;
+            assert!(task.is_none());
+
+            // Advance time to the threshold and fetch scheduled task for retry
             time += 1;
             mock_time.set_time(time);
 
@@ -852,51 +865,16 @@ mod tests {
             task: None, // this field is now set to None
             failures_count: MAX_TASK_FAILURES,
             last_failure_reason: Some(failure),
+            last_fail_time: Some(time),
             created_at,
             ..Default::default()
         };
         assert_eq!(entry, expected);
 
         // Now there is no more task to fetch, it failed completely and is not rescheduled.
-        time += 1;
+        time += MIN_TASK_RETRY_DELAY.as_secs();
         mock_time.set_time(time);
 
-        assert!(state.fetch_next_task().await?.is_none());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_submit_failed_task_with_irrecoverable_error() -> anyhow::Result<()> {
-        // Arrange: create a new repository with a domain containing some task, e.g. an `Issue` task
-        let time = 2;
-        let (_, state) = create_state_with_mock_time(time);
-        let domain = FQDN::from_str("example.org")?;
-        let created_at = 2;
-        let entry = {
-            let mut entry = DomainEntry::new(Some(TaskKind::Issue), created_at);
-            entry.taken_at = Some(time);
-            entry
-        };
-        state.add_entry(&domain, entry)?;
-
-        // Act: submit task result with an irrecoverable validation error
-        let failure = TaskFailReason::ValidationFailed("smth_went_wrong".to_string());
-        let result = TaskResult::failure(domain.clone(), failure.clone(), time);
-
-        state.submit_task_result(result).await?;
-
-        let entry = state.get_domain(&domain).await?.expect("domain not found");
-        let expected = DomainEntry {
-            task: None, // this field is now set to None, meaning no retry will happen
-            failures_count: 1,
-            last_failure_reason: Some(failure),
-            created_at,
-            ..Default::default()
-        };
-        assert_eq!(entry, expected);
-
-        // Verify that no retry is scheduled by fetching the next task
         assert!(state.fetch_next_task().await?.is_none());
 
         Ok(())
