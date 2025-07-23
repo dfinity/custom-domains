@@ -32,7 +32,7 @@ pub async fn submit_registration(router: &Router, domain: &str) -> Response<Body
 
     let request = Request::builder()
         .method("POST")
-        .uri("/domains")
+        .uri("/v1/domains")
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
@@ -41,7 +41,7 @@ pub async fn submit_registration(router: &Router, domain: &str) -> Response<Body
 }
 
 async fn get_status(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/domains/{domain}/status");
+    let uri = format!("/v1/domains/{domain}/status");
 
     let request = Request::builder()
         .method("GET")
@@ -54,7 +54,7 @@ async fn get_status(router: &Router, domain: &str) -> Response<Body> {
 }
 
 async fn delete_domain(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/domains/{domain}");
+    let uri = format!("/v1/domains/{domain}");
 
     let request = Request::builder()
         .method("DELETE")

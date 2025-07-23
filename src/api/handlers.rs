@@ -251,7 +251,7 @@ pub async fn validate_handler(
                 validation_status: Some(validation_status),
                 registration_status: None,
             },
-            Some("Domain is eligible for registration: DNS records are valid and canister ownership is verified.".to_string()),
+            Some("Domain is eligible for registration: DNS records are valid and canister ownership is verified".to_string()),
         ),
         Err(err) => error_response(
             err,
@@ -261,7 +261,7 @@ pub async fn validate_handler(
                 validation_status: None,
                 registration_status: None,
             },
-            Some("Failed to validate DNS records or verify canister ownership.".to_string()),
+            Some("Failed to validate DNS records or verify canister ownership".to_string()),
         ),
     }
 }

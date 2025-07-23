@@ -24,13 +24,12 @@ pub fn create_router(
     with_metrics_endpoint: bool,
 ) -> Router {
     let backend_service = BackendService::new(repository, validator);
-
     let api_router = Router::new()
-        .route("/domains", post(create_handler))
-        .route("/domains/{:id}/status", get(get_handler))
-        .route("/domains/{:id}/update", post(update_handler))
-        .route("/domains/{:id}", delete(delete_handler))
-        .route("/domains/{:id}/validate", get(validate_handler))
+        .route("/v1/domains", post(create_handler))
+        .route("/v1/domains/{:id}/status", get(get_handler))
+        .route("/v1/domains/{:id}/update", post(update_handler))
+        .route("/v1/domains/{:id}", delete(delete_handler))
+        .route("/v1/domains/{:id}/validate", get(validate_handler))
         .layer(from_fn_with_state(
             Arc::new(HttpMetrics::new(registry.clone())),
             metrics_middleware,
@@ -108,7 +107,7 @@ mod tests {
 
         let request = Request::builder()
             .method("POST")
-            .uri("/domains")
+            .uri("/v1/domains")
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
@@ -122,7 +121,7 @@ mod tests {
 
         let request = Request::builder()
             .method("POST")
-            .uri("/domains")
+            .uri("/v1/domains")
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
