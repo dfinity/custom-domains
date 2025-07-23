@@ -109,7 +109,7 @@ async fn await_registration_deletion(router: Router, domain: &str) {
         closure,
     )
     .await
-    .with_context(|| "failed to await for registration")
+    .with_context(|| "failed to await for registration deletion")
     .unwrap();
 }
 
