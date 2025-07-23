@@ -20,11 +20,11 @@ pub fn create_router(
 ) -> Router {
     let backend_service = BackendService::new(repository, validator);
     Router::new()
-        .route("/domains", post(create_handler))
-        .route("/domains/{:id}/status", get(get_handler))
-        .route("/domains/{:id}/update", post(update_handler))
-        .route("/domains/{:id}", delete(delete_handler))
-        .route("/domains/{:id}/validate", get(validate_handler))
+        .route("/v1/domains", post(create_handler))
+        .route("/v1/domains/{:id}/status", get(get_handler))
+        .route("/v1/domains/{:id}/update", post(update_handler))
+        .route("/v1/domains/{:id}", delete(delete_handler))
+        .route("/v1/domains/{:id}/validate", get(validate_handler))
         .with_state(backend_service)
 }
 
@@ -81,7 +81,7 @@ mod tests {
 
         let request = Request::builder()
             .method("POST")
-            .uri("/domains")
+            .uri("/v1/domains")
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
@@ -95,7 +95,7 @@ mod tests {
 
         let request = Request::builder()
             .method("POST")
-            .uri("/domains")
+            .uri("/v1/domains")
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
