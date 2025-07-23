@@ -222,8 +222,6 @@ impl Repository for State {
                 TaskOutput::Update(canister_id) => {
                     info!(domain = %domain, "Domain updated");
                     entry.canister_id = Some(canister_id);
-                    entry.task = None;
-                    entry.taken_at = None;
                 }
             }
         } else if let Some(failure) = task_result.failure {
