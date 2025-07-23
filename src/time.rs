@@ -1,5 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use chrono::Utc;
+use derive_new::new;
+
 // Timestamp representing seconds in UTC since the UNIX epoch (January 1, 1970).
 pub type UtcTimestamp = u64;
 
@@ -10,6 +13,15 @@ pub trait UtcTimestampProvider: Send + Sync {
 
 pub struct MockTime {
     timestamp: AtomicU64,
+}
+
+#[derive(new)]
+pub struct SystemTime {}
+
+impl UtcTimestampProvider for SystemTime {
+    fn unix_timestamp(&self) -> UtcTimestamp {
+        Utc::now().timestamp() as UtcTimestamp
+    }
 }
 
 impl MockTime {
