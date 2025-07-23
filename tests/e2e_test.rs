@@ -15,6 +15,7 @@ use custom_domains::{
     validation::Validator,
     work::{Worker, WorkerConfig},
 };
+use prometheus::Registry;
 use serde_json::json;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
@@ -121,7 +122,8 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     let mock_time = Arc::new(MockTime::new(1));
     let state = Arc::new(State::new(mock_time));
     let validator = Arc::new(Validator::default());
-    let router = create_router(state.clone(), validator.clone());
+    let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
+    let router = create_router(state.clone(), validator.clone(), registry, true);
 
     info!("user submits domain={domain} for registration");
     let response = submit_registration(&router, domain).await;
