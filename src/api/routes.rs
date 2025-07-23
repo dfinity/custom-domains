@@ -2,13 +2,16 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    middleware::from_fn_with_state,
     routing::{delete, get, post},
 };
+use prometheus::Registry;
 
 use crate::{
     api::{
         backend_service::BackendService,
         handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
+        metrics::{HttpMetrics, metrics_handler, metrics_middleware},
     },
     repository::Repository,
     validation::ValidatesDomains,
@@ -17,15 +20,31 @@ use crate::{
 pub fn create_router(
     repository: Arc<dyn Repository>,
     validator: Arc<dyn ValidatesDomains>,
+    registry: Registry,
+    with_metrics_endpoint: bool,
 ) -> Router {
     let backend_service = BackendService::new(repository, validator);
-    Router::new()
-        .route("/domains", post(create_handler))
-        .route("/domains/{:id}/status", get(get_handler))
-        .route("/domains/{:id}/update", post(update_handler))
-        .route("/domains/{:id}", delete(delete_handler))
-        .route("/domains/{:id}/validate", get(validate_handler))
-        .with_state(backend_service)
+    let api_router = Router::new()
+        .route("/v1/domains", post(create_handler))
+        .route("/v1/domains/{:id}/status", get(get_handler))
+        .route("/v1/domains/{:id}/update", post(update_handler))
+        .route("/v1/domains/{:id}", delete(delete_handler))
+        .route("/v1/domains/{:id}/validate", get(validate_handler))
+        .layer(from_fn_with_state(
+            Arc::new(HttpMetrics::new(registry.clone())),
+            metrics_middleware,
+        ))
+        .with_state(backend_service);
+
+    let metrics_router = if with_metrics_endpoint {
+        Router::new()
+            .route("/metrics", get(metrics_handler))
+            .with_state(registry)
+    } else {
+        Router::new()
+    };
+
+    api_router.merge(metrics_router)
 }
 
 #[cfg(test)]
@@ -38,6 +57,7 @@ mod tests {
     };
     use candid::Principal;
     use fqdn::FQDN;
+    use prometheus::Registry;
     use serde_json::json;
     use tower::util::ServiceExt;
 
@@ -74,14 +94,20 @@ mod tests {
             Box::pin(async { Err(RepositoryError::CertificateAlreadyIssued(domain)) })
         });
 
-        let router = create_router(Arc::new(mock_repository), Arc::new(mock_validator));
+        let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
+        let router = create_router(
+            Arc::new(mock_repository),
+            Arc::new(mock_validator),
+            registry,
+            true,
+        );
 
         // Status 202, accepted
         let body = json!({"domain":"example.org"});
 
         let request = Request::builder()
             .method("POST")
-            .uri("/domains")
+            .uri("/v1/domains")
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
@@ -95,7 +121,7 @@ mod tests {
 
         let request = Request::builder()
             .method("POST")
-            .uri("/domains")
+            .uri("/v1/domains")
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();

@@ -15,6 +15,7 @@ use custom_domains::{
     validation::Validator,
     work::{Worker, WorkerConfig},
 };
+use prometheus::Registry;
 use serde_json::json;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
@@ -31,7 +32,7 @@ pub async fn submit_registration(router: &Router, domain: &str) -> Response<Body
 
     let request = Request::builder()
         .method("POST")
-        .uri("/domains")
+        .uri("/v1/domains")
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
@@ -40,7 +41,7 @@ pub async fn submit_registration(router: &Router, domain: &str) -> Response<Body
 }
 
 async fn get_status(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/domains/{domain}/status");
+    let uri = format!("/v1/domains/{domain}/status");
 
     let request = Request::builder()
         .method("GET")
@@ -53,7 +54,7 @@ async fn get_status(router: &Router, domain: &str) -> Response<Body> {
 }
 
 async fn delete_domain(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/domains/{domain}");
+    let uri = format!("/v1/domains/{domain}");
 
     let request = Request::builder()
         .method("DELETE")
@@ -133,7 +134,8 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     let mock_time = Arc::new(MockTime::new(1));
     let state = Arc::new(State::new(mock_time));
     let validator = Arc::new(Validator::default());
-    let router = create_router(state.clone(), validator.clone());
+    let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
+    let router = create_router(state.clone(), validator.clone(), registry, true);
 
     info!("user submits domain={domain} for registration");
     let response = submit_registration(&router, domain).await;

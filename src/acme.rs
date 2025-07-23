@@ -1,11 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
+use anyhow::Context;
 use ic_bn_lib::{
     http::dns::{Options, Resolver},
     tls::acme::{
         AcmeUrl,
         client::{Client, ClientBuilder},
         dns::TokenManagerDns,
+        instant_acme::AccountCredentials,
     },
 };
 
@@ -16,7 +18,6 @@ const DEFAULT_POLL_ORDER_TIMEOUT: Duration = Duration::from_secs(140);
 const DEFAULT_POLL_TOKEN_TIMEOUT: Duration = Duration::from_secs(140);
 const DEFAULT_CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4/";
 
-#[derive(Debug, Clone)]
 pub struct AcmeClientConfig {
     /// Cloudflare API token for authentication
     pub cloudflare_api_token: String,
@@ -24,6 +25,8 @@ pub struct AcmeClientConfig {
     pub cloudflare_url: Url,
     /// ACME provider URL, e.g. staging letsencrypt https://acme-staging-v02.api.letsencrypt.org/directory
     pub acme_url: AcmeUrl,
+    /// ACME account credentials
+    pub acme_credentials: Option<AccountCredentials>,
     /// Whether to allow insecure TLS connections
     pub insecure_tls: bool,
     /// Timeout for polling ACME order status
@@ -38,6 +41,7 @@ impl AcmeClientConfig {
             cloudflare_api_token,
             cloudflare_url: Url::parse(DEFAULT_CLOUDFLARE_URL).unwrap(),
             acme_url: AcmeUrl::LetsEncryptStaging,
+            acme_credentials: None,
             insecure_tls: false,
             poll_order_timeout: DEFAULT_POLL_ORDER_TIMEOUT,
             poll_token_timeout: DEFAULT_POLL_TOKEN_TIMEOUT,
@@ -51,6 +55,11 @@ impl AcmeClientConfig {
 
     pub fn with_acme_url(mut self, acme_url: AcmeUrl) -> Self {
         self.acme_url = acme_url;
+        self
+    }
+
+    pub fn with_credentials(mut self, credentials: AccountCredentials) -> Self {
+        self.acme_credentials = Some(credentials);
         self
     }
 
@@ -86,10 +95,17 @@ impl AcmeClientConfig {
             .with_acme_url(self.acme_url.clone())
             .with_token_manager(token_manager);
 
-        // TODO: save/load account, it should be shared between all workers, otherwise certificate revocation calls would fail
-        let (builder, _) = builder
-            .create_account("mailto:test_account@testing.org")
-            .await?;
+        let builder = if let Some(credentials) = self.acme_credentials {
+            builder
+                .load_account(credentials)
+                .await
+                .with_context(|| "unable to load ACME account")?
+        } else {
+            let (builder, _) = builder
+                .create_account("mailto:test_account@testing.org")
+                .await?;
+            builder
+        };
 
         let client = builder
             .with_order_timeout(self.poll_order_timeout)
