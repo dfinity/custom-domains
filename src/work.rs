@@ -1,29 +1,3 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, Instant},
-};
-
-use anyhow::{Context, anyhow, bail};
-use candid::Principal;
-use derive_new::new;
-use fqdn::FQDN;
-use ic_bn_lib::tls::acme::{
-    client::Client,
-    instant_acme::{RevocationReason, RevocationRequest},
-};
-use pem::parse_many;
-use rustls_pki_types::CertificateDer;
-use tokio::{
-    select,
-    time::{self, sleep},
-};
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
-use x509_parser::parse_x509_certificate;
-
 use crate::{
     helpers::{format_error_chain, retry_async},
     metrics::WorkerMetrics,
@@ -34,6 +8,30 @@ use crate::{
     time::UtcTimestamp,
     validation::ValidatesDomains,
 };
+use anyhow::{Context, anyhow, bail};
+use candid::Principal;
+use derive_new::new;
+use fqdn::FQDN;
+use ic_bn_lib::tls::acme::{
+    client::Client,
+    instant_acme::{RevocationReason, RevocationRequest},
+};
+use pem::parse_many;
+use rustls_pki_types::CertificateDer;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
+use tokio::{
+    select,
+    time::{self, sleep},
+};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info, warn};
+use x509_parser::parse_x509_certificate;
 
 const DEFAULT_POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(20);
 const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(360);
@@ -75,108 +73,184 @@ pub struct Worker {
 
 impl Worker {
     pub async fn run(&self) {
-        let idle_interval = self.config.polling_interval_no_tasks;
-        let task_timeout = self.config.task_timeout;
-        let submit_timeout = self.config.task_submit_timeout;
-        let resubmit_interval = self.config.task_resubmit_interval;
-        let worker_name = self.name.clone();
         let worker_start = Instant::now();
 
         loop {
-            let token = self.token.clone();
-            let repository = self.repository.clone();
-            let metrics = self.metrics.clone();
-
+            // Update total runtime for worker utilization calculation
             self.total_time
                 .store(worker_start.elapsed().as_secs(), Ordering::Relaxed);
 
-            tokio::select! {
-                // Stop the worker upon cancellation
-                _ = token.cancelled() => {
-                    warn!("Worker stopped due to cancellation");
-                    return;
-                }
-                // Poll for a pending task
-                task = repository.fetch_next_task() => {
-                    match task {
-                        // Pending task found
-                        Ok(Some(task)) => {
-                            select! {
-                                _ = token.cancelled() => {
-                                    warn!("Worker stopped due to cancellation");
-                                    return;
-                                }
-                                task_result = execute_with_timeout(task_timeout, task.clone(), self.acme_client.clone(), self.validator.clone()) => {
-                                    let task_kind = task.kind.as_ref();
-                                    let execution_status = if task_result.output.is_some() {"success"} else {"failure"};
-                                    let execution_duration = task_result.duration.as_secs_f64();
-                                    self.active_time.fetch_add(task_result.duration.as_secs(), Ordering::Relaxed);
+            // Check for cancellation before proceeding
+            if self.token.is_cancelled() {
+                warn!("Worker {} stopped due to cancellation", self.name);
+                return;
+            }
 
-                                    let closure = || async {
-                                        let repository = repository.clone();
-                                        let task_result = task_result.clone();
-                                        repository.submit_task_result(task_result).await.map_err(|err| anyhow!(err))
-                                    };
-
-                                    let (attempt, submission_status) = match retry_async(None, None, submit_timeout, resubmit_interval, closure).await {
-                                        Ok((attempt, _)) => {
-                                            (attempt.to_string(), "success")
-                                        }
-                                        Err((attempt, err)) => {
-                                            error!(
-                                                domain = %task.domain,
-                                                task_kind = %task.kind,
-                                                duration_secs = submit_timeout.as_secs(),
-                                                error = %err,
-                                                "Failed to submit task result after retries"
-                                            );
-                                            (attempt.to_string(), "failure")
-                                        }
-                                    };
-
-                                    // update metrics
-                                    let execution_failure = task_result.failure.map(|err| err.to_short_error()).unwrap_or("");
-                                    metrics.task_executions.with_label_values(&[worker_name.as_str(), task_kind, execution_status , execution_failure]).observe(execution_duration);
-                                    metrics.task_submissions.with_label_values(&[worker_name.as_str(), task_kind, submission_status, &attempt]).inc();
-                                    self.update_utilization();
-                                }
-                            }
-                            // update metrics
-                            self.metrics.task_fetches.with_label_values(&[worker_name.as_str(), "success"]).inc();
-                        }
-                        // No pending tasks found
-                        Ok(None) => {
-                            info!(
-                                duration_secs = idle_interval.as_secs(),
-                                "No pending tasks found, sleeping"
-                            );
-                            select! {
-                                _ = token.cancelled() => {
-                                    warn!("Worker stopped due to cancellation");
-                                    return;
-                                }
-                                _ = sleep(idle_interval) => {}
-                            }
-                            // update metrics
-                            self.update_utilization();
-                            self.metrics.task_fetches.with_label_values(&[worker_name.as_str(), "success"]).inc()
-                        }
-                        // Unexpected error when fetching a task
-                        Err(err) => {
-                            error!(
-                                error = %err,
-                                "Failed to fetch pending task"
-                            );
-                            // update metrics
-                            self.update_utilization();
-                            self.metrics.task_fetches.with_label_values(&[worker_name.as_str(), "failure"]).inc()
-                        }
+            // Fetch and process the next task
+            match self.fetch_and_process_task().await {
+                Ok(continue_running) => {
+                    if !continue_running {
+                        return;
                     }
+                }
+                Err(err) => {
+                    error!(error = %err, "Failed to fetch pending task for worker {}", self.name);
+                    self.metrics
+                        .task_fetches
+                        .with_label_values(&[self.name.as_str(), "failure"])
+                        .inc();
+                    self.update_utilization();
                 }
             }
         }
     }
 
+    /// Fetches the next task and processes it, returning whether the worker should continue running
+    async fn fetch_and_process_task(&self) -> anyhow::Result<bool> {
+        let repository = self.repository.clone();
+        let task = repository.fetch_next_task().await?;
+
+        match task {
+            Some(task) => {
+                self.metrics
+                    .task_fetches
+                    .with_label_values(&[self.name.as_str(), "success"])
+                    .inc();
+                self.process_task(task).await
+            }
+            None => self.handle_no_tasks().await,
+        }
+    }
+
+    /// Processes a single task with execution and submission
+    async fn process_task(&self, task: ScheduledTask) -> anyhow::Result<bool> {
+        let task_start = Instant::now();
+
+        // Execute the task with a timeout
+        let task_result = select! {
+            _ = self.token.cancelled() => {
+                warn!("Worker {} stopped due to cancellation during task processing", self.name);
+                return Ok(false);
+            }
+            result = execute_with_timeout(
+                self.config.task_timeout,
+                task.clone(),
+                self.acme_client.clone(),
+                self.validator.clone(),
+            ) => result
+        };
+
+        // Update worker's active time
+        let task_duration = task_start.elapsed().as_secs();
+        self.active_time.fetch_add(task_duration, Ordering::Relaxed);
+
+        // Submit task result
+        let submission_result = self.submit_task_result(&task, task_result.clone()).await;
+
+        // Update metrics
+        self.update_task_metrics(&task, &task_result, &submission_result);
+        self.update_utilization();
+
+        Ok(true)
+    }
+
+    /// Submits the task result with retries
+    async fn submit_task_result(
+        &self,
+        task: &ScheduledTask,
+        task_result: TaskResult,
+    ) -> (String, &'static str) {
+        let closure = || async {
+            let repository = self.repository.clone();
+            let task_result = task_result.clone();
+            repository
+                .submit_task_result(task_result)
+                .await
+                .map_err(|err| anyhow!(err))
+        };
+
+        match retry_async(
+            None,
+            None,
+            self.config.task_submit_timeout,
+            self.config.task_resubmit_interval,
+            closure,
+        )
+        .await
+        {
+            Ok((attempt, _)) => (attempt.to_string(), "success"),
+            Err((attempt, err)) => {
+                error!(
+                    domain = %task.domain,
+                    task_kind = %task.kind,
+                    duration_secs = self.config.task_submit_timeout.as_secs(),
+                    error = %err,
+                    "Failed to submit task result for worker {} after retries", self.name
+                );
+                (attempt.to_string(), "failure")
+            }
+        }
+    }
+
+    /// Updates metrics for task execution and submission
+    fn update_task_metrics(
+        &self,
+        task: &ScheduledTask,
+        task_result: &TaskResult,
+        submission_result: &(String, &'static str),
+    ) {
+        let task_kind = task.kind.as_ref();
+        let execution_status = if task_result.output.is_some() {
+            "success"
+        } else {
+            "failure"
+        };
+        let execution_duration = task_result.duration.as_secs_f64();
+        let (attempt, submission_status) = submission_result;
+
+        let execution_failure = task_result
+            .failure
+            .as_ref()
+            .map(|err| err.to_short_error())
+            .unwrap_or("");
+
+        self.metrics
+            .task_executions
+            .with_label_values(&[
+                self.name.as_str(),
+                task_kind,
+                execution_status,
+                execution_failure,
+            ])
+            .observe(execution_duration);
+
+        self.metrics
+            .task_submissions
+            .with_label_values(&[self.name.as_str(), task_kind, submission_status, attempt])
+            .inc();
+    }
+
+    /// Handles no available tasks, return true if worker should continue running
+    async fn handle_no_tasks(&self) -> anyhow::Result<bool> {
+        info!(
+            duration_secs = self.config.polling_interval_no_tasks.as_secs(),
+            "No pending tasks found for worker {}, sleeping", self.name
+        );
+
+        select! {
+            _ = self.token.cancelled() => {
+                warn!("Worker {} stopped due to cancellation during idle", self.name);
+                Ok(false)
+            }
+            _ = sleep(self.config.polling_interval_no_tasks) => {
+                self.metrics.task_fetches.with_label_values(&[self.name.as_str(), "success"]).inc();
+                self.update_utilization();
+                Ok(true)
+            }
+        }
+    }
+
+    /// Updates the worker utilization metric
     fn update_utilization(&self) {
         let active = self.active_time.load(Ordering::Relaxed) as f64;
         let total = self.total_time.load(Ordering::Relaxed) as f64;
