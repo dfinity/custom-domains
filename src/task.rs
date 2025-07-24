@@ -1,11 +1,13 @@
+use std::time::Duration;
+
 use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
-use strum::{self, Display, EnumIter, EnumString};
+use strum::{self, AsRefStr, Display, EnumIter, EnumString};
 
 use crate::time::UtcTimestamp;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumIter, EnumString, AsRefStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskKind {
     Issue,
@@ -41,6 +43,7 @@ pub struct TaskResult {
     pub output: Option<TaskOutput>,
     pub failure: Option<TaskFailReason>,
     pub task_id: UtcTimestamp,
+    pub duration: Duration,
 }
 
 impl TaskResult {
@@ -50,6 +53,7 @@ impl TaskResult {
             output: Some(output),
             failure: None,
             task_id,
+            duration: Duration::ZERO,
         }
     }
 
@@ -59,7 +63,15 @@ impl TaskResult {
             output: None,
             failure: Some(failure),
             task_id,
+            duration: Duration::ZERO,
         }
+    }
+}
+
+impl TaskResult {
+    pub fn with_duration(mut self, duration: Duration) -> Self {
+        self.duration = duration;
+        self
     }
 }
 
@@ -83,6 +95,16 @@ pub enum TaskFailReason {
     Timeout { duration_secs: u64 },
     #[strum(to_string = "An unexpected error occurred. Please try again later or contact support")]
     GenericFailure(String),
+}
+
+impl TaskFailReason {
+    pub fn to_short_error(&self) -> &'static str {
+        match self {
+            TaskFailReason::ValidationFailed(_) => "validation_failed",
+            TaskFailReason::Timeout { .. } => "timeout",
+            TaskFailReason::GenericFailure(_) => "generic_failure",
+        }
+    }
 }
 
 #[derive(Debug, Clone, new)]

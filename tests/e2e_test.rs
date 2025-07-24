@@ -1,4 +1,8 @@
-use std::{env, sync::Arc, time::Duration};
+use std::{
+    env,
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use anyhow::{Context, bail};
 use axum::{
@@ -10,6 +14,7 @@ use custom_domains::{
     acme::AcmeClientConfig,
     api::routes::create_router,
     helpers::retry_async,
+    metrics::WorkerMetrics,
     state::State,
     time::MockTime,
     validation::Validator,
@@ -87,6 +92,7 @@ async fn await_registration_ready(router: &Router, domain: &str) {
         closure,
     )
     .await
+    .map_err(|(_, err)| err)
     .with_context(|| "failed to await for registration")
     .unwrap();
 }
@@ -109,6 +115,7 @@ async fn await_registration_deletion(router: Router, domain: &str) {
         closure,
     )
     .await
+    .map_err(|(_, err)| err)
     .with_context(|| "failed to await for registration deletion")
     .unwrap();
 }
@@ -135,7 +142,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     let state = Arc::new(State::new(mock_time));
     let validator = Arc::new(Validator::default());
     let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
-    let router = create_router(state.clone(), validator.clone(), registry, true);
+    let router = create_router(state.clone(), validator.clone(), registry.clone(), true);
 
     info!("user submits domain={domain} for registration");
     let response = submit_registration(&router, domain).await;
@@ -151,12 +158,17 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     info!("starting worker, which peforms all tasks ...");
     let token = CancellationToken::new();
     let acme_client = Arc::new(AcmeClientConfig::new(cloudflare_api_token).build().await?);
+
     let worker = Worker::new(
+        "hard_worker".to_string(),
         state,
         validator,
         acme_client,
-        token.clone(),
         WorkerConfig::default(),
+        Arc::new(WorkerMetrics::new(registry)),
+        Arc::new(AtomicU64::new(0)),
+        Arc::new(AtomicU64::new(0)),
+        token.clone(),
     );
     spawn(async move { worker.run().await });
 

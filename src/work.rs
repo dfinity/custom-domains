@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, anyhow, bail};
 use candid::Principal;
@@ -12,7 +18,7 @@ use pem::parse_many;
 use rustls_pki_types::CertificateDer;
 use tokio::{
     select,
-    time::{self},
+    time::{self, sleep},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -20,6 +26,7 @@ use x509_parser::parse_x509_certificate;
 
 use crate::{
     helpers::{format_error_chain, retry_async},
+    metrics::WorkerMetrics,
     repository::Repository,
     task::{
         IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult,
@@ -52,13 +59,18 @@ impl Default for WorkerConfig {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[derive(new)]
 pub struct Worker {
+    pub name: String,
     pub repository: Arc<dyn Repository>,
     pub validator: Arc<dyn ValidatesDomains>,
     pub acme_client: Arc<Client>,
-    pub token: CancellationToken,
     pub config: WorkerConfig,
+    pub metrics: Arc<WorkerMetrics>,
+    pub active_time: Arc<AtomicU64>,
+    pub total_time: Arc<AtomicU64>,
+    pub token: CancellationToken,
 }
 
 impl Worker {
@@ -67,10 +79,16 @@ impl Worker {
         let task_timeout = self.config.task_timeout;
         let submit_timeout = self.config.task_submit_timeout;
         let resubmit_interval = self.config.task_resubmit_interval;
+        let worker_name = self.name.clone();
+        let worker_start = Instant::now();
 
         loop {
             let token = self.token.clone();
             let repository = self.repository.clone();
+            let metrics = self.metrics.clone();
+
+            self.total_time
+                .store(worker_start.elapsed().as_secs(), Ordering::Relaxed);
 
             tokio::select! {
                 // Stop the worker upon cancellation
@@ -89,22 +107,42 @@ impl Worker {
                                     return;
                                 }
                                 task_result = execute_with_timeout(task_timeout, task.clone(), self.acme_client.clone(), self.validator.clone()) => {
+                                    let task_kind = task.kind.as_ref();
+                                    let execution_status = if task_result.output.is_some() {"success"} else {"failure"};
+                                    let execution_duration = task_result.duration.as_secs_f64();
+                                    self.active_time.fetch_add(task_result.duration.as_secs(), Ordering::Relaxed);
+
                                     let closure = || async {
                                         let repository = repository.clone();
                                         let task_result = task_result.clone();
                                         repository.submit_task_result(task_result).await.map_err(|err| anyhow!(err))
                                     };
-                                    if let Err(err) = retry_async(None, None, submit_timeout, resubmit_interval, closure).await {
-                                        error!(
-                                            domain = %task.domain,
-                                            task_kind = %task.kind,
-                                            duration_secs = submit_timeout.as_secs(),
-                                            error = %err,
-                                            "Failed to submit task result after retries"
-                                        );
-                                    }
+
+                                    let (attempt, submission_status) = match retry_async(None, None, submit_timeout, resubmit_interval, closure).await {
+                                        Ok((attempt, _)) => {
+                                            (attempt.to_string(), "success")
+                                        }
+                                        Err((attempt, err)) => {
+                                            error!(
+                                                domain = %task.domain,
+                                                task_kind = %task.kind,
+                                                duration_secs = submit_timeout.as_secs(),
+                                                error = %err,
+                                                "Failed to submit task result after retries"
+                                            );
+                                            (attempt.to_string(), "failure")
+                                        }
+                                    };
+
+                                    // update metrics
+                                    let execution_failure = task_result.failure.map(|err| err.to_short_error()).unwrap_or("");
+                                    metrics.task_executions.with_label_values(&[worker_name.as_str(), task_kind, execution_status , execution_failure]).observe(execution_duration);
+                                    metrics.task_submissions.with_label_values(&[worker_name.as_str(), task_kind, submission_status, &attempt]).inc();
+                                    self.update_utilization();
                                 }
                             }
+                            // update metrics
+                            self.metrics.task_fetches.with_label_values(&[worker_name.as_str(), "success"]).inc();
                         }
                         // No pending tasks found
                         Ok(None) => {
@@ -117,8 +155,11 @@ impl Worker {
                                     warn!("Worker stopped due to cancellation");
                                     return;
                                 }
-                                _ = tokio::time::sleep(idle_interval) => {}
+                                _ = sleep(idle_interval) => {}
                             }
+                            // update metrics
+                            self.update_utilization();
+                            self.metrics.task_fetches.with_label_values(&[worker_name.as_str(), "success"]).inc()
                         }
                         // Unexpected error when fetching a task
                         Err(err) => {
@@ -126,11 +167,30 @@ impl Worker {
                                 error = %err,
                                 "Failed to fetch pending task"
                             );
+                            // update metrics
+                            self.update_utilization();
+                            self.metrics.task_fetches.with_label_values(&[worker_name.as_str(), "failure"]).inc()
                         }
                     }
                 }
             }
         }
+    }
+
+    fn update_utilization(&self) {
+        let active = self.active_time.load(Ordering::Relaxed) as f64;
+        let total = self.total_time.load(Ordering::Relaxed) as f64;
+
+        let utilization = if total > 0.0 {
+            (active / total) * 100.0
+        } else {
+            0.0
+        };
+
+        self.metrics
+            .worker_utilization
+            .with_label_values(&[self.name.as_str()])
+            .set(utilization);
     }
 }
 
@@ -140,6 +200,8 @@ async fn execute_with_timeout(
     acme_client: Arc<Client>,
     validator: Arc<dyn ValidatesDomains>,
 ) -> TaskResult {
+    let start = Instant::now();
+
     let domain = task.domain;
     let task_id = task.id;
 
@@ -164,14 +226,15 @@ async fn execute_with_timeout(
     })
     .await
     {
-        Ok(task_result) => task_result,
+        Ok(task_result) => task_result.with_duration(start.elapsed()),
         Err(_) => TaskResult::failure(
             domain.clone(),
             TaskFailReason::Timeout {
                 duration_secs: timeout.as_secs(),
             },
             task.id,
-        ),
+        )
+        .with_duration(start.elapsed()),
     };
 
     if task_result.output.is_some() {

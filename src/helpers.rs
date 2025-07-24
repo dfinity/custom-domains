@@ -13,7 +13,7 @@ pub async fn retry_async<F, Fut, R>(
     timeout: Duration,
     backoff: Duration,
     f: F,
-) -> Result<R>
+) -> Result<(usize, R), (usize, anyhow::Error)>
 where
     Fut: Future<Output = anyhow::Result<R>>,
     F: Fn() -> Fut,
@@ -41,16 +41,17 @@ where
                         ),
                     );
                 }
-                return Ok(v);
+                return Ok((attempt, v));
             }
             Err(err) => {
                 if start_time.elapsed() > timeout {
                     let op_name = operation.map(|op| format!(" \"{op}\"")).unwrap_or_default();
-                    break Err(anyhow!(
+                    let err = anyhow!(
                         "Operation{op_name} timed out after {:?} on attempt {attempt}. Last error: {}",
                         start_time.elapsed(),
                         truncate_error_msg(&err)
-                    ));
+                    );
+                    return Err((attempt, err));
                 }
 
                 if let Some(op_name) = operation {

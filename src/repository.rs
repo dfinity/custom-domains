@@ -51,6 +51,25 @@ pub enum RepositoryError {
     InternalError(#[from] anyhow::Error),
 }
 
+impl RepositoryError {
+    pub fn to_short_error(&self) -> String {
+        match self {
+            RepositoryError::AnotherTaskInProgress(_) => "another_task_in_progress".to_string(),
+            RepositoryError::CertificateAlreadyIssued(_) => {
+                "certificate_already_issued".to_string()
+            }
+            RepositoryError::DomainNotFound(_) => "domain_not_found".to_string(),
+            RepositoryError::NonExistingTaskSubmitted(_) => {
+                "non_existing_task_submitted".to_string()
+            }
+            RepositoryError::MissingCertificateForUpdate(_) => {
+                "missing_certificate_for_update".to_string()
+            }
+            RepositoryError::InternalError(_) => "internal_error".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RegisteredDomain {
     pub domain: FQDN,
