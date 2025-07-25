@@ -11,9 +11,7 @@ pub struct WorkerMetrics {
     pub worker_utilization: GaugeVec,
 }
 
-pub const TASK_DURATION_BUCKETS: &[f64] = &[
-    5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 90.0, 120.0, 180.0, 300.0, 400.0,
-];
+pub const TASK_DURATION_BUCKETS: &[f64] = &[5.0, 30.0, 60.0, 90.0, 120.0, 180.0, 300.0, 400.0];
 
 impl WorkerMetrics {
     pub fn new(registry: Registry) -> Self {
@@ -29,7 +27,13 @@ impl WorkerMetrics {
             task_submissions: register_int_counter_vec_with_registry!(
                 format!("task_submission_with_retries"),
                 format!("Total number of task submission (with retries)"),
-                &["worker_name", "task_kind", "status", "attempts", "failure"],
+                &[
+                    "worker_name",
+                    "task_kind",
+                    "status",
+                    "attempts",
+                    "last_failure"
+                ],
                 registry
             )
             .unwrap(),

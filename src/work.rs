@@ -229,7 +229,7 @@ impl Worker {
                     Err(err) => {
                         let attempts = err.attempts.to_string();
                         let error = format!(
-                            "Failed to submit task result for worker={} after {attempts} attempts",
+                            "Failed to submit task result for worker={} after {attempts} attempts: {err:?}",
                             self.name,
                         );
                         error!(
