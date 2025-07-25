@@ -23,7 +23,7 @@ pub async fn retry_async<F, Fut, R, E>(
 where
     Fut: Future<Output = Result<R, E>>,
     F: Fn() -> Fut,
-    E: std::fmt::Debug
+    E: std::fmt::Debug,
 {
     let log_level = log_level.unwrap_or(Level::INFO);
     let start_time = Instant::now();

@@ -33,11 +33,18 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use x509_parser::parse_x509_certificate;
 
+/// How long to wait between polling attempts when no tasks are available.
 const DEFAULT_POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(20);
+/// Maximum time a worker is allowed to spend processing a single task.
 const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(360);
+/// Maximum time allowed to attempt submitting the result of a completed task.
 const DEFAULT_TASK_SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Interval to wait before retrying to submit a failed task result.
 const DEFAULT_TASK_RESUBMIT_INTERVAL: Duration = Duration::from_secs(5);
+/// Interval to wait before retrying to fetch a new task if the previous fetch failed.
 const DEFAULT_TASK_FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// The time window over which each worker's utilization is measured.
+const WORKER_UTILIZATION_WINDOW: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Clone, new)]
 pub struct WorkerConfig {
@@ -46,6 +53,7 @@ pub struct WorkerConfig {
     pub task_submit_timeout: Duration,
     pub task_resubmit_interval: Duration,
     pub task_fetch_retry_interval: Duration,
+    pub worker_utilization_window: Duration,
 }
 
 impl Default for WorkerConfig {
@@ -56,6 +64,7 @@ impl Default for WorkerConfig {
             DEFAULT_TASK_SUBMIT_TIMEOUT,
             DEFAULT_TASK_RESUBMIT_INTERVAL,
             DEFAULT_TASK_FETCH_RETRY_INTERVAL,
+            WORKER_UTILIZATION_WINDOW,
         )
     }
 }
@@ -69,19 +78,21 @@ pub struct Worker {
     pub acme_client: Arc<Client>,
     pub config: WorkerConfig,
     pub metrics: Arc<WorkerMetrics>,
-    pub active_time: Arc<AtomicU64>,
-    pub total_time: Arc<AtomicU64>,
+    pub total_time_since_reset: Arc<AtomicU64>,
+    pub active_time_since_reset: Arc<AtomicU64>,
     pub token: CancellationToken,
+}
+
+#[derive(PartialEq, Eq)]
+enum WorkerState {
+    Continue,
+    Stop,
 }
 
 impl Worker {
     pub async fn run(&self) {
-        let worker_start = Instant::now();
-
         loop {
-            // Update total runtime for worker utilization calculation
-            self.total_time
-                .store(worker_start.elapsed().as_secs(), Ordering::Relaxed);
+            let cycle_start = Instant::now();
 
             // Check for cancellation before proceeding
             if self.token.is_cancelled() {
@@ -90,17 +101,19 @@ impl Worker {
             }
 
             // Fetch and process the next pending task
-            let is_worker_stopped = self.fetch_and_process_task().await;
-            if !is_worker_stopped {
+            if WorkerState::Stop == self.fetch_and_process_task().await {
                 return;
             }
 
-            self.update_utilization();
+            let cycle_duration = cycle_start.elapsed().as_secs();
+            self.total_time_since_reset
+                .fetch_add(cycle_duration, Ordering::Relaxed);
+            self.maybe_update_utilization_metric();
         }
     }
 
     /// Fetches the next task and processes it, returning whether the worker should continue running
-    async fn fetch_and_process_task(&self) -> bool {
+    async fn fetch_and_process_task(&self) -> WorkerState {
         let repository = self.repository.clone();
 
         let task = match repository.fetch_next_task().await {
@@ -123,7 +136,7 @@ impl Worker {
                     .with_label_values(&[self.name.as_str(), "failure", err.into()])
                     .inc();
                 sleep(self.config.task_fetch_retry_interval).await;
-                return true;
+                return WorkerState::Continue;
             }
         };
 
@@ -134,14 +147,14 @@ impl Worker {
     }
 
     /// Processes a single task with execution and submission, returning whether the worker should continue running
-    async fn process_task(&self, task: ScheduledTask) -> bool {
+    async fn process_task(&self, task: ScheduledTask) -> WorkerState {
         let task_start = Instant::now();
 
         // Execute the task with a timeout
         let task_result = select! {
             _ = self.token.cancelled() => {
                 warn!("Worker {} stopped due to cancellation during task processing", self.name);
-                return false;
+                return WorkerState::Stop;
             }
             result = execute_with_timeout(
                 self.config.task_timeout,
@@ -154,8 +167,10 @@ impl Worker {
         // Submit task result with retries
         self.submit_task_result(&task, task_result.clone()).await;
 
-        // Update worker's active time
+        // Calculate task duration
         let task_duration = task_start.elapsed();
+        let task_duration_secs = task_duration.as_secs();
+
         let execution_status = if task_result.output.is_some() {
             "success"
         } else {
@@ -166,8 +181,10 @@ impl Worker {
             .as_ref()
             .map(|err| err.to_short_error())
             .unwrap_or("");
-        self.active_time
-            .fetch_add(task_duration.as_secs(), Ordering::Relaxed);
+
+        // Update worker busy time for utilization metric
+        self.active_time_since_reset
+            .fetch_add(task_duration_secs, Ordering::Relaxed);
 
         // Update metrics
         self.metrics
@@ -180,57 +197,69 @@ impl Worker {
             ])
             .observe(task_duration.as_secs_f64());
 
-        true
+        WorkerState::Continue
     }
 
-    /// Submits the task result with retries
-    async fn submit_task_result(&self, task: &ScheduledTask, task_result: TaskResult) {
+    /// Submits the task result with retries, returning whether the worker should continue running
+    async fn submit_task_result(
+        &self,
+        task: &ScheduledTask,
+        task_result: TaskResult,
+    ) -> WorkerState {
         let closure = || async {
             let repository = self.repository.clone();
             let task_result = task_result.clone();
             repository.submit_task_result(task_result).await
         };
 
-        let (attempt, status, failure) = match retry_async(
-            None,
-            None,
-            self.config.task_submit_timeout,
-            self.config.task_resubmit_interval,
-            closure,
-        )
-        .await
-        {
-            Ok((attempt, _)) => (attempt.to_string(), "success", ""),
-            Err(err) => {
-                let attempts = err.attempts.to_string();
-                let error = format!(
-                    "Failed to submit task result for worker={} after {attempts} attempts",
-                    self.name,
-                );
-                error!(
-                    domain = %task.domain,
-                    task_kind = %task.kind,
-                    duration_secs = self.config.task_submit_timeout.as_secs(),
-                    error = %error,
-                );
-                (err.attempts.to_string(), "failure", err.last_error.into())
+        select! {
+            _ = self.token.cancelled() => {
+                warn!("Worker {} stopped due to cancellation during submission", self.name);
+                WorkerState::Stop
             }
-        };
+            result = retry_async(
+                None,
+                None,
+                self.config.task_submit_timeout,
+                self.config.task_resubmit_interval,
+                closure,
+            ) => {
+                let (attempt, status, failure) = match result {
+                    Ok((attempt, _)) => (attempt.to_string(), "success", ""),
+                    Err(err) => {
+                        let attempts = err.attempts.to_string();
+                        let error = format!(
+                            "Failed to submit task result for worker={} after {attempts} attempts",
+                            self.name,
+                        );
+                        error!(
+                            domain = %task.domain,
+                            task_kind = %task.kind,
+                            duration_secs = self.config.task_submit_timeout.as_secs(),
+                            error = %error,
+                        );
+                        (err.attempts.to_string(), "failure", err.last_error.into())
+                    }
+                };
 
-        self.metrics
-            .task_submissions
-            .with_label_values(&[
-                self.name.as_str(),
-                task.kind.as_ref(),
-                status,
-                &attempt,
-                failure,
-            ])
-            .inc();
+                self.metrics
+                    .task_submissions
+                    .with_label_values(&[
+                        self.name.as_str(),
+                        task.kind.as_ref(),
+                        status,
+                        &attempt,
+                        failure,
+                    ])
+                    .inc();
+
+                WorkerState::Continue
+            }
+        }
     }
 
-    /// Handles no available tasks, return true if worker should continue running
-    async fn handle_no_tasks(&self) -> bool {
+    /// Handles no available tasks, returning whether the worker should continue running
+    async fn handle_no_tasks(&self) -> WorkerState {
         debug!(
             duration_secs = self.config.polling_interval_no_tasks.as_secs(),
             "No pending tasks found for worker {}, sleeping", self.name
@@ -239,24 +268,39 @@ impl Worker {
         select! {
             _ = self.token.cancelled() => {
                 warn!("Worker {} stopped due to cancellation during idle", self.name);
-                false
+                WorkerState::Stop
             }
             _ = sleep(self.config.polling_interval_no_tasks) => {
-                true
+                WorkerState::Continue
             }
         }
     }
 
-    /// Updates the worker utilization metric
-    fn update_utilization(&self) {
-        let active = self.active_time.load(Ordering::Relaxed) as f64;
-        let total = self.total_time.load(Ordering::Relaxed) as f64;
+    /// Updates the worker utilization metric if the window has elapsed
+    fn maybe_update_utilization_metric(&self) {
+        let total = self.total_time_since_reset.load(Ordering::Relaxed);
 
-        let utilization = if total > 0.0 {
-            (active / total) * 100.0
-        } else {
+        if total < self.config.worker_utilization_window.as_secs() {
+            return;
+        }
+
+        // Take values and reset
+        let active = self.active_time_since_reset.swap(0, Ordering::Relaxed);
+        let total = self.total_time_since_reset.swap(0, Ordering::Relaxed);
+
+        let utilization = if total == 0 {
             0.0
+        } else {
+            ((active as f64 / total as f64) * 1000.0).round() / 10.0
         };
+
+        debug!(
+            worker = %self.name,
+            active_secs = active,
+            total_secs = total,
+            utilization = utilization,
+            "Worker utilization metric published"
+        );
 
         self.metrics
             .worker_utilization

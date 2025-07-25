@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, bail, anyhow};
+use anyhow::{anyhow, bail};
 use axum::{
     Router,
     body::{Body, to_bytes},
