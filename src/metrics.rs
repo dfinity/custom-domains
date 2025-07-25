@@ -27,16 +27,16 @@ impl WorkerMetrics {
             )
             .unwrap(),
             task_submissions: register_int_counter_vec_with_registry!(
-                format!("task_submission"),
-                format!("Total number of task submission"),
-                &["worker_name", "task_kind", "status", "attempts"],
+                format!("task_submission_with_retries"),
+                format!("Total number of task submission (with retries)"),
+                &["worker_name", "task_kind", "status", "attempts", "failure"],
                 registry
             )
             .unwrap(),
             task_fetches: register_int_counter_vec_with_registry!(
                 format!("task_fetch"),
                 format!("Total number of task fetching attempts"),
-                &["worker_name", "status"],
+                &["worker_name", "status", "failure"],
                 registry
             )
             .unwrap(),

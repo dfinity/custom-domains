@@ -2,6 +2,7 @@ use candid::Principal;
 use fqdn::FQDN;
 use mockall::automock;
 use serde::{Deserialize, Serialize};
+use strum::IntoStaticStr;
 use thiserror::Error;
 use trait_async::trait_async;
 
@@ -35,7 +36,8 @@ impl DomainEntry {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum RepositoryError {
     #[error("Another task is in progress for domain: {0}")]
     AnotherTaskInProgress(FQDN),
