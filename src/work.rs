@@ -83,11 +83,8 @@ pub struct Worker {
     pub token: CancellationToken,
 }
 
-#[derive(PartialEq, Eq)]
-enum WorkerState {
-    Continue,
-    Stop,
-}
+// Indicates that worker was stopped externally and it should stop running.
+struct WorkerStopped;
 
 impl Worker {
     pub async fn run(&self) {
@@ -101,7 +98,7 @@ impl Worker {
             }
 
             // Fetch and process the next pending task
-            if WorkerState::Stop == self.fetch_and_process_task().await {
+            if let Err(_) = self.fetch_and_process_task().await {
                 return;
             }
 
@@ -113,7 +110,7 @@ impl Worker {
     }
 
     /// Fetches the next task and processes it, returning whether the worker should continue running
-    async fn fetch_and_process_task(&self) -> WorkerState {
+    async fn fetch_and_process_task(&self) -> Result<(), WorkerStopped> {
         let repository = self.repository.clone();
 
         let task = match repository.fetch_next_task().await {
@@ -136,7 +133,7 @@ impl Worker {
                     .with_label_values(&[self.name.as_str(), "failure", err.into()])
                     .inc();
                 sleep(self.config.task_fetch_retry_interval).await;
-                return WorkerState::Continue;
+                return Ok(());
             }
         };
 
@@ -147,14 +144,14 @@ impl Worker {
     }
 
     /// Processes a single task with execution and submission, returning whether the worker should continue running
-    async fn process_task(&self, task: ScheduledTask) -> WorkerState {
+    async fn process_task(&self, task: ScheduledTask) -> Result<(), WorkerStopped> {
         let task_start = Instant::now();
 
         // Execute the task with a timeout
         let task_result = select! {
             _ = self.token.cancelled() => {
                 warn!("Worker {} stopped due to cancellation during task processing", self.name);
-                return WorkerState::Stop;
+                return Err(WorkerStopped);
             }
             result = execute_with_timeout(
                 self.config.task_timeout,
@@ -165,7 +162,7 @@ impl Worker {
         };
 
         // Submit task result with retries
-        self.submit_task_result(&task, task_result.clone()).await;
+        self.submit_task_result(&task, task_result.clone()).await?;
 
         // Calculate task duration
         let task_duration = task_start.elapsed();
@@ -197,7 +194,7 @@ impl Worker {
             ])
             .observe(task_duration.as_secs_f64());
 
-        WorkerState::Continue
+        Ok(())
     }
 
     /// Submits the task result with retries, returning whether the worker should continue running
@@ -205,7 +202,7 @@ impl Worker {
         &self,
         task: &ScheduledTask,
         task_result: TaskResult,
-    ) -> WorkerState {
+    ) -> Result<(), WorkerStopped> {
         let closure = || async {
             let repository = self.repository.clone();
             let task_result = task_result.clone();
@@ -215,7 +212,7 @@ impl Worker {
         select! {
             _ = self.token.cancelled() => {
                 warn!("Worker {} stopped due to cancellation during submission", self.name);
-                WorkerState::Stop
+                return Err(WorkerStopped);
             }
             result = retry_async(
                 None,
@@ -252,14 +249,14 @@ impl Worker {
                         failure,
                     ])
                     .inc();
-
-                WorkerState::Continue
             }
         }
+
+        Ok(())
     }
 
     /// Handles no available tasks, returning whether the worker should continue running
-    async fn handle_no_tasks(&self) -> WorkerState {
+    async fn handle_no_tasks(&self) -> Result<(), WorkerStopped> {
         debug!(
             duration_secs = self.config.polling_interval_no_tasks.as_secs(),
             "No pending tasks found for worker {}, sleeping", self.name
@@ -268,12 +265,12 @@ impl Worker {
         select! {
             _ = self.token.cancelled() => {
                 warn!("Worker {} stopped due to cancellation during idle", self.name);
-                WorkerState::Stop
+                return Err(WorkerStopped);
             }
-            _ = sleep(self.config.polling_interval_no_tasks) => {
-                WorkerState::Continue
-            }
+            _ = sleep(self.config.polling_interval_no_tasks) => {}
         }
+
+        Ok(())
     }
 
     /// Updates the worker utilization metric if the window has elapsed
