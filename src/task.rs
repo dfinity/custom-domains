@@ -3,7 +3,7 @@ use std::time::Duration;
 use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
-use strum::{self, AsRefStr, Display, EnumIter, EnumString};
+use strum::{self, AsRefStr, Display, EnumIter, EnumString, IntoStaticStr};
 
 use crate::time::UtcTimestamp;
 
@@ -86,7 +86,7 @@ pub enum TaskOutput {
 // Only validation failures are actionable by the user.
 // All other errors suggest retrying or contacting support.
 // TODO: add request_id to the body? (should be already in the header once intergrated into ic-gateway)
-#[derive(Debug, Clone, Display, PartialEq, Eq)]
+#[derive(Debug, Clone, Display, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskFailReason {
     #[strum(to_string = "Validation failed: {0}. Please review your settings and try again.")]
@@ -95,16 +95,6 @@ pub enum TaskFailReason {
     Timeout { duration_secs: u64 },
     #[strum(to_string = "An unexpected error occurred. Please try again later or contact support")]
     GenericFailure(String),
-}
-
-impl TaskFailReason {
-    pub fn to_short_error(&self) -> &'static str {
-        match self {
-            TaskFailReason::ValidationFailed(_) => "validation_failed",
-            TaskFailReason::Timeout { .. } => "timeout",
-            TaskFailReason::GenericFailure(_) => "generic_failure",
-        }
-    }
 }
 
 #[derive(Debug, Clone, new)]

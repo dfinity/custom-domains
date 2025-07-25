@@ -98,7 +98,7 @@ impl Worker {
             }
 
             // Fetch and process the next pending task
-            if let Err(_) = self.fetch_and_process_task().await {
+            if self.fetch_and_process_task().await.is_err() {
                 return;
             }
 
@@ -123,7 +123,7 @@ impl Worker {
             }
             Err(err) => {
                 error!(
-                    error = %err,
+                    error = ?err,
                     duration_secs = self.config.task_fetch_retry_interval.as_secs(),
                     "Failed to fetch pending task for worker {}, sleeping before retry",
                     self.name
@@ -176,7 +176,7 @@ impl Worker {
         let execution_failure = task_result
             .failure
             .as_ref()
-            .map(|err| err.to_short_error())
+            .map(|err| err.into())
             .unwrap_or("");
 
         // Update worker busy time for utilization metric
@@ -359,7 +359,7 @@ async fn execute_with_timeout(
         error!(
             domain = %domain,
             task_kind = %task.kind,
-            error = %err,
+            error = ?err,
             "Task execution failed"
         );
     }
