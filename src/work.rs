@@ -17,6 +17,7 @@ use ic_bn_lib::tls::acme::{
     instant_acme::{RevocationReason, RevocationRequest},
 };
 use pem::parse_many;
+use prometheus::Registry;
 use rustls_pki_types::CertificateDer;
 use std::{
     sync::{
@@ -69,8 +70,6 @@ impl Default for WorkerConfig {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-#[derive(new)]
 pub struct Worker {
     pub name: String,
     pub repository: Arc<dyn Repository>,
@@ -78,9 +77,34 @@ pub struct Worker {
     pub acme_client: Arc<Client>,
     pub config: WorkerConfig,
     pub metrics: Arc<WorkerMetrics>,
-    pub total_time_since_reset: Arc<AtomicU64>,
-    pub active_time_since_reset: Arc<AtomicU64>,
+    pub total_sec_since_reset: Arc<AtomicU64>,
+    pub idle_sec_since_reset: Arc<AtomicU64>,
     pub token: CancellationToken,
+}
+
+impl Worker {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        name: String,
+        repository: Arc<dyn Repository>,
+        validator: Arc<dyn ValidatesDomains>,
+        acme_client: Arc<Client>,
+        config: WorkerConfig,
+        registry: Registry,
+        token: CancellationToken,
+    ) -> Self {
+        Self {
+            name,
+            repository,
+            validator,
+            acme_client,
+            config,
+            metrics: Arc::new(WorkerMetrics::new(registry)),
+            total_sec_since_reset: Arc::new(AtomicU64::new(0)),
+            idle_sec_since_reset: Arc::new(AtomicU64::new(0)),
+            token,
+        }
+    }
 }
 
 // Indicates that worker was stopped externally and it should stop running.
@@ -102,8 +126,9 @@ impl Worker {
                 return;
             }
 
+            // Publish worker utilization metric if a time window has passed
             let cycle_duration = cycle_start.elapsed().as_secs();
-            self.total_time_since_reset
+            self.total_sec_since_reset
                 .fetch_add(cycle_duration, Ordering::Relaxed);
             self.maybe_update_utilization_metric();
         }
@@ -133,6 +158,11 @@ impl Worker {
                     .with_label_values(&[self.name.as_str(), "failure", err.into()])
                     .inc();
                 sleep(self.config.task_fetch_retry_interval).await;
+                // Update worker idle time for utilization metric
+                self.idle_sec_since_reset.fetch_add(
+                    self.config.task_fetch_retry_interval.as_secs(),
+                    Ordering::Relaxed,
+                );
                 return Ok(());
             }
         };
@@ -150,15 +180,19 @@ impl Worker {
         // Execute the task with a timeout
         let task_result = select! {
             _ = self.token.cancelled() => {
-                warn!("Worker {} stopped due to cancellation during task processing", self.name);
+                warn!(
+                    "Worker {} stopped due to cancellation during task processing",
+                    self.name
+                );
                 return Err(WorkerStopped);
             }
+
             result = execute_with_timeout(
                 self.config.task_timeout,
                 task.clone(),
                 self.acme_client.clone(),
                 self.validator.clone(),
-            ) => result
+            ) => result,
         };
 
         // Submit task result with retries
@@ -166,7 +200,6 @@ impl Worker {
 
         // Calculate task duration
         let task_duration = task_start.elapsed();
-        let task_duration_secs = task_duration.as_secs();
 
         let execution_status = if task_result.output.is_some() {
             "success"
@@ -178,10 +211,6 @@ impl Worker {
             .as_ref()
             .map(|err| err.into())
             .unwrap_or("");
-
-        // Update worker busy time for utilization metric
-        self.active_time_since_reset
-            .fetch_add(task_duration_secs, Ordering::Relaxed);
 
         // Update metrics
         self.metrics
@@ -264,10 +293,20 @@ impl Worker {
 
         select! {
             _ = self.token.cancelled() => {
-                warn!("Worker {} stopped due to cancellation during idle", self.name);
+                warn!(
+                    "Worker {} stopped due to cancellation during idle",
+                    self.name
+                );
                 return Err(WorkerStopped);
             }
-            _ = sleep(self.config.polling_interval_no_tasks) => {}
+
+            _ = sleep(self.config.polling_interval_no_tasks) => {
+                // Update worker idle time for utilization metric
+                self.idle_sec_since_reset.fetch_add(
+                    self.config.polling_interval_no_tasks.as_secs(),
+                    Ordering::Relaxed,
+                );
+            }
         }
 
         Ok(())
@@ -275,25 +314,25 @@ impl Worker {
 
     /// Updates the worker utilization metric if the window has elapsed
     fn maybe_update_utilization_metric(&self) {
-        let total = self.total_time_since_reset.load(Ordering::Relaxed);
+        let total = self.total_sec_since_reset.load(Ordering::Relaxed);
 
         if total < self.config.worker_utilization_window.as_secs() {
             return;
         }
 
         // Take values and reset
-        let active = self.active_time_since_reset.swap(0, Ordering::Relaxed);
-        let total = self.total_time_since_reset.swap(0, Ordering::Relaxed);
+        let idle = self.idle_sec_since_reset.swap(0, Ordering::Relaxed) as f64;
+        let total = self.total_sec_since_reset.swap(0, Ordering::Relaxed) as f64;
+        if total == 0.0 {
+            return;
+        }
+        let active = total - idle;
 
-        let utilization = if total == 0 {
-            0.0
-        } else {
-            ((active as f64 / total as f64) * 1000.0).round() / 10.0
-        };
+        let utilization = (active * 1000.0 / total).round() / 10.0;
 
         debug!(
             worker = %self.name,
-            active_secs = active,
+            active_secs = total - idle,
             total_secs = total,
             utilization = utilization,
             "Worker utilization metric published"
