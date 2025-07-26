@@ -163,9 +163,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
         validator,
         acme_client,
         WorkerConfig::default(),
-        Arc::new(WorkerMetrics::new(registry)),
-        Arc::new(AtomicU64::new(0)),
-        Arc::new(AtomicU64::new(0)),
+        registry,
         token.clone(),
     );
     spawn(async move { worker.run().await });
