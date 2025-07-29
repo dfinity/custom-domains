@@ -38,8 +38,8 @@ impl WorkerMetrics {
             )
             .unwrap(),
             task_fetches: register_int_counter_vec_with_registry!(
-                format!("task_fetch"),
-                format!("Total number of task fetching attempts"),
+                "task_fetch",
+                "Total number of task fetching attempts",
                 &["worker_name", "status", "failure"],
                 registry
             )
