@@ -62,8 +62,7 @@ where
                     trace_msg(
                         log_level,
                         format!(
-                            "Operation \"{op_name}\" failed on attempt {attempt}. Error: {:?}",
-                            truncate_error_msg(err),
+                            "Operation \"{op_name}\" failed on attempt {attempt}. Error: {err:?}",
                         ),
                     );
                 }
@@ -73,13 +72,6 @@ where
             }
         }
     }
-}
-
-fn truncate_error_msg(err: impl Debug) -> String {
-    let mut short_msg = format!("{err:?}").replace('\n', "\\n ");
-    short_msg.truncate(500);
-    short_msg.push_str("...");
-    short_msg
 }
 
 pub fn trace_msg<M: Display>(level: Level, message: M) {
