@@ -1,8 +1,4 @@
-use std::{
-    env,
-    sync::{Arc, atomic::AtomicU64},
-    time::Duration,
-};
+use std::{env, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
 use axum::{
@@ -14,7 +10,6 @@ use custom_domains::{
     acme::AcmeClientConfig,
     api::routes::create_router,
     helpers::retry_async,
-    metrics::WorkerMetrics,
     state::State,
     time::MockTime,
     validation::Validator,
