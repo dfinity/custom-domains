@@ -1,4 +1,5 @@
 use candid::Principal;
+use derive_new::new;
 use fqdn::FQDN;
 use mockall::automock;
 use serde::{Deserialize, Serialize};
@@ -53,15 +54,21 @@ pub enum RepositoryError {
     InternalError(#[from] anyhow::Error),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct RegisteredDomain {
     pub domain: FQDN,
     pub canister_id: Principal,
-    pub cert_enc: Vec<u8>,
-    pub private_key_enc: Vec<u8>,
+    pub cert_encrypted: Vec<u8>,
+    pub priv_key_encrypted: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomDomain {
+    pub domain: FQDN,
+    pub canister_id: Principal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RegistrationStatus {
     Processing,
@@ -87,11 +94,13 @@ pub trait Repository: Send + Sync {
     /// Fetch next pending task for execution.
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError>;
     /// Submits task execution result.
-    async fn submit_task_result(&self, task: TaskResult) -> Result<(), RepositoryError>;
+    async fn submit_task_result(&self, task_result: TaskResult) -> Result<(), RepositoryError>;
     /// Tries to submit a new task of certain kind for a domain.
     async fn try_add_task(&self, task: InputTask) -> Result<(), RepositoryError>;
     /// Retrieves the timestamp of the last change accross all registration records.
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError>;
     /// Fetches all registered domains with valid certificates.
     async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError>;
+    /// Fetches all registered domains (without certificates).
+    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError>;
 }
