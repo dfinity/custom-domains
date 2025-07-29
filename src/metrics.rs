@@ -17,16 +17,16 @@ impl WorkerMetrics {
     pub fn new(registry: Registry) -> Self {
         Self {
             task_executions: register_histogram_vec_with_registry!(
-                format!("task_execution_duration_seconds"),
-                format!("Task execution durations in seconds"),
+                "task_execution_duration_seconds",
+                "Task execution durations in seconds",
                 &["worker_name", "task_kind", "status", "failure"],
                 TASK_DURATION_BUCKETS.to_vec(),
                 registry
             )
             .unwrap(),
             task_submissions: register_int_counter_vec_with_registry!(
-                format!("task_submission_with_retries"),
-                format!("Total number of task submission (with retries)"),
+                "task_submission_with_retries",
+                "Total number of task submission (with retries)",
                 &[
                     "worker_name",
                     "task_kind",
