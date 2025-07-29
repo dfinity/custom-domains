@@ -5,7 +5,6 @@ use axum::{
     middleware::from_fn_with_state,
     routing::{delete, get, post},
 };
-use prometheus::Registry;
 
 use crate::{
     api::{
@@ -17,6 +16,8 @@ use crate::{
     validation::ValidatesDomains,
 };
 
+use prometheus::Registry;
+
 pub fn create_router(
     repository: Arc<dyn Repository>,
     validator: Arc<dyn ValidatesDomains>,
@@ -24,6 +25,7 @@ pub fn create_router(
     with_metrics_endpoint: bool,
 ) -> Router {
     let backend_service = BackendService::new(repository, validator);
+
     let api_router = Router::new()
         .route("/v1/domains", post(create_handler))
         .route("/v1/domains/{:id}/status", get(get_handler))

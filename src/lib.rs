@@ -2,6 +2,7 @@ pub mod acme;
 pub mod api;
 pub mod crypto;
 pub mod helpers;
+pub mod metrics;
 pub mod repository;
 pub mod state;
 pub mod task;

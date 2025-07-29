@@ -1,22 +1,29 @@
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display},
     time::{Duration, Instant},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use tokio::time::sleep;
 use tracing::{Level, debug, error, info, trace, warn};
 
-pub async fn retry_async<F, Fut, R>(
+#[derive(Debug)]
+pub struct RetryTimeoutError<E> {
+    pub attempts: usize,
+    pub last_error: E,
+}
+
+pub async fn retry_async<F, Fut, R, E>(
     operation: Option<&str>,
     log_level: Option<Level>,
     timeout: Duration,
     backoff: Duration,
     f: F,
-) -> Result<R>
+) -> Result<(usize, R), RetryTimeoutError<E>>
 where
-    Fut: Future<Output = anyhow::Result<R>>,
+    Fut: Future<Output = Result<R, E>>,
     F: Fn() -> Fut,
+    E: std::fmt::Debug,
 {
     let log_level = log_level.unwrap_or(Level::INFO);
     let start_time = Instant::now();
@@ -41,24 +48,21 @@ where
                         ),
                     );
                 }
-                return Ok(v);
+                return Ok((attempt, v));
             }
             Err(err) => {
                 if start_time.elapsed() > timeout {
-                    let op_name = operation.map(|op| format!(" \"{op}\"")).unwrap_or_default();
-                    break Err(anyhow!(
-                        "Operation{op_name} timed out after {:?} on attempt {attempt}. Last error: {}",
-                        start_time.elapsed(),
-                        truncate_error_msg(&err)
-                    ));
+                    return Err(RetryTimeoutError {
+                        attempts: attempt,
+                        last_error: err,
+                    });
                 }
 
                 if let Some(op_name) = operation {
                     trace_msg(
                         log_level,
                         format!(
-                            "Operation \"{op_name}\" failed on attempt {attempt}. Error: {}",
-                            truncate_error_msg(&err)
+                            "Operation \"{op_name}\" failed on attempt {attempt}. Error: {err:?}",
                         ),
                     );
                 }
@@ -68,13 +72,6 @@ where
             }
         }
     }
-}
-
-fn truncate_error_msg(err: &anyhow::Error) -> String {
-    let mut short_msg = err.to_string().replace('\n', "\\n ");
-    short_msg.truncate(500);
-    short_msg.push_str("...");
-    short_msg
 }
 
 pub fn trace_msg<M: Display>(level: Level, message: M) {

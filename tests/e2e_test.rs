@@ -1,6 +1,6 @@
 use std::{env, sync::Arc, time::Duration};
 
-use anyhow::{Context, bail};
+use anyhow::{anyhow, bail};
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -87,7 +87,7 @@ async fn await_registration_ready(router: &Router, domain: &str) {
         closure,
     )
     .await
-    .with_context(|| "failed to await for registration")
+    .map_err(|err| anyhow!("failed to await for registration: {err:?}"))
     .unwrap();
 }
 
@@ -109,7 +109,7 @@ async fn await_registration_deletion(router: Router, domain: &str) {
         closure,
     )
     .await
-    .with_context(|| "failed to await for registration deletion")
+    .map_err(|err| anyhow!("failed to await for registration: {err:?}"))
     .unwrap();
 }
 
@@ -135,7 +135,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     let state = Arc::new(State::new(mock_time));
     let validator = Arc::new(Validator::default());
     let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
-    let router = create_router(state.clone(), validator.clone(), registry, true);
+    let router = create_router(state.clone(), validator.clone(), registry.clone(), true);
 
     info!("user submits domain={domain} for registration");
     let response = submit_registration(&router, domain).await;
@@ -151,12 +151,15 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     info!("starting worker, which peforms all tasks ...");
     let token = CancellationToken::new();
     let acme_client = Arc::new(AcmeClientConfig::new(cloudflare_api_token).build().await?);
+
     let worker = Worker::new(
+        "hard_worker".to_string(),
         state,
         validator,
         acme_client,
-        token.clone(),
         WorkerConfig::default(),
+        registry,
+        token.clone(),
     );
     spawn(async move { worker.run().await });
 
