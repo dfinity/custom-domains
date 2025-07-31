@@ -1,13 +1,11 @@
-use axum::{Json, response::IntoResponse};
-use candid::Principal;
-use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
-use strum::Display;
-
-use crate::{
-    repository::{RegistrationStatus, RepositoryError},
-    validation::ValidationError,
+use base::{
+    traits::{repository::RepositoryError, validation::ValidationError},
+    types::domain::RegistrationStatus,
 };
+
+use axum::{Json, http::StatusCode, response::IntoResponse};
+use candid::Principal;
+use serde::{Deserialize, Serialize};
 
 // Generic API response
 #[derive(Serialize)]
@@ -126,7 +124,7 @@ pub fn error_response<T: Serialize>(
 }
 
 // Domain validation status
-#[derive(Debug, Clone, Display, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationStatus {
     Valid,

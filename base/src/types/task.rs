@@ -3,9 +3,9 @@ use std::time::Duration;
 use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
-use strum::{self, AsRefStr, Display, EnumIter, EnumString, IntoStaticStr};
+use strum::{AsRefStr, Display, EnumIter, EnumString, IntoStaticStr};
 
-use crate::time::UtcTimestamp;
+use crate::traits::time::UtcTimestamp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumIter, EnumString, AsRefStr)]
 #[strum(serialize_all = "snake_case")]

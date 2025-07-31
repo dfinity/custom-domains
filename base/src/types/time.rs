@@ -1,15 +1,9 @@
-use chrono::Utc;
-use derive_new::new;
-use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// Timestamp representing seconds in UTC since the UNIX epoch (January 1, 1970).
-pub type UtcTimestamp = u64;
+use chrono::Utc;
+use derive_new::new;
 
-/// Trait for getting the current timestamp in UTC seconds since UNIX epoch.
-pub trait UtcTimestampProvider: Send + Sync + Debug {
-    fn unix_timestamp(&self) -> UtcTimestamp;
-}
+use crate::traits::time::{UtcTimestamp, UtcTimestampProvider};
 
 #[derive(Debug)]
 pub struct MockTime {

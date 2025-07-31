@@ -1,0 +1,25 @@
+[package]
+name = "base"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+candid = { workspace = true }
+chrono = { workspace = true }
+derive-new = { workspace = true }
+fqdn = { workspace = true }
+ic-bn-lib = { workspace = true }
+mockall = { workspace = true }
+pem = { workspace = true }
+prometheus = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+trait-async = { workspace = true }
+trust-dns-resolver = { workspace = true }
+x509-parser = { workspace = true }

@@ -1,21 +1,25 @@
-use std::sync::Arc;
-
 use anyhow::{Error, anyhow};
+use base::{
+    traits::{
+        cipher::CiphersCertificates,
+        repository::{Repository, RepositoryError},
+        time::UtcTimestamp,
+    },
+    types::{
+        domain::{CustomDomain, DomainStatus, RegisteredDomain},
+        task::{InputTask, ScheduledTask, TaskOutput, TaskResult},
+    },
+};
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::{
     custom_domains::{CustomDomain as IcBnCustomDomain, ProvidesCustomDomains},
     tls::providers::{Pem, ProvidesCertificates},
 };
+use std::sync::Arc;
 use trait_async::trait_async;
 
-use crate::{
-    crypto::CiphersCertificates,
-    repository::{CustomDomain, DomainStatus, RegisteredDomain, Repository, RepositoryError},
-    state::CanisterState,
-    task::{InputTask, ScheduledTask, TaskOutput, TaskResult},
-    time::UtcTimestamp,
-};
+use crate::client::CanisterClient;
 
 /// An implementation of the repository which abstracts interactions with the canister.
 ///
@@ -26,13 +30,6 @@ pub struct CanisterRepository {
     pub certificate_cipher: Arc<dyn CiphersCertificates>,
     pub client: CanisterClient,
 }
-
-/// A client that currently wraps local State.
-///
-/// TODO: This is a temporary implementation. Once the actual canister is developed,
-/// this client will provide a proper implementation for interacting with it via `agent-rs`.
-#[derive(Debug)]
-pub struct CanisterClient(pub CanisterState);
 
 impl CanisterRepository {
     fn encrypt_field(&self, field_name: &str, data: &[u8]) -> Result<Vec<u8>, RepositoryError> {
@@ -119,14 +116,5 @@ impl ProvidesCertificates for CanisterRepository {
         }
 
         Ok(pems)
-    }
-}
-
-impl From<CustomDomain> for IcBnCustomDomain {
-    fn from(value: CustomDomain) -> Self {
-        IcBnCustomDomain {
-            name: value.domain,
-            canister_id: value.canister_id,
-        }
     }
 }

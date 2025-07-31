@@ -1,0 +1,18 @@
+[package]
+name = "canister-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+base = { path = "../base" }
+candid = { workspace = true }
+derive-new = { workspace = true }
+fqdn = { workspace = true }
+ic-bn-lib = { workspace = true }
+pretty_assertions = { workspace = true }
+tracing = { workspace = true }
+trait-async = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

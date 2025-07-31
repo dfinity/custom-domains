@@ -1,9 +1,7 @@
+use anyhow::anyhow;
 use candid::Principal;
 use fqdn::FQDN;
-use mockall::automock;
 use reqwest::{Client, Method, Request, Url};
-use thiserror::Error;
-use tracing::info;
 use trait_async::trait_async;
 use trust_dns_resolver::{
     AsyncResolver,
@@ -13,39 +11,15 @@ use trust_dns_resolver::{
     proto::rr::RecordType,
 };
 
-use anyhow::anyhow;
+use crate::traits::validation::{ValidatesDomains, ValidationError};
 
 const DEFAULT_DELEGATION_DOMAIN: &str = "icp2.io";
 const DEFAULT_ACME_CHALLENGE_PREFIX: &str = "_acme-challenge";
 const DEFAULT_CANISTER_ID_PREFIX: &str = "_canister-id";
 
-#[derive(Debug, Error)]
-pub enum ValidationError {
-    #[error("existing DNS TXT _canister-id record at {src}")]
-    ExistingDnsTxtCanisterId { src: String },
-    #[error("existing DNS TXT challenge record at {src}")]
-    ExistingDnsTxtChallenge { src: String },
-    #[error("missing DNS CNAME record from {src} to {dst}")]
-    MissingDnsCname { src: String, dst: String },
-    #[error("missing DNS TXT record from {src} to a canister id")]
-    MissingDnsTxtCanisterId { src: String },
-    #[error("multiple DNS TXT records for canister id at {src}")]
-    MultipleDnsTxtCanisterId { src: String },
-    #[error("invalid DNS TXT record from {src} to {id}")]
-    InvalidDnsTxtCanisterId { src: String, id: String },
-    #[error("failed to retrieve known domains from canister {id}")]
-    KnownDomainsUnavailable { id: String },
-    #[error("domain is missing from canister {id} list of known domains")]
-    MissingKnownDomains { id: String },
-    #[error(transparent)]
-    UnexpectedError(#[from] anyhow::Error),
-}
-
-#[trait_async]
-#[automock]
-pub trait ValidatesDomains: Send + Sync {
-    async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError>;
-    async fn validate_deletion(&self, domain: &FQDN) -> Result<(), ValidationError>;
+pub struct Validator<T: ConnectionProvider> {
+    resolver: AsyncResolver<T>,
+    dns_config: DnsConfig,
 }
 
 #[trait_async]
@@ -55,13 +29,6 @@ impl ValidatesDomains for Validator<TokioConnectionProvider> {
         self.validate_cname_delegation(domain).await?;
         let canister_id = self.validate_canister_mapping(domain).await?;
         self.validate_canister_owner(canister_id, domain).await?;
-
-        info!(
-            domain = %domain,
-            canister_id = %canister_id,
-            "validation succeeded"
-        );
-
         Ok(canister_id)
     }
 
@@ -84,11 +51,6 @@ impl Default for DnsConfig {
             canister_id_prefix: DEFAULT_CANISTER_ID_PREFIX.to_string(),
         }
     }
-}
-
-pub struct Validator<T: ConnectionProvider> {
-    resolver: AsyncResolver<T>,
-    dns_config: DnsConfig,
 }
 
 impl Default for Validator<TokioConnectionProvider> {

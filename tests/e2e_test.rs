@@ -6,16 +6,20 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, Response, StatusCode},
 };
-use custom_domains::{
-    acme::AcmeClientConfig,
-    api::routes::create_router,
-    canister_repository::{CanisterClient, CanisterRepository},
-    crypto::CertificateCipher,
+use backend::router::create_router;
+use base::{
     helpers::retry_async,
-    state::CanisterState,
-    time::MockTime,
-    validation::Validator,
-    work::{Worker, WorkerConfig},
+    types::{
+        acme::AcmeClientConfig,
+        cipher::CertificateCipher,
+        time::MockTime,
+        validator::Validator,
+        worker::{Worker, WorkerConfig},
+    },
+};
+use canister_client::{
+    canister_repository::CanisterRepository,
+    client::{CanisterClient, CanisterState},
 };
 use ic_bn_lib::{custom_domains::ProvidesCustomDomains, tls::providers::ProvidesCertificates};
 use prometheus::Registry;

@@ -1,31 +1,31 @@
-[package]
-name = "custom-domains"
-version = "0.1.0"
-description = "Custom Domains Feature on Internet Computer"
-edition = "2024"
+[workspace]
+members = ["backend", "base", "canister-client", "tests"]
 
-[dependencies]
+resolver = "2"
+
+[workspace.dependencies]
 anyhow = "1.0.98"
 axum = "0.8.4"
 axum-server = "0.7.2"
-candid = "0.10.14"
-chrono = "0.4.41"
+candid = "0.10.16"
+chrono = "0.4"
 derive-new = "0.7.0"
 fqdn = "0.4.6"
 ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", features = [
-    "acme_dns", "custom_domains", "cert_providers"
+    "acme-dns",
+    "custom-domains",
+    "cert-providers",
 ] }
 mockall = "0.13.1"
 pem = "3.0.5"
 pretty_assertions = "1.4.1"
 prometheus = "0.14.0"
-reqwest = "0.12.20"
-rustls-pki-types = "1.12.0"
+reqwest = { version = "0.12.22" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-strum = "0.27.1"
+strum = { version = "0.27.1", features = ["derive"] }
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.45.1" }
 tokio-util = "0.7.15"
 tower = "0.5.2"
 tracing = "0.1.41"

@@ -1,13 +1,17 @@
-use std::str::FromStr;
-use std::sync::Arc;
+use base::{
+    traits::{repository::Repository, validation::ValidatesDomains},
+    types::{
+        domain::DomainStatus,
+        task::{InputTask, TaskKind},
+    },
+};
+use std::{str::FromStr, sync::Arc};
 
-use crate::api::models::{ApiError, ValidationStatus};
-use crate::repository::{DomainStatus, Repository};
-use crate::task::{InputTask, TaskKind};
-use crate::validation::ValidatesDomains;
 use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
+
+use crate::models::{ApiError, ValidationStatus};
 
 #[derive(Clone, new)]
 pub struct BackendService {

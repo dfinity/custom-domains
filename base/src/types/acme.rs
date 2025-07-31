@@ -6,12 +6,10 @@ use ic_bn_lib::{
     tls::acme::{
         AcmeUrl,
         client::{Client, ClientBuilder},
-        dns::TokenManagerDns,
+        dns::{TokenManagerDns, cloudflare::Cloudflare},
         instant_acme::AccountCredentials,
     },
 };
-
-use ic_bn_lib::tls::acme::dns::cloudflare::Cloudflare;
 use reqwest::Url;
 
 const DEFAULT_POLL_ORDER_TIMEOUT: Duration = Duration::from_secs(140);

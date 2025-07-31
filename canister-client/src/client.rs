@@ -1,23 +1,32 @@
-use fqdn::FQDN;
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
+
+use base::{
+    traits::{
+        repository::{Repository, RepositoryError},
+        time::{UtcTimestamp, UtcTimestampProvider},
+    },
+    types::{
+        domain::{CustomDomain, DomainEntry, DomainStatus, RegisteredDomain, RegistrationStatus},
+        task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult},
+    },
+};
+use fqdn::FQDN;
 use tracing::{info, warn};
 use trait_async::trait_async;
 
-use crate::{
-    repository::{
-        CustomDomain, DomainEntry, DomainStatus, RegisteredDomain, RegistrationStatus, Repository,
-        RepositoryError,
-    },
-    task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult},
-    time::{UtcTimestamp, UtcTimestampProvider},
-};
+/// A client that currently wraps local State.
+///
+/// TODO: This is a temporary implementation. Once the actual canister is developed,
+/// this client will provide a proper implementation for interacting with it via `agent-rs`.
+#[derive(Debug)]
+pub struct CanisterClient(pub CanisterState);
 
 // The certificate renewal task is initiated this far ahead of the expiration
 const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -207,7 +216,6 @@ impl Repository for CanisterState {
             entry.last_failure_reason = None;
             entry.failures_count = 0;
             entry.last_fail_time = None;
-            self.last_change.store(now, Ordering::Relaxed);
 
             match output {
                 TaskOutput::Issue(output) => {
@@ -222,10 +230,14 @@ impl Repository for CanisterState {
                     entry.private_key = Some(output.private_key);
                     entry.not_before = Some(output.not_before);
                     entry.not_after = Some(output.not_after);
+                    // New certificate was issued, we update the last change time
+                    self.last_change.store(now, Ordering::Relaxed);
                 }
                 TaskOutput::Delete => {
                     info!(domain = %domain, "Domain deleted");
                     mutex.remove(domain);
+                    // Domain was removed, we update the last change time
+                    self.last_change.store(now, Ordering::Relaxed);
                 }
                 TaskOutput::Update(canister_id) => {
                     info!(domain = %domain, "Domain updated");
@@ -336,31 +348,31 @@ impl Repository for CanisterState {
     }
 }
 
-impl<T> From<PoisonError<T>> for RepositoryError {
-    fn from(_value: PoisonError<T>) -> Self {
-        todo!()
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use base::{
+        traits::{
+            repository::{Repository, RepositoryError},
+            time::UtcTimestamp,
+        },
+        types::{
+            domain::DomainEntry,
+            task::{
+                InputTask, IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind,
+                TaskOutput, TaskResult,
+            },
+            time::MockTime,
+        },
+    };
     use pretty_assertions::assert_eq;
     use std::{str::FromStr, sync::Arc};
 
     use candid::Principal;
     use fqdn::FQDN;
 
-    use crate::{
-        repository::{DomainEntry, Repository, RepositoryError},
-        state::{
-            CERT_RENEWAL_BEFORE_EXPIRY, CanisterState, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
-            TASK_EXPIRATION_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
-        },
-        task::{
-            InputTask, IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput,
-            TaskResult,
-        },
-        time::{MockTime, UtcTimestamp},
+    use crate::client::{
+        CERT_RENEWAL_BEFORE_EXPIRY, CanisterState, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
+        TASK_EXPIRATION_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
     };
 
     impl CanisterState {
