@@ -9,12 +9,15 @@ use axum::{
 use custom_domains::{
     acme::AcmeClientConfig,
     api::routes::create_router,
+    canister_repository::{CanisterClient, CanisterRepository},
+    crypto::CertificateCipher,
     helpers::retry_async,
-    state::State,
+    state::CanisterState,
     time::MockTime,
     validation::Validator,
     work::{Worker, WorkerConfig},
 };
+use ic_bn_lib::{custom_domains::ProvidesCustomDomains, tls::providers::ProvidesCertificates};
 use prometheus::Registry;
 use serde_json::json;
 use tokio::spawn;
@@ -132,10 +135,18 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     setup_tracing();
     // Initialize router
     let mock_time = Arc::new(MockTime::new(1));
-    let state = Arc::new(State::new(mock_time));
+    let state = CanisterState::new(mock_time);
+    let cipher = Arc::new(CertificateCipher::new());
+    let canister_client = CanisterClient(state);
+    let repository = Arc::new(CanisterRepository::new(cipher, canister_client));
     let validator = Arc::new(Validator::default());
     let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
-    let router = create_router(state.clone(), validator.clone(), registry.clone(), true);
+    let router = create_router(
+        repository.clone(),
+        validator.clone(),
+        registry.clone(),
+        true,
+    );
 
     info!("user submits domain={domain} for registration");
     let response = submit_registration(&router, domain).await;
@@ -154,7 +165,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
 
     let worker = Worker::new(
         "hard_worker".to_string(),
-        state,
+        repository.clone(),
         validator,
         acme_client,
         WorkerConfig::default(),
@@ -165,6 +176,15 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
 
     info!("awaiting the worker to obtain a certificate ...");
     await_registration_ready(&router, domain).await;
+
+    info!("getting all custom domains ...");
+    let domains = repository.get_custom_domains().await.unwrap();
+    assert_eq!(domains.len(), 1);
+    assert_eq!(domains[0].name.to_string(), *domain);
+
+    info!("getting all certificates ...");
+    let certificates = repository.get_certificates().await.unwrap();
+    assert_eq!(certificates.len(), 1);
 
     info!("user deletes the registration of domain={domain}");
     let response = delete_domain(&router, domain).await;

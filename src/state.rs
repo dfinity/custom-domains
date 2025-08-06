@@ -1,7 +1,10 @@
 use fqdn::FQDN;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tracing::{info, warn};
@@ -9,7 +12,7 @@ use trait_async::trait_async;
 
 use crate::{
     repository::{
-        DomainEntry, DomainStatus, RegisteredDomain, RegistrationStatus, Repository,
+        CustomDomain, DomainEntry, DomainStatus, RegisteredDomain, RegistrationStatus, Repository,
         RepositoryError,
     },
     task::{InputTask, ScheduledTask, TaskKind, TaskOutput, TaskResult},
@@ -34,23 +37,26 @@ const MAX_TASK_FAILURES: u32 = 20;
 // If a task fails, it will not be rescheduled earlier than this interval.
 const MIN_TASK_RETRY_DELAY: Duration = Duration::from_secs(30);
 
-pub struct State {
+#[derive(Debug)]
+pub struct CanisterState {
     storage: Arc<Mutex<HashMap<FQDN, DomainEntry>>>,
+    last_change: AtomicU64,
     time: Arc<dyn UtcTimestampProvider>,
 }
 
-impl State {
+impl CanisterState {
     /// Creates a new state with an empty storage and the provided time source.
     pub fn new(time: Arc<dyn UtcTimestampProvider>) -> Self {
         Self {
             storage: Default::default(),
+            last_change: AtomicU64::new(time.unix_timestamp()),
             time,
         }
     }
 }
 
 #[trait_async]
-impl Repository for State {
+impl Repository for CanisterState {
     async fn get_domain_status(
         &self,
         domain: &FQDN,
@@ -133,6 +139,7 @@ impl Repository for State {
                     .created_at
                     .saturating_add(UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs());
                 if now >= expiry_time {
+                    self.last_change.store(now, Ordering::Relaxed);
                     return false;
                 }
             }
@@ -200,6 +207,7 @@ impl Repository for State {
             entry.last_failure_reason = None;
             entry.failures_count = 0;
             entry.last_fail_time = None;
+            self.last_change.store(now, Ordering::Relaxed);
 
             match output {
                 TaskOutput::Issue(output) => {
@@ -278,11 +286,53 @@ impl Repository for State {
     }
 
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError> {
-        todo!()
+        Ok(self.last_change.load(Ordering::Relaxed))
     }
 
     async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError> {
-        todo!()
+        let mutex = self.storage.lock()?;
+
+        let registered_domains = mutex
+            .iter()
+            .filter_map(|(domain, entry)| {
+                let (canister_id, certificate, private_key) = match (
+                    entry.canister_id.as_ref(),
+                    entry.certificate.as_ref(),
+                    entry.private_key.as_ref(),
+                ) {
+                    (Some(canister_id), Some(cert), Some(key)) => (canister_id, cert, key),
+                    _ => return None,
+                };
+
+                Some(RegisteredDomain::new(
+                    domain.clone(),
+                    *canister_id,
+                    certificate.clone(),
+                    private_key.clone(),
+                ))
+            })
+            .collect();
+
+        Ok(registered_domains)
+    }
+
+    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError> {
+        let mutex = self.storage.lock()?;
+
+        let domains = mutex
+            .iter()
+            .filter_map(
+                |(domain, entry)| match (&entry.certificate, entry.canister_id) {
+                    (Some(_), Some(canister_id)) => Some(CustomDomain {
+                        domain: domain.clone(),
+                        canister_id,
+                    }),
+                    _ => None,
+                },
+            )
+            .collect();
+
+        Ok(domains)
     }
 }
 
@@ -303,7 +353,7 @@ mod tests {
     use crate::{
         repository::{DomainEntry, Repository, RepositoryError},
         state::{
-            CERT_RENEWAL_BEFORE_EXPIRY, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY, State,
+            CERT_RENEWAL_BEFORE_EXPIRY, CanisterState, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
             TASK_EXPIRATION_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
         },
         task::{
@@ -313,7 +363,7 @@ mod tests {
         time::{MockTime, UtcTimestamp},
     };
 
-    impl State {
+    impl CanisterState {
         /// Add domain entry
         pub fn add_entry(&self, domain: &FQDN, entry: DomainEntry) -> Result<(), RepositoryError> {
             let mut mutex = self.storage.lock()?;
@@ -377,9 +427,9 @@ mod tests {
         }
     }
 
-    fn create_state_with_mock_time(init_time: UtcTimestamp) -> (Arc<MockTime>, State) {
+    fn create_state_with_mock_time(init_time: UtcTimestamp) -> (Arc<MockTime>, CanisterState) {
         let mock_time = Arc::new(MockTime::new(init_time));
-        (mock_time.clone(), State::new(mock_time))
+        (mock_time.clone(), CanisterState::new(mock_time))
     }
 
     // Adding the `Issue` task for a new domain succeeds

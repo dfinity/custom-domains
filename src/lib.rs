@@ -1,5 +1,6 @@
 pub mod acme;
 pub mod api;
+pub mod canister_repository;
 pub mod crypto;
 pub mod helpers;
 pub mod metrics;
