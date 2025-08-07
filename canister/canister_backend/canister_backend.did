@@ -1,0 +1,87 @@
+type TaskId = nat64;
+type Timestamp = nat64;
+
+type TaskKind = variant {
+  Issue;
+  Renew;
+  Update;
+  Delete;
+};
+
+type InputTask = record {
+  kind: TaskKind;
+  domain: text;
+};
+
+type TaskFailReason = variant {
+  ValidationFailed: text;
+  Timeout: record { duration_secs: nat64 };
+  GenericFailure: text;
+};
+
+type TaskOutput = variant {
+  Issue: IssueCertificateOutput;
+  Update: principal;
+  Delete;
+};
+
+type IssueCertificateOutput = record {
+  canister_id: principal;
+  certificate: blob;
+  private_key: blob;
+  not_before: Timestamp;
+  not_after: Timestamp;
+};
+
+type TaskResult = record {
+  domain: text;
+  output: opt TaskOutput;
+  failure: opt TaskFailReason;
+  task_id: TaskId;
+  duration_secs: nat64;
+};
+
+type ScheduledTask = record {
+  domain: text;
+  kind: TaskKind;
+  id: TaskId;
+  certificate: opt blob;
+};
+
+type FetchTaskError = variant {
+  InternalError: text;
+};
+
+type SubmitTaskError = variant {
+  DomainNotFound: text;
+  NonExistingTaskSubmitted: text;
+  InternalError: text;
+};
+
+type FetchTaskResult = variant {
+  Ok: opt ScheduledTask;
+  Err: FetchTaskError;
+};
+
+type TryAddTaskResult = variant {
+  Ok;
+  Err: TryAddTaskError;
+};
+
+type SubmitTaskResult = variant {
+  Ok;
+  Err: SubmitTaskError;
+};
+
+type TryAddTaskError = variant {
+  DomainNotFound: text;
+  AnotherTaskInProgress: text;
+  CertificateAlreadyIssued: text;
+  MissingCertificateForUpdate: text;
+};
+
+service : {
+  fetch_next_task: () -> (FetchTaskResult);
+  submit_task_result: (result: TaskResult) -> (SubmitTaskResult);
+  try_add_task: (task: InputTask) -> (TryAddTaskResult);
+};

@@ -1,0 +1,17 @@
+[package]
+name = "canister"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+canister-api = { path = "../api" }
+candid = { workspace = true }
+fqdn = { workspace = true }
+ic-cdk = { workspace = true }
+ic-cdk-timers = { workspace = true }
+serde = { workspace = true }
+serde_cbor = { workspace = true }
+ic-stable-structures = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]

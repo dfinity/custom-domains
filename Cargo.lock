@@ -949,6 +949,7 @@ dependencies = [
  "backend",
  "base",
  "canister-client",
+ "ic-agent",
  "ic-bn-lib",
  "prometheus",
  "serde_json",

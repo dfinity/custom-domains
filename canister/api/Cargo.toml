@@ -1,0 +1,9 @@
+[package]
+name = "canister-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+candid = { workspace = true }
+derive-new = { workspace = true }
+serde = { workspace = true }

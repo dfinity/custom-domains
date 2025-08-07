@@ -375,7 +375,6 @@ mod tests {
             time::UtcTimestamp,
         },
         types::{
-            domain::DomainEntry,
             task::{
                 InputTask, IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind,
                 TaskOutput, TaskResult,
@@ -390,11 +389,11 @@ mod tests {
     use fqdn::FQDN;
 
     use crate::local_state::{
-        CanisterState, CERT_RENEWAL_BEFORE_EXPIRY, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
-        TASK_EXPIRATION_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
+        DomainEntry, LocalState, CERT_RENEWAL_BEFORE_EXPIRY, MAX_TASK_FAILURES,
+        MIN_TASK_RETRY_DELAY, TASK_EXPIRATION_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
     };
 
-    impl CanisterState {
+    impl LocalState {
         /// Add domain entry
         pub fn add_entry(&self, domain: &FQDN, entry: DomainEntry) -> Result<(), RepositoryError> {
             let mut mutex = self.storage.lock().unwrap();
@@ -458,9 +457,9 @@ mod tests {
         }
     }
 
-    fn create_state_with_mock_time(init_time: UtcTimestamp) -> (Arc<MockTime>, CanisterState) {
+    fn create_state_with_mock_time(init_time: UtcTimestamp) -> (Arc<MockTime>, LocalState) {
         let mock_time = Arc::new(MockTime::new(init_time));
-        (mock_time.clone(), CanisterState::new(mock_time))
+        (mock_time.clone(), LocalState::new(mock_time))
     }
 
     // Adding the `Issue` task for a new domain succeeds
