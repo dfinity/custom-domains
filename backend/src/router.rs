@@ -1,22 +1,18 @@
+use base::traits::{repository::Repository, validation::ValidatesDomains};
 use std::sync::Arc;
 
 use axum::{
-    Router,
     middleware::from_fn_with_state,
     routing::{delete, get, post},
+    Router,
 };
+use prometheus::Registry;
 
 use crate::{
-    api::{
-        backend_service::BackendService,
-        handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
-        metrics::{HttpMetrics, metrics_handler, metrics_middleware},
-    },
-    repository::Repository,
-    validation::ValidatesDomains,
+    backend_service::BackendService,
+    handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
+    metrics::{metrics_handler, metrics_middleware, HttpMetrics},
 };
-
-use prometheus::Registry;
 
 pub fn create_router(
     repository: Arc<dyn Repository>,
@@ -51,10 +47,17 @@ pub fn create_router(
 
 #[cfg(test)]
 mod tests {
+    use base::{
+        traits::{
+            repository::{MockRepository, RepositoryError},
+            validation::MockValidatesDomains,
+        },
+        types::task::{InputTask, TaskKind},
+    };
     use std::{str::FromStr, sync::Arc};
 
     use axum::{
-        body::{Body, to_bytes},
+        body::{to_bytes, Body},
         http::{Request, StatusCode},
     };
     use candid::Principal;
@@ -63,12 +66,7 @@ mod tests {
     use serde_json::json;
     use tower::util::ServiceExt;
 
-    use crate::{
-        api::routes::create_router,
-        repository::{MockRepository, RepositoryError},
-        task::{InputTask, TaskKind},
-        validation::MockValidatesDomains,
-    };
+    use crate::router::create_router;
 
     const BODY_LIMIT: usize = 5000;
 

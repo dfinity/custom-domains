@@ -1,17 +1,15 @@
-use axum::{
-    Json,
-    extract::{Path, State},
-};
-use reqwest::StatusCode;
-use tracing::info;
+use base::types::task::TaskKind;
 
 use crate::{
-    api::{
-        backend_service::BackendService,
-        models::{DomainData, PostPayload, error_response, success_response},
-    },
-    task::TaskKind,
+    backend_service::BackendService,
+    models::{error_response, success_response, DomainData, PostPayload},
 };
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
+use tracing::info;
 
 /// POST /domains
 ///

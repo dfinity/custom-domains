@@ -1,13 +1,11 @@
-use axum::{Json, response::IntoResponse};
-use candid::Principal;
-use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
-use strum::Display;
-
-use crate::{
-    repository::{RegistrationStatus, RepositoryError},
-    validation::ValidationError,
+use base::{
+    traits::{repository::RepositoryError, validation::ValidationError},
+    types::domain::RegistrationStatus,
 };
+
+use axum::{http::StatusCode, response::IntoResponse, Json};
+use candid::Principal;
+use serde::{Deserialize, Serialize};
 
 // Generic API response
 #[derive(Serialize)]
@@ -77,6 +75,7 @@ impl From<RepositoryError> for ApiError {
     }
 }
 
+// All validation errors should be converted to BadRequest
 impl From<ValidationError> for ApiError {
     fn from(value: ValidationError) -> Self {
         Self::BadRequest {
@@ -126,13 +125,14 @@ pub fn error_response<T: Serialize>(
 }
 
 // Domain validation status
-#[derive(Debug, Clone, Display, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationStatus {
     Valid,
     Invalid(String),
 }
 
+// Payload for registering a new domain
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PostPayload {
     pub domain: String,

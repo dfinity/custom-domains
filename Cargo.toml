@@ -1,31 +1,59 @@
 [package]
 name = "custom-domains"
-version = "0.1.0"
-description = "Custom Domains Feature on Internet Computer"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
-[dependencies]
+resolver = "2"
+
+[workspace]
+members = [
+    "backend",
+    "base",
+    "canister/api",
+    "canister/canister_backend",
+    "canister_client",
+]
+default-members = [
+    ".",
+    "backend",
+    "base",
+    "canister_client",
+    "canister/api",
+    "canister/canister_backend",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
 anyhow = "1.0.98"
 axum = "0.8.4"
 axum-server = "0.7.2"
-candid = "0.10.14"
-chrono = "0.4.41"
+candid = "0.10.16"
+chrono = "0.4"
 derive-new = "0.7.0"
 fqdn = "0.4.6"
+ic-agent = "0.41.0"
 ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", features = [
-    "acme_dns", "custom_domains", "cert_providers"
+    "acme-dns",
+    "custom-domains",
+    "cert-providers",
 ] }
+ic-cdk = "0.17"
+ic-cdk-timers = "0.11"
+ic-stable-structures = "0.7.0"
 mockall = "0.13.1"
 pem = "3.0.5"
 pretty_assertions = "1.4.1"
 prometheus = "0.14.0"
-reqwest = "0.12.20"
-rustls-pki-types = "1.12.0"
+reqwest = { version = "0.12.22" }
 serde = { version = "1.0.219", features = ["derive"] }
+serde_cbor = "0.11.2"
 serde_json = "1.0.140"
-strum = "0.27.1"
+strum = { version = "0.27.1", features = ["derive"] }
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.45.1" }
 tokio-util = "0.7.15"
 tower = "0.5.2"
 tracing = "0.1.41"
@@ -33,3 +61,19 @@ tracing-subscriber = "0.3.19"
 trait-async = "0.1.24"
 trust-dns-resolver = "0.23.2"
 x509-parser = "0.17.0"
+
+[dev-dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+backend = { path = "./backend" }
+base = { path = "./base" }
+canister-client = { path = "./canister_client" }
+ic-bn-lib = { workspace = true }
+prometheus = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-util = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
