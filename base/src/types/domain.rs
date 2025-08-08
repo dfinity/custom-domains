@@ -45,13 +45,21 @@ pub struct DomainStatus {
     pub status: RegistrationStatus,
 }
 
-impl From<ApiDomainStatus> for DomainStatus {
-    fn from(value: ApiDomainStatus) -> Self {
-        DomainStatus {
-            domain: FQDN::from_str(&value.domain).unwrap_or_default(),
-            canister_id: value.canister_id,
-            status: value.status.into(),
-        }
+impl TryFrom<ApiDomainStatus> for DomainStatus {
+    type Error = anyhow::Error;
+
+    fn try_from(api_status: ApiDomainStatus) -> Result<Self, Self::Error> {
+        let status = match api_status.status {
+            ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
+            ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
+            ApiRegistrationStatus::Failure(reason) => RegistrationStatus::Failure(reason),
+        };
+
+        Ok(DomainStatus {
+            domain: FQDN::from_str(&api_status.domain)?,
+            canister_id: api_status.canister_id,
+            status,
+        })
     }
 }
 

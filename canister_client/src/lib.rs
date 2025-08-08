@@ -1,3 +1,3 @@
-pub mod canister_repository;
-pub mod local_repository;
+pub mod canister_client;
+pub mod local_client;
 pub mod local_state;

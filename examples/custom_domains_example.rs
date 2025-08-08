@@ -7,14 +7,21 @@ use base::types::{
     validator::Validator,
     worker::{Worker, WorkerConfig},
 };
-use canister_client::canister_repository::CanisterClient;
+use canister_client::canister_client::CanisterClient;
 use ic_agent::Agent;
 use prometheus::Registry;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-// $ cargo run --example custom_domains_example
+// This example demonstrates how to run a custom domains with worker, server and canister.
+// 1. Deploy the canister with `dfx deploy` and set the environment variable `CANISTER_ID` to the canister ID.
+// 2. Set the CLOUDFLARE_API_TOKEN environment variable
+// 3. Run the example with `cargo run --example custom_domains_example`
+// 4. Submit a domain registration request via the API:
+// curl -v -X POST http://127.0.0.1:3000/v1/domains \
+// -H "Content-Type: application/json" \
+// -d '{"domain": "custom_domain.com"}' | jq
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -44,11 +51,13 @@ async fn main() -> anyhow::Result<()> {
         registry.clone(),
         token.clone(),
     );
+
     spawn(async move { worker.run().await });
 
     let app = create_router(repository.clone(), validator, registry, true);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+
     info!("Starting server on http://{}", addr);
     axum_server::bind(addr)
         .serve(app.into_make_service())

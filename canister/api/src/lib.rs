@@ -1,3 +1,8 @@
+//! # Custom Domains Canister API
+//!
+//! This module defines the public API types and interfaces for the custom domains management canister.
+//! All types implement [`CandidType`] for integration with candid interface.
+
 use candid::{CandidType, Principal};
 use derive_new::new;
 use serde::{Deserialize, Serialize};
@@ -18,13 +23,13 @@ pub enum TaskKind {
     Delete,
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct InputTask {
     pub kind: TaskKind,
     pub domain: String,
 }
 
-#[derive(CandidType, Deserialize, Debug, new)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, new)]
 pub struct ScheduledTask {
     pub kind: TaskKind,
     pub domain: String,
@@ -32,7 +37,7 @@ pub struct ScheduledTask {
     pub certificate: Option<Vec<u8>>,
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct TaskResult {
     pub domain: String,
     pub output: Option<TaskOutput>,
@@ -41,14 +46,14 @@ pub struct TaskResult {
     pub duration_secs: Timestamp,
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub enum TaskOutput {
     Issue(IssueCertificateOutput),
     Update(Principal),
     Delete,
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct IssueCertificateOutput {
     pub canister_id: Principal,
     pub certificate: Vec<u8>,
@@ -57,7 +62,7 @@ pub struct IssueCertificateOutput {
     pub not_after: Timestamp,
 }
 
-#[derive(CandidType, Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub enum TaskFailReason {
     ValidationFailed(String),
     Timeout { duration_secs: Timestamp },
@@ -78,24 +83,24 @@ pub enum RegistrationStatus {
     Failure(String),
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum FetchTaskError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum GetDomainStatusError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum SubmitTaskError {
     DomainNotFound(String),
     NonExistingTaskSubmitted(TaskId),
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum TryAddTaskError {
     DomainNotFound(String),
     AnotherTaskInProgress(String),

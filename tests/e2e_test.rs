@@ -17,7 +17,7 @@ use base::{
         worker::{Worker, WorkerConfig},
     },
 };
-use canister_client::{local_repository::LocalRepository, local_state::LocalState};
+use canister_client::{local_client::LocalRepository, local_state::LocalState};
 use ic_bn_lib::{custom_domains::ProvidesCustomDomains, tls::providers::ProvidesCertificates};
 use prometheus::Registry;
 use serde_json::json;
@@ -138,11 +138,11 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     let mock_time = Arc::new(MockTime::new(1));
     let cipher = Arc::new(CertificateCipher::new());
     let local_state = LocalState::new(mock_time);
-    let repository = Arc::new(LocalRepository::new(cipher, local_state));
+    let local_repository = Arc::new(LocalRepository::new(cipher, local_state));
     let validator = Arc::new(Validator::default());
     let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
     let router = create_router(
-        repository.clone(),
+        local_repository.clone(),
         validator.clone(),
         registry.clone(),
         true,
@@ -165,7 +165,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
 
     let worker = Worker::new(
         "hard_worker".to_string(),
-        repository.clone(),
+        local_repository.clone(),
         validator,
         acme_client,
         WorkerConfig::default(),
@@ -178,12 +178,12 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     await_registration_ready(&router, domain).await;
 
     info!("getting all custom domains ...");
-    let domains = repository.get_custom_domains().await.unwrap();
+    let domains = local_repository.get_custom_domains().await.unwrap();
     assert_eq!(domains.len(), 1);
     assert_eq!(domains[0].name.to_string(), *domain);
 
     info!("getting all certificates ...");
-    let certificates = repository.get_certificates().await.unwrap();
+    let certificates = local_repository.get_certificates().await.unwrap();
     assert_eq!(certificates.len(), 1);
 
     info!("user deletes the registration of domain={domain}");

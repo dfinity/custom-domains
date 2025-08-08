@@ -1,6 +1,9 @@
 use std::str::FromStr;
 
-use canister_api::{SubmitTaskError as ApiSubmitTaskError, TryAddTaskError as ApiTryAddTaskError};
+use canister_api::{
+    FetchTaskError as ApiFetchTaskError, GetDomainStatusError as ApiGetDomainStatusError,
+    SubmitTaskError as ApiSubmitTaskError, TryAddTaskError as ApiTryAddTaskError,
+};
 use fqdn::FQDN;
 use mockall::automock;
 use strum::IntoStaticStr;
@@ -57,41 +60,68 @@ pub trait Repository: Send + Sync {
     async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError>;
 }
 
-// TODO: consider using string in RepositoryError instead of FQDN
-impl From<ApiSubmitTaskError> for RepositoryError {
-    fn from(err: ApiSubmitTaskError) -> Self {
+impl TryFrom<ApiSubmitTaskError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiSubmitTaskError) -> Result<Self, Self::Error> {
         match err {
             ApiSubmitTaskError::DomainNotFound(domain) => {
-                RepositoryError::DomainNotFound(FQDN::from_str(&domain).unwrap_or_default())
+                Ok(RepositoryError::DomainNotFound(FQDN::from_str(&domain)?))
             }
             ApiSubmitTaskError::NonExistingTaskSubmitted(task_id) => {
-                RepositoryError::NonExistingTaskSubmitted(task_id)
+                Ok(RepositoryError::NonExistingTaskSubmitted(task_id))
             }
-            ApiSubmitTaskError::InternalError(err) => RepositoryError::InternalError(anyhow!(err)),
+            ApiSubmitTaskError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
+            }
         }
     }
 }
 
-impl From<ApiTryAddTaskError> for RepositoryError {
-    fn from(err: ApiTryAddTaskError) -> Self {
+impl TryFrom<ApiTryAddTaskError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiTryAddTaskError) -> Result<Self, Self::Error> {
         match err {
             ApiTryAddTaskError::DomainNotFound(domain) => {
-                RepositoryError::DomainNotFound(FQDN::from_str(&domain).unwrap_or_default())
+                Ok(RepositoryError::DomainNotFound(FQDN::from_str(&domain)?))
             }
-            ApiTryAddTaskError::AnotherTaskInProgress(domain) => {
-                RepositoryError::AnotherTaskInProgress(FQDN::from_str(&domain).unwrap_or_default())
+            ApiTryAddTaskError::AnotherTaskInProgress(domain) => Ok(
+                RepositoryError::AnotherTaskInProgress(FQDN::from_str(&domain)?),
+            ),
+            ApiTryAddTaskError::CertificateAlreadyIssued(domain) => Ok(
+                RepositoryError::CertificateAlreadyIssued(FQDN::from_str(&domain)?),
+            ),
+            ApiTryAddTaskError::MissingCertificateForUpdate(domain) => Ok(
+                RepositoryError::MissingCertificateForUpdate(FQDN::from_str(&domain)?),
+            ),
+            ApiTryAddTaskError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
             }
-            ApiTryAddTaskError::CertificateAlreadyIssued(domain) => {
-                RepositoryError::CertificateAlreadyIssued(
-                    FQDN::from_str(&domain).unwrap_or_default(),
-                )
+        }
+    }
+}
+
+impl TryFrom<ApiGetDomainStatusError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiGetDomainStatusError) -> Result<Self, Self::Error> {
+        match err {
+            ApiGetDomainStatusError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
             }
-            ApiTryAddTaskError::MissingCertificateForUpdate(domain) => {
-                RepositoryError::MissingCertificateForUpdate(
-                    FQDN::from_str(&domain).unwrap_or_default(),
-                )
+        }
+    }
+}
+
+impl TryFrom<ApiFetchTaskError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiFetchTaskError) -> Result<Self, Self::Error> {
+        match err {
+            ApiFetchTaskError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
             }
-            ApiTryAddTaskError::InternalError(err) => RepositoryError::InternalError(anyhow!(err)),
         }
     }
 }

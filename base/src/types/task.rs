@@ -124,14 +124,16 @@ impl From<ApiTaskKind> for TaskKind {
     }
 }
 
-impl From<ApiScheduledTask> for ScheduledTask {
-    fn from(task: ApiScheduledTask) -> Self {
-        ScheduledTask {
-            kind: task.kind.into(),
-            domain: FQDN::from_str(&task.domain).unwrap(),
-            id: task.id,
-            certificate: task.certificate,
-        }
+impl TryFrom<ApiScheduledTask> for ScheduledTask {
+    type Error = anyhow::Error;
+
+    fn try_from(api_task: ApiScheduledTask) -> Result<Self, Self::Error> {
+        Ok(ScheduledTask {
+            kind: api_task.kind.into(),
+            domain: FQDN::from_str(&api_task.domain)?,
+            id: api_task.id,
+            certificate: api_task.certificate,
+        })
     }
 }
 
