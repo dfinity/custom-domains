@@ -1,10 +1,18 @@
-use canister_api::{FetchTaskResult, InputTask, SubmitTaskResult, TaskResult, TryAddTaskResult};
-use ic_cdk::update;
+use canister_api::{
+    FetchTaskResult, GetDomainStatusResult, InputTask, SubmitTaskResult, TaskResult,
+    TryAddTaskResult,
+};
+use ic_cdk::{query, update};
 
-use crate::state::with_state_mut;
+use crate::state::{with_state, with_state_mut};
 
 pub mod state;
 pub mod storage;
+
+#[query]
+async fn get_domain_status(domain: String) -> GetDomainStatusResult {
+    with_state(|state| state.get_domain_status(domain))
+}
 
 #[update]
 async fn fetch_next_task() -> FetchTaskResult {

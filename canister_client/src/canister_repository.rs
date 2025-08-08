@@ -14,9 +14,9 @@ use base::{
 };
 use candid::{Decode, Encode, Principal};
 use canister_api::{
-    FetchTaskResult as ApiFetchTaskResult, InputTask as ApiInputTask,
-    SubmitTaskResult as ApiSubmitTaskResult, TaskResult as ApiTaskResult,
-    TryAddTaskResult as ApiTryAddTaskResult,
+    FetchTaskResult as ApiFetchTaskResult, GetDomainStatusResult as ApiGetDomainStatusResult,
+    InputTask as ApiInputTask, SubmitTaskResult as ApiSubmitTaskResult,
+    TaskResult as ApiTaskResult, TryAddTaskResult as ApiTryAddTaskResult,
 };
 use derive_new::new;
 use fqdn::FQDN;
@@ -42,9 +42,33 @@ impl CanisterClient {
 impl Repository for CanisterClient {
     async fn get_domain_status(
         &self,
-        _domain: &FQDN,
+        domain: &FQDN,
     ) -> Result<Option<DomainStatus>, RepositoryError> {
-        todo!()
+        let arg = Encode!(&domain.to_string()).unwrap();
+
+        let result = self
+            .agent
+            .query(&self.canister_id, "get_domain_status")
+            .with_arg(arg)
+            .call()
+            .await
+            .map_err(|err| {
+                RepositoryError::InternalError(anyhow!("Canister query call failed: {err}"))
+            })?;
+
+        let response = Decode!(&result, ApiGetDomainStatusResult).map_err(|err| {
+            RepositoryError::InternalError(anyhow!("Failed to decode canister response: {err}"))
+        })?;
+
+        let domain_status = response
+            .map_err(|err| {
+                RepositoryError::InternalError(anyhow!(
+                    "Failed to get domain status from canister: {err:?}"
+                ))
+            })?
+            .map(DomainStatus::from);
+
+        Ok(domain_status)
     }
 
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError> {

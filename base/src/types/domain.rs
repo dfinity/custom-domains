@@ -1,4 +1,7 @@
+use std::str::FromStr;
+
 use candid::Principal;
+use canister_api::{DomainStatus as ApiDomainStatus, RegistrationStatus as ApiRegistrationStatus};
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::custom_domains::CustomDomain as IcBnCustomDomain;
@@ -40,4 +43,24 @@ pub struct DomainStatus {
     pub domain: FQDN,
     pub canister_id: Option<Principal>,
     pub status: RegistrationStatus,
+}
+
+impl From<ApiDomainStatus> for DomainStatus {
+    fn from(value: ApiDomainStatus) -> Self {
+        DomainStatus {
+            domain: FQDN::from_str(&value.domain).unwrap_or_default(),
+            canister_id: value.canister_id,
+            status: value.status.into(),
+        }
+    }
+}
+
+impl From<ApiRegistrationStatus> for RegistrationStatus {
+    fn from(status: ApiRegistrationStatus) -> Self {
+        match status {
+            ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
+            ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
+            ApiRegistrationStatus::Failure(reason) => RegistrationStatus::Failure(reason),
+        }
+    }
 }

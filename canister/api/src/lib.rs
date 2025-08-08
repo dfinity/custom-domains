@@ -8,6 +8,7 @@ type Timestamp = u64;
 pub type FetchTaskResult = Result<Option<ScheduledTask>, FetchTaskError>;
 pub type SubmitTaskResult = Result<(), SubmitTaskError>;
 pub type TryAddTaskResult = Result<(), TryAddTaskError>;
+pub type GetDomainStatusResult = Result<Option<DomainStatus>, GetDomainStatusError>;
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
@@ -63,8 +64,27 @@ pub enum TaskFailReason {
     GenericFailure(String),
 }
 
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+pub struct DomainStatus {
+    pub domain: String,
+    pub canister_id: Option<Principal>,
+    pub status: RegistrationStatus,
+}
+
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+pub enum RegistrationStatus {
+    Processing,
+    Registered,
+    Failure(String),
+}
+
 #[derive(CandidType, Deserialize, Debug)]
 pub enum FetchTaskError {
+    InternalError(String),
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+pub enum GetDomainStatusError {
     InternalError(String),
 }
 

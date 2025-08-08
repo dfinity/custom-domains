@@ -2,8 +2,9 @@ use std::{borrow::Cow, time::Duration};
 
 use candid::Principal;
 use canister_api::{
-    FetchTaskResult, InputTask, ScheduledTask, SubmitTaskError, SubmitTaskResult, TaskFailReason,
-    TaskKind, TaskOutput, TaskResult, TryAddTaskError, TryAddTaskResult,
+    DomainStatus, FetchTaskResult, GetDomainStatusResult, InputTask, RegistrationStatus,
+    ScheduledTask, SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutput,
+    TaskResult, TryAddTaskError, TryAddTaskResult,
 };
 use ic_cdk::api::time;
 use ic_stable_structures::{
@@ -81,13 +82,41 @@ pub struct CanisterState {
     pub last_change: StableCell<UtcTimestamp, VirtualMemory<DefaultMemoryImpl>>,
 }
 
-fn get_time() -> UtcTimestamp {
+fn get_time_secs() -> UtcTimestamp {
     time() / 1_000_000_000
 }
 
 impl CanisterState {
+    pub fn get_domain_status(&self, domain: String) -> GetDomainStatusResult {
+        let entry = match self.domains.get(&domain) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
+
+        let status = if entry.task.is_none() && entry.certificate.is_some() {
+            RegistrationStatus::Registered
+        } else if entry.task.is_some() {
+            RegistrationStatus::Processing
+        } else {
+            RegistrationStatus::Failure(
+                entry
+                    .last_failure_reason
+                    .clone()
+                    .map_or("".to_string(), |err| format!("{err:?}")),
+            )
+        };
+
+        let domain_status = DomainStatus {
+            domain: domain.clone(),
+            canister_id: entry.canister_id,
+            status,
+        };
+
+        Ok(Some(domain_status))
+    }
+
     pub fn fetch_next_task(&mut self) -> FetchTaskResult {
-        let now = get_time();
+        let now = get_time_secs();
         let mut domains_to_remove = Vec::new();
 
         let domains: Vec<_> = self.domains.iter().map(|e| e.key().clone()).collect();
@@ -168,7 +197,7 @@ impl CanisterState {
     }
 
     pub fn try_add_task(&mut self, task: InputTask) -> TryAddTaskResult {
-        let now = get_time();
+        let now = get_time_secs();
 
         let domain = task.domain;
         let domain_entry = match self.domains.get(&domain) {
@@ -211,7 +240,7 @@ impl CanisterState {
     }
 
     pub fn submit_task_result(&mut self, task_result: TaskResult) -> SubmitTaskResult {
-        let now = get_time();
+        let now = get_time_secs();
         let domain = task_result.domain.clone();
         let task_id = task_result.task_id;
 
