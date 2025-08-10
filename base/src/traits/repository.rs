@@ -41,7 +41,7 @@ pub enum RepositoryError {
 #[trait_async]
 #[automock]
 pub trait Repository: Send + Sync {
-    // Retrieves domain status.
+    /// Retrieves domain status.
     async fn get_domain_status(
         &self,
         domain: &FQDN,
