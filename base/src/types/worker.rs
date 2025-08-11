@@ -53,13 +53,20 @@ const DEFAULT_TASK_FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 /// The time window over which each worker's utilization is measured.
 const WORKER_UTILIZATION_WINDOW: Duration = Duration::from_secs(180);
 
+/// Configuration settings for worker behavior and timeouts.
 #[derive(Debug, Clone, new)]
 pub struct WorkerConfig {
+    /// How long to wait between polling attempts when no tasks are available
     pub polling_interval_no_tasks: Duration,
+    /// Maximum time a worker is allowed to spend processing a single task
     pub task_timeout: Duration,
+    /// Maximum time allowed to attempt submitting the result of a completed task
     pub task_submit_timeout: Duration,
+    /// Interval to wait before retrying to submit a failed task result
     pub task_resubmit_interval: Duration,
+    /// Interval to wait before retrying to fetch a new task if the previous fetch failed
     pub task_fetch_retry_interval: Duration,
+    /// The time window over which each worker's utilization is measured
     pub worker_utilization_window: Duration,
 }
 
@@ -76,15 +83,29 @@ impl Default for WorkerConfig {
     }
 }
 
+/// A worker that processes tasks.
+/// 
+/// Workers poll for tasks from a repository, validate domains, issue/renew/delete certificates
+/// via ACME, and submit results back to the repository. Each worker tracks metrics
+/// and can be gracefully shut down via a cancellation token.
 pub struct Worker {
+    /// Unique identifier for this worker instance
     pub name: String,
+    /// Repository interface for fetching tasks and submitting results
     pub repository: Arc<dyn Repository>,
+    /// Domain validator for checking DNS configuration
     pub validator: Arc<dyn ValidatesDomains>,
+    /// ACME client for certificate operations
     pub acme_client: Arc<Client>,
+    /// Configuration settings for timeouts and intervals
     pub config: WorkerConfig,
+    /// Metrics collection for observability
     pub metrics: Arc<WorkerMetrics>,
+    /// Total seconds since metrics reset
     pub total_sec_since_reset: Arc<AtomicU64>,
+    /// Idle seconds since metrics reset
     pub idle_sec_since_reset: Arc<AtomicU64>,
+    /// Cancellation token for graceful shutdown
     pub token: CancellationToken,
 }
 
@@ -117,6 +138,10 @@ impl Worker {
 struct WorkerStopped;
 
 impl Worker {
+    /// Runs the worker loop, continuously fetching and processing tasks.
+    /// 
+    /// The worker will keep running until the cancellation token is triggered.
+    /// Each cycle fetches a task from the repository, processes it, and updates metrics.
     pub async fn run(&self) {
         loop {
             let cycle_start = Instant::now();
@@ -360,7 +385,7 @@ async fn execute_with_timeout(
     let start = Instant::now();
 
     let domain = task.domain;
-    let task_id = task.id;
+    let task_id = task.task_id;
 
     info!(
         domain = %domain,
@@ -389,7 +414,7 @@ async fn execute_with_timeout(
             TaskFailReason::Timeout {
                 duration_secs: timeout.as_secs(),
             },
-            task.id,
+            task.task_id,
         )
         .with_duration(start.elapsed()),
     };
@@ -555,11 +580,16 @@ async fn revoke_certificate(certificate: &[u8], acme_client: Arc<Client>) -> any
     Ok(())
 }
 
+/// Prometheus metrics for monitoring worker performance and activity.
 #[derive(Clone)]
 pub struct WorkerMetrics {
+    /// Histogram tracking task execution durations
     pub task_executions: HistogramVec,
+    /// Counter tracking task submissions (including attemtps count)
     pub task_submissions: IntCounterVec,
+    /// Counter tracking task fetches
     pub task_fetches: IntCounterVec,
+    /// Gauge tracking worker utilization percentage
     pub worker_utilization: GaugeVec,
 }
 

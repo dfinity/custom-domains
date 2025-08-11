@@ -7,17 +7,25 @@ use fqdn::FQDN;
 use ic_bn_lib::custom_domains::CustomDomain as IcBnCustomDomain;
 use serde::{Deserialize, Serialize};
 
+/// Represents a fully registered domain with encrypted certificate and private key.
 #[derive(Debug, Clone, new)]
 pub struct RegisteredDomain {
+    /// The fully qualified domain name
     pub domain: FQDN,
+    /// The canister ID associated with this domain
     pub canister_id: Principal,
+    /// The encrypted certificate data
     pub cert_encrypted: Vec<u8>,
+    /// The encrypted private key data
     pub priv_key_encrypted: Vec<u8>,
 }
 
+/// Represents a custom domain mapping to a canister.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomDomain {
+    /// The fully qualified domain name
     pub domain: FQDN,
+    /// The canister ID associated with this domain
     pub canister_id: Principal,
 }
 
@@ -30,18 +38,26 @@ impl From<CustomDomain> for IcBnCustomDomain {
     }
 }
 
+/// Represents the status of a domain registration process.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RegistrationStatus {
+    /// The registration is currently being processed
     Processing,
+    /// The domain has been successfully registered
     Registered,
+    /// The registration failed with an error message
     Failure(String),
 }
 
+/// Represents the overall status of a domain including registration state.
 #[derive(Debug, Clone)]
 pub struct DomainStatus {
+    /// The fully qualified domain name
     pub domain: FQDN,
+    /// The canister ID if the domain is registered
     pub canister_id: Option<Principal>,
+    /// The current registration status
     pub status: RegistrationStatus,
 }
 

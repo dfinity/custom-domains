@@ -16,6 +16,7 @@ const DEFAULT_POLL_ORDER_TIMEOUT: Duration = Duration::from_secs(140);
 const DEFAULT_POLL_TOKEN_TIMEOUT: Duration = Duration::from_secs(140);
 const DEFAULT_CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4/";
 
+/// Configuration for ACME client setup and certificate operations.
 pub struct AcmeClientConfig {
     /// Cloudflare API token for authentication
     pub cloudflare_api_token: String,
@@ -34,6 +35,7 @@ pub struct AcmeClientConfig {
 }
 
 impl AcmeClientConfig {
+    /// Creates a new ACME client configuration with default settings.
     pub fn new(cloudflare_api_token: String) -> Self {
         AcmeClientConfig {
             cloudflare_api_token,
@@ -46,31 +48,37 @@ impl AcmeClientConfig {
         }
     }
 
+    /// Sets a custom Cloudflare API URL.
     pub fn with_cloudflare_url(mut self, url: Url) -> Self {
         self.cloudflare_url = url;
         self
     }
 
+    /// Sets the ACME provider URL (e.g., Let's Encrypt production/staging).
     pub fn with_acme_url(mut self, acme_url: AcmeUrl) -> Self {
         self.acme_url = acme_url;
         self
     }
 
+    /// Sets existing ACME account credentials to reuse an account.
     pub fn with_credentials(mut self, credentials: AccountCredentials) -> Self {
         self.acme_credentials = Some(credentials);
         self
     }
 
+    /// Enables or disables insecure TLS connections (for testing).
     pub fn with_insecure_tls(mut self, insecure: bool) -> Self {
         self.insecure_tls = insecure;
         self
     }
 
+    /// Sets the timeout for polling ACME order status.
     pub fn with_poll_order_timeout(mut self, timeout: Duration) -> Self {
         self.poll_order_timeout = timeout;
         self
     }
 
+    /// Sets the timeout for DNS token verification polling.
     pub fn with_poll_token_timeout(mut self, timeout: Duration) -> Self {
         self.poll_token_timeout = timeout;
         self
@@ -78,6 +86,10 @@ impl AcmeClientConfig {
 }
 
 impl AcmeClientConfig {
+    /// Builds an ACME client from this configuration.
+    /// 
+    /// Creates the necessary DNS resolver, Cloudflare integration, and ACME account.
+    /// If no credentials are provided, a new account will be created.
     pub async fn build(self) -> anyhow::Result<Client> {
         let cloudflare = Arc::new(Cloudflare::new(
             self.cloudflare_url,

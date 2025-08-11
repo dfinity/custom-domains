@@ -23,21 +23,29 @@ use crate::local_state::LocalState;
 
 /// An implementation of the repository with a local state.
 ///
+/// This repository manages domain certificates and tasks using local storage
+/// rather than interacting with a remote canister. Useful for testing and
+/// development scenarios.
+/// 
 /// - `certificate_cipher`: handles encryption/decryption of certificates/private_keys.
-/// - `client`: performs interactions with the canister.
+/// - `state`: manages local storage of domain and task data.
 #[derive(Debug, new)]
 pub struct LocalRepository {
+    /// Cipher for encrypting/decrypting sensitive certificate data
     pub certificate_cipher: Arc<dyn CiphersCertificates>,
+    /// Local state storage for domains and tasks
     pub state: LocalState,
 }
 
 impl LocalRepository {
+    /// Encrypts sensitive field data for secure storage.
     fn encrypt_field(&self, field_name: &str, data: &[u8]) -> Result<Vec<u8>, RepositoryError> {
         self.certificate_cipher.encrypt(data).map_err(|err| {
             RepositoryError::InternalError(anyhow!("failed to encrypt {field_name}: {err}"))
         })
     }
 
+    /// Decrypts sensitive field data from storage.
     fn decrypt_field(&self, field_name: &str, data: &[u8]) -> Result<Vec<u8>, RepositoryError> {
         self.certificate_cipher.decrypt(data).map_err(|err| {
             RepositoryError::InternalError(anyhow!("failed to decrypt {field_name}: {err}"))

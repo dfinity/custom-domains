@@ -22,40 +22,53 @@ use fqdn::FQDN;
 use tracing::{info, warn};
 use trait_async::trait_async;
 
-// The certificate renewal task is initiated this far ahead of the expiration
+/// The certificate renewal task is initiated this far ahead of the expiration
 const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
-// The task expires (times out) after this time window if its result isn't submitted.
-// This allows the task to be rescheduled if a worker fails.
-// Submitting results for expired tasks results in a NonExistingTaskSubmitted error.
+/// The task expires (times out) after this time window if its result isn't submitted.
+/// This allows the task to be rescheduled if a worker fails.
+/// Submitting results for expired tasks results in a NonExistingTaskSubmitted error.
 const TASK_EXPIRATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-// If no certificate has been issued, the domain entry is removed after this duration.
+/// If no certificate has been issued, the domain entry is removed after this duration.
 const UNREGISTERED_DOMAIN_EXPIRATION_TIME: Duration = Duration::from_secs(24 * 60 * 60);
 
-// If a task fails this many times with a recoverable error, it is no longer rescheduled.
-// User is expected to resubmit the task.
+/// If a task fails this many times with a recoverable error, it is no longer rescheduled.
+/// User is expected to resubmit the task.
 const MAX_TASK_FAILURES: u32 = 20;
 
-// If a task fails, it will not be rescheduled earlier than this interval.
+/// If a task fails, it will not be rescheduled earlier than this interval.
 const MIN_TASK_RETRY_DELAY: Duration = Duration::from_secs(30);
 
+/// Represents a domain entry in the local state storage.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DomainEntry {
+    /// Currently scheduled task type for this domain
     pub task: Option<TaskKind>,
+    /// Timestamp of the last task failure
     pub last_fail_time: Option<UtcTimestamp>,
+    /// Reason for the last task failure
     pub last_failure_reason: Option<TaskFailReason>,
+    /// Number of consecutive task failures
     pub failures_count: u32,
+    /// Associated canister ID
     pub canister_id: Option<Principal>,
+    /// When this domain entry was created
     pub created_at: UtcTimestamp,
+    /// When the current task was taken by a worker
     pub taken_at: Option<UtcTimestamp>,
+    /// The certificate data (if issued)
     pub certificate: Option<Vec<u8>>,
+    /// The private key data (if issued)
     pub private_key: Option<Vec<u8>>,
+    /// Certificate validity start time
     pub not_before: Option<UtcTimestamp>,
+    /// Certificate validity end time
     pub not_after: Option<UtcTimestamp>,
 }
 
 impl DomainEntry {
+    /// Creates a new domain entry with the specified task and creation time.
     pub fn new(task: Option<TaskKind>, created_at: UtcTimestamp) -> Self {
         Self {
             task,
@@ -65,10 +78,14 @@ impl DomainEntry {
     }
 }
 
+/// Local in-memory state management for domain entries and tasks. Useful for testing and development scenarios.
 #[derive(Debug)]
 pub struct LocalState {
+    /// Thread-safe storage for domain entries
     storage: Arc<Mutex<HashMap<FQDN, DomainEntry>>>,
+    /// Timestamp of the last change to any domain entry
     last_change: AtomicU64,
+    /// Time provider for generating timestamps
     time: Arc<dyn UtcTimestampProvider>,
 }
 
@@ -850,7 +867,7 @@ mod tests {
             1,
             1,
         ));
-        let task_result = TaskResult::success(domain.clone(), output, task_to_timeout.id);
+        let task_result = TaskResult::success(domain.clone(), output, task_to_timeout.task_id);
         let result = state.submit_task_result(task_result).await;
         // verify the submission fails
         assert!(
@@ -867,7 +884,7 @@ mod tests {
             not_before,
             not_after,
         ));
-        let valid_result = TaskResult::success(domain.clone(), output, task_to_complete.id);
+        let valid_result = TaskResult::success(domain.clone(), output, task_to_complete.task_id);
         state.submit_task_result(valid_result).await?;
         let entry = state.get_domain(&domain).await?.expect("domain not found");
         let expected = DomainEntry {

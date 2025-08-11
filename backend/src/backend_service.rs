@@ -13,13 +13,19 @@ use fqdn::FQDN;
 
 use crate::models::{ApiError, ValidationStatus};
 
+/// Backend service that orchestrates domain validation, task submission, and registration status retrieval.
+/// 
+/// This service acts as the logical layer between user and the repository (data storage).
 #[derive(Clone, new)]
 pub struct BackendService {
+    /// Repository for storing domain data (e.g. certificates) and tasks
     pub repository: Arc<dyn Repository>,
+    /// Domain validator for DNS and canister ownership checks
     pub validator: Arc<dyn ValidatesDomains>,
 }
 
 impl BackendService {
+    /// Validates domain configuration and submits a task for further processing.
     pub async fn submit_task(&self, domain: &str, task: TaskKind) -> Result<Principal, ApiError> {
         let fqdn = parse_domain(domain)?;
         let canister_id = self.validator.validate(&fqdn).await?;
@@ -30,6 +36,7 @@ impl BackendService {
         }
     }
 
+    /// Validates domain can be deleted and submits a delete task.
     pub async fn submit_delete_task(&self, domain: &str) -> Result<(), ApiError> {
         let fqdn = parse_domain(domain)?;
         self.validator.validate_deletion(&fqdn).await?;
@@ -40,6 +47,7 @@ impl BackendService {
         }
     }
 
+    /// Retrieves the current status of a domain registration.
     pub async fn get_domain_status(&self, domain: &str) -> Result<DomainStatus, ApiError> {
         let fqdn = parse_domain(domain)?;
         match self.repository.get_domain_status(&fqdn).await {
@@ -53,6 +61,7 @@ impl BackendService {
         }
     }
 
+    /// Validates a domain is eligible for registration without submitting a task.
     pub async fn validate(&self, domain: &str) -> Result<(Principal, ValidationStatus), ApiError> {
         let fqdn = parse_domain(domain)?;
         match self.validator.validate(&fqdn).await {
@@ -64,6 +73,7 @@ impl BackendService {
     }
 }
 
+/// Parses a domain string into a validated FQDN.
 fn parse_domain(domain: &str) -> Result<FQDN, ApiError> {
     FQDN::from_str(domain).map_err(|_| ApiError::BadRequest {
         details: format!("Invalid domain: {domain}"),

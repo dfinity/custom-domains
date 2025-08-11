@@ -7,25 +7,36 @@ use axum::{http::StatusCode, response::IntoResponse, Json};
 use candid::Principal;
 use serde::{Deserialize, Serialize};
 
-// Generic API response
+/// Generic API response structure for all endpoints.
 #[derive(Serialize)]
 pub struct ApiResponse<T> {
+    /// Status of the response ("success" or "error")
     status: String,
+    /// HTTP status code
     code: u16,
+    /// Optional human-readable message
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
+    /// Optional response data payload
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<T>,
+    /// Optional error details
     #[serde(skip_serializing_if = "Option::is_none")]
     errors: Option<String>,
 }
 
+/// API error types with associated details.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ApiError {
+    /// Invalid request data (400)
     BadRequest { details: String },
+    /// Resource not found (404)
     NotFound { details: String },
+    /// Resource conflict (409)
     Conflict { details: String },
+    /// Request validation failed (422)
     UnprocessableEntity { details: String },
+    /// Server error (500)
     InternalServerError { details: String },
 }
 
@@ -43,15 +54,19 @@ impl std::fmt::Display for ApiError {
     }
 }
 
-// Response data for all handlers
+/// Response data payload for domain-related endpoints.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct DomainData {
+    /// The domain name
     pub domain: String,
+    /// Associated canister ID (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canister_id: Option<Principal>,
+    /// Domain validation status (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub validation_status: Option<ValidationStatus>,
+    /// Domain registration status (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registration_status: Option<RegistrationStatus>,
 }
@@ -84,6 +99,7 @@ impl From<ValidationError> for ApiError {
     }
 }
 
+/// Creates a success response with the given data and message.
 pub fn success_response<T: Serialize>(
     code: StatusCode,
     data: T,
@@ -100,6 +116,7 @@ pub fn success_response<T: Serialize>(
     (code, json).into_response()
 }
 
+/// Creates an error response with the given error, data, and message.
 pub fn error_response<T: Serialize>(
     error: ApiError,
     data: T,
@@ -124,15 +141,17 @@ pub fn error_response<T: Serialize>(
     (code, json).into_response()
 }
 
-// Domain validation status
+/// Domain validation status for API responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationStatus {
+    /// Domain validation passed
     Valid,
+    /// Domain validation failed with error details
     Invalid(String),
 }
 
-// Payload for registering a new domain
+/// Request payload for domain registration endpoints.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PostPayload {
     pub domain: String,
