@@ -18,7 +18,7 @@ const DEFAULT_ACME_CHALLENGE_PREFIX: &str = "_acme-challenge";
 const DEFAULT_CANISTER_ID_PREFIX: &str = "_canister-id";
 
 /// DNS validator for custom domain registration.
-/// 
+///
 /// Validates that a domain is properly configured for custom domain registration
 /// by checking DNS records, CNAME delegation, and canister ownership.
 pub struct Validator<T: ConnectionProvider> {
@@ -108,7 +108,7 @@ impl Validator<TokioConnectionProvider> {
     }
 
     /// Validates that the canister declares ownership of the domain.
-    /// 
+    ///
     /// Checks the /.well-known/ic-domains asset of the canister to verify
     /// that the domain is listed as a known domain for that canister.
     async fn validate_canister_owner(
@@ -145,7 +145,7 @@ impl Validator<TokioConnectionProvider> {
     }
 
     /// Validates that there are no existing canister ID TXT records for the domain.
-    /// 
+    ///
     /// This check ensures the domain can be safely deleted or is not already registered.
     async fn validate_no_canister_id_record(&self, domain: &FQDN) -> Result<(), ValidationError> {
         let txt_src = format!("{}.{domain}.", self.dns_config.canister_id_prefix);
@@ -164,7 +164,7 @@ impl Validator<TokioConnectionProvider> {
     }
 
     /// Validates that there are no conflicting ACME challenge TXT records.
-    /// 
+    ///
     /// Ensures that any existing ACME challenge records point to the delegation domain
     /// or that no conflicting records exist that would interfere with certificate issuance.
     async fn validate_no_txt_challenge(&self, domain: &FQDN) -> Result<(), ValidationError> {
@@ -194,7 +194,7 @@ impl Validator<TokioConnectionProvider> {
     }
 
     /// Validates that the domain has proper CNAME delegation set up.
-    /// 
+    ///
     /// Checks that the ACME challenge subdomain has a CNAME record pointing
     /// to the corresponding delegation domain for certificate validation.
     async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
@@ -233,7 +233,7 @@ impl Validator<TokioConnectionProvider> {
     }
 
     /// Validates and extracts the canister ID from DNS TXT records.
-    /// 
+    ///
     /// Looks for a TXT record at the canister ID prefix subdomain and validates
     /// that exactly one record exists containing a valid canister Principal.
     async fn validate_canister_mapping(&self, domain: &FQDN) -> Result<Principal, ValidationError> {

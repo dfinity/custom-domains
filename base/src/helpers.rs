@@ -18,14 +18,14 @@ pub struct RetryTimeoutError<E> {
 }
 
 /// Retries an async operation with exponential backoff until timeout.
-/// 
+///
 /// # Arguments
 /// * `operation` - Optional name for logging purposes
 /// * `log_level` - Log level for retry messages (defaults to INFO)
 /// * `timeout` - Maximum duration to keep retrying
 /// * `backoff` - Duration to wait between attempts
 /// * `f` - Async function to retry
-/// 
+///
 /// # Returns
 /// * `Ok((attempts, result))` on success
 /// * `Err(RetryTimeoutError)` on timeout
@@ -102,7 +102,7 @@ pub fn trace_msg<M: Display>(level: Level, message: M) {
 }
 
 /// Formats an error with its full chain of causes.
-/// 
+///
 /// Useful for detailed error reporting that includes nested error context.
 pub fn format_error_chain(err: &anyhow::Error) -> String {
     let mut s = format!("{err}");

@@ -14,7 +14,7 @@ use fqdn::FQDN;
 use crate::models::{ApiError, ValidationStatus};
 
 /// Backend service that orchestrates domain validation, task submission, and registration status retrieval.
-/// 
+///
 /// This service acts as the logical layer between user and the repository (data storage).
 #[derive(Clone, new)]
 pub struct BackendService {

@@ -84,7 +84,7 @@ impl Default for WorkerConfig {
 }
 
 /// A worker that processes tasks.
-/// 
+///
 /// Workers poll for tasks from a repository, validate domains, issue/renew/delete certificates
 /// via ACME, and submit results back to the repository. Each worker tracks metrics
 /// and can be gracefully shut down via a cancellation token.
@@ -139,7 +139,7 @@ struct WorkerStopped;
 
 impl Worker {
     /// Runs the worker loop, continuously fetching and processing tasks.
-    /// 
+    ///
     /// The worker will keep running until the cancellation token is triggered.
     /// Each cycle fetches a task from the repository, processes it, and updates metrics.
     pub async fn run(&self) {

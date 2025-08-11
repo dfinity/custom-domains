@@ -87,7 +87,7 @@ impl AcmeClientConfig {
 
 impl AcmeClientConfig {
     /// Builds an ACME client from this configuration.
-    /// 
+    ///
     /// Creates the necessary DNS resolver, Cloudflare integration, and ACME account.
     /// If no credentials are provided, a new account will be created.
     pub async fn build(self) -> anyhow::Result<Client> {

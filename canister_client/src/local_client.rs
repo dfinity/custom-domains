@@ -26,7 +26,7 @@ use crate::local_state::LocalState;
 /// This repository manages domain certificates and tasks using local storage
 /// rather than interacting with a remote canister. Useful for testing and
 /// development scenarios.
-/// 
+///
 /// - `certificate_cipher`: handles encryption/decryption of certificates/private_keys.
 /// - `state`: manages local storage of domain and task data.
 #[derive(Debug, new)]

@@ -41,13 +41,13 @@ pub enum ValidationError {
 #[automock]
 pub trait ValidatesDomains: Send + Sync {
     /// Validates that a domain can be registered or updated.
-    /// 
-    /// Performs comprehensive checks including DNS configuration, 
+    ///
+    /// Performs comprehensive checks including DNS configuration,
     /// canister ownership verification, and ACME challenge setup.
     async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError>;
-    
+
     /// Validates that a domain can be safely deleted.
-    /// 
+    ///
     /// Ensures DNS records are properly cleaned up before certificate revocation.
     async fn validate_deletion(&self, domain: &FQDN) -> Result<(), ValidationError>;
 }
