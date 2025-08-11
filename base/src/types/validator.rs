@@ -55,20 +55,43 @@ impl Default for DnsConfig {
 
 impl Default for Validator<TokioConnectionProvider> {
     fn default() -> Self {
-        Self {
-            resolver: AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
-            dns_config: DnsConfig::default(),
-        }
+        // Use non-caching configuration as default
+        Self::new_without_cache(DnsConfig::default()).unwrap()
     }
 }
 
 impl<T: ConnectionProvider> Validator<T> {
+    /// Create a new Validator with custom resolver and DNS configuration
     pub fn new(resolver: AsyncResolver<T>, dns_config: DnsConfig) -> Result<Self, ValidationError> {
         if dns_config.delegation_domain.is_empty() {
             return Err(ValidationError::UnexpectedError(anyhow!(
                 "Delegation domain cannot be empty"
             )));
         }
+
+        Ok(Self {
+            resolver,
+            dns_config,
+        })
+    }
+}
+
+impl Validator<TokioConnectionProvider> {
+    /// Create a new Validator without DNS caching (useful for real-time validation)
+    pub fn new_without_cache(dns_config: DnsConfig) -> Result<Self, ValidationError> {
+        if dns_config.delegation_domain.is_empty() {
+            return Err(ValidationError::UnexpectedError(anyhow!(
+                "Delegation domain cannot be empty"
+            )));
+        }
+
+        let mut opts = ResolverOpts::default();
+        opts.cache_size = 0;
+        opts.use_hosts_file = false;
+        opts.validate = false;
+        opts.recursion_desired = true;
+
+        let resolver = AsyncResolver::tokio(ResolverConfig::default(), opts);
 
         Ok(Self {
             resolver,
