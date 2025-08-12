@@ -14,6 +14,8 @@ pub type FetchTaskResult = Result<Option<ScheduledTask>, FetchTaskError>;
 pub type SubmitTaskResult = Result<(), SubmitTaskError>;
 pub type TryAddTaskResult = Result<(), TryAddTaskError>;
 pub type GetDomainStatusResult = Result<Option<DomainStatus>, GetDomainStatusError>;
+pub type GetLastChangeTimeResult = Result<Timestamp, GetLastChangeTimeError>;
+pub type ListCertificatesPageResult = Result<CertificatesPage, ListCertificatesPageError>;
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
@@ -83,6 +85,54 @@ pub enum RegistrationStatus {
     Failure(String),
 }
 
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+pub struct CertificatesPage {
+    pub items: Vec<RegisteredDomain>,
+    pub next_key: Option<String>,
+}
+
+impl CertificatesPage {
+    pub fn new(items: Vec<RegisteredDomain>, next_key: Option<String>) -> Self {
+        Self { items, next_key }
+    }
+}
+
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+pub struct ListCertificatesPageInput {
+    /// Optional starting point for pagination (domain name to start from)
+    pub start_key: Option<String>,
+    /// Maximum number of items to return per page
+    pub limit: Option<u32>,
+}
+
+impl ListCertificatesPageInput {
+    pub fn new() -> Self {
+        Self {
+            start_key: None,
+            limit: None,
+        }
+    }
+}
+
+impl Default for ListCertificatesPageInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+pub struct RegisteredDomain {
+    pub domain: String,
+    pub canister_id: Principal,
+    pub cert_encrypted: Vec<u8>,
+    pub priv_key_encrypted: Vec<u8>,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+pub enum GetLastChangeTimeError {
+    InternalError(String),
+}
+
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum FetchTaskError {
     InternalError(String),
@@ -90,6 +140,11 @@ pub enum FetchTaskError {
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum GetDomainStatusError {
+    InternalError(String),
+}
+
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+pub enum ListCertificatesPageError {
     InternalError(String),
 }
 

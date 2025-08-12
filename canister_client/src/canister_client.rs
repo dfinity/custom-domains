@@ -18,6 +18,7 @@ use base::{
     },
 };
 use candid::{CandidType, Decode, Deserialize, Encode, Principal};
+use canister_api::ListCertificatesPageInput;
 use derive_new::new;
 use fqdn::FQDN;
 use ic_agent::Agent;
@@ -194,11 +195,52 @@ impl Repository for CanisterClient {
     }
 
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError> {
-        todo!()
+        let response = self
+            .query::<(), UtcTimestamp, canister_api::GetLastChangeTimeError>(
+                "get_last_change_time",
+                &(),
+            )
+            .await?;
+
+        Ok(response)
     }
 
     async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError> {
-        todo!()
+        let mut registered_domains = vec![];
+        let mut start_key = None;
+
+        loop {
+            let response = self
+            .query::<ListCertificatesPageInput, canister_api::CertificatesPage, canister_api::ListCertificatesPageError>(
+                "list_certificates_page",
+                &ListCertificatesPageInput {
+                    start_key,
+                    limit: None,
+                },
+            )
+            .await?;
+
+            let registrations = response
+                .items
+                .into_iter()
+                .map(|reg| {
+                    RegisteredDomain::try_from(reg).map_err(|err| {
+                        RepositoryError::InternalError(anyhow!(
+                            "Failed to convert RegisteredDomain: {err}"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            registered_domains.extend(registrations);
+            start_key = response.next_key;
+
+            if start_key.is_none() {
+                break;
+            }
+        }
+
+        Ok(registered_domains)
     }
 
     async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError> {

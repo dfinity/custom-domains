@@ -2,9 +2,10 @@ use std::{borrow::Cow, time::Duration};
 
 use candid::Principal;
 use canister_api::{
-    DomainStatus, FetchTaskResult, GetDomainStatusResult, InputTask, RegistrationStatus,
-    ScheduledTask, SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutput,
-    TaskResult, TryAddTaskError, TryAddTaskResult,
+    CertificatesPage, DomainStatus, FetchTaskResult, GetDomainStatusResult,
+    GetLastChangeTimeResult, InputTask, ListCertificatesPageInput, ListCertificatesPageResult,
+    RegisteredDomain, RegistrationStatus, ScheduledTask, SubmitTaskError, SubmitTaskResult,
+    TaskFailReason, TaskKind, TaskOutput, TaskResult, TryAddTaskError, TryAddTaskResult,
 };
 use ic_cdk::api::time;
 use ic_stable_structures::{
@@ -13,6 +14,7 @@ use ic_stable_structures::{
 };
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
+use std::ops::Bound as RangeBound;
 
 use crate::storage::STATE;
 
@@ -35,6 +37,11 @@ const MAX_TASK_FAILURES: u32 = 20;
 
 // If a task fails, it will not be rescheduled earlier than this interval.
 const MIN_TASK_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+// Default number of domains returned per page when no limit is specified or limit is zero
+const DEFAULT_PAGE_LIMIT: u32 = 100;
+// Maximum number of domains that can be returned in a single page to safely stay lower than 2MB response
+const MAX_PAGE_LIMIT: u32 = 400;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DomainEntry {
@@ -80,6 +87,61 @@ impl Storable for DomainEntry {
 pub struct CanisterState {
     pub domains: StableBTreeMap<String, DomainEntry, VirtualMemory<DefaultMemoryImpl>>,
     pub last_change: StableCell<UtcTimestamp, VirtualMemory<DefaultMemoryImpl>>,
+}
+
+impl CanisterState {
+    /// Creates a new CanisterState with optionally pre-populated domains for testing
+    pub fn new_with_sample_domains(num_domains: usize, cert_size_bytes: usize) -> Self {
+        use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+
+        let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
+        let domains_memory = memory_manager.get(MemoryId::new(0));
+        let last_change_memory = memory_manager.get(MemoryId::new(1));
+
+        let domains = StableBTreeMap::init(domains_memory);
+        let last_change = StableCell::init(last_change_memory, 0);
+
+        let mut state = Self {
+            domains,
+            last_change,
+        };
+
+        // Some sample canister IDs
+        let sample_canister_ids = [
+            Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
+            Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
+            Principal::from_text("rno2w-sqaaa-aaaaa-aaacq-cai").unwrap(),
+            Principal::from_text("renrk-eyaaa-aaaaa-aaada-cai").unwrap(),
+            Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
+        ];
+
+        for i in 0..num_domains {
+            let domain = format!("domain_{i}.example.com");
+            let canister_id = sample_canister_ids[i % sample_canister_ids.len()];
+
+            let mut domain_entry = DomainEntry::new(None, i as u64);
+            domain_entry.canister_id = Some(canister_id);
+
+            // Generate certificate data of specified size
+            let cert_data = {
+                let base_cert = format!("-----BEGIN CERTIFICATE-----\ncert_data_{}\n", i + 1);
+                let padding = "X".repeat(cert_size_bytes);
+                format!("{base_cert}{padding}-----END CERTIFICATE-----")
+            };
+
+            // Generate private key data
+            let key_data = format!("key_data_{}", i + 1);
+
+            domain_entry.certificate = Some(cert_data.into_bytes());
+            domain_entry.private_key = Some(key_data.into_bytes());
+            domain_entry.not_before = Some(1000);
+            domain_entry.not_after = Some(365 * 24 * 60 * 60);
+
+            state.domains.insert(domain, domain_entry);
+        }
+
+        state
+    }
 }
 
 fn get_time_secs() -> UtcTimestamp {
@@ -295,6 +357,63 @@ impl CanisterState {
 
         Ok(())
     }
+
+    pub fn get_last_change_time(&self) -> GetLastChangeTimeResult {
+        Ok(*self.last_change.get())
+    }
+
+    pub fn list_certificates_page(
+        &self,
+        input: ListCertificatesPageInput,
+    ) -> ListCertificatesPageResult {
+        let limit = input
+            .limit
+            .filter(|&lim| lim > 0)
+            .unwrap_or(DEFAULT_PAGE_LIMIT)
+            .min(MAX_PAGE_LIMIT) as usize;
+
+        let mut registered_domains = Vec::with_capacity(limit);
+        let mut next_key = None;
+
+        let domains_iter = match &input.start_key {
+            Some(start_key) => self
+                .domains
+                .range((RangeBound::Included(start_key), RangeBound::Unbounded)),
+            None => self.domains.range(..),
+        };
+
+        let mut count = 0;
+
+        for entry in domains_iter {
+            let domain = entry.key();
+            let domain_entry = entry.value();
+
+            // Only include domains with issued certificates and existing canister_id
+            if let (Some(cert), Some(private_key), Some(canister_id)) = (
+                &domain_entry.certificate,
+                &domain_entry.private_key,
+                &domain_entry.canister_id,
+            ) {
+                if count >= limit {
+                    next_key = Some(domain.clone());
+                    break;
+                }
+
+                registered_domains.push(RegisteredDomain {
+                    domain: domain.clone(),
+                    canister_id: *canister_id,
+                    cert_encrypted: cert.clone(),
+                    priv_key_encrypted: private_key.clone(),
+                });
+
+                count += 1;
+            }
+        }
+
+        let page = CertificatesPage::new(registered_domains, next_key);
+
+        Ok(page)
+    }
 }
 
 pub fn with_state<R>(f: impl FnOnce(&CanisterState) -> R) -> R {
@@ -303,4 +422,242 @@ pub fn with_state<R>(f: impl FnOnce(&CanisterState) -> R) -> R {
 
 pub fn with_state_mut<R>(f: impl FnOnce(&mut CanisterState) -> R) -> R {
     STATE.with(|s| f(&mut s.borrow_mut()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candid::Principal;
+    use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+
+    /// Create a test CanisterState with sample data
+    fn create_test_state() -> CanisterState {
+        let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
+        let domains_memory = memory_manager.get(MemoryId::new(0));
+        let last_change_memory = memory_manager.get(MemoryId::new(1));
+
+        let domains = StableBTreeMap::init(domains_memory);
+        let last_change = StableCell::init(last_change_memory, 0);
+
+        let mut state = CanisterState {
+            domains,
+            last_change,
+        };
+
+        let canister_id_1 = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+        let canister_id_2 = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        let canister_id_3 = Principal::from_text("rno2w-sqaaa-aaaaa-aaacq-cai").unwrap();
+
+        // Domain with certificate
+        let mut domain1 = DomainEntry::new(None, 1000);
+        domain1.canister_id = Some(canister_id_1);
+        domain1.certificate = Some(b"cert1_data".to_vec());
+        domain1.private_key = Some(b"key1_data".to_vec());
+        domain1.not_before = Some(1500);
+        domain1.not_after = Some(2500);
+        state.domains.insert("example.com".to_string(), domain1);
+
+        // Another domain with certificate
+        let mut domain2 = DomainEntry::new(None, 1100);
+        domain2.canister_id = Some(canister_id_2);
+        domain2.certificate = Some(b"cert2_data".to_vec());
+        domain2.private_key = Some(b"key2_data".to_vec());
+        domain2.not_before = Some(1600);
+        domain2.not_after = Some(2600);
+        state.domains.insert("test.org".to_string(), domain2);
+
+        // Domain without certificate (should be excluded)
+        let domain3 = DomainEntry::new(Some(TaskKind::Issue), 1200);
+        state.domains.insert("pending.net".to_string(), domain3);
+
+        // Another domain with certificate
+        let mut domain4 = DomainEntry::new(None, 1300);
+        domain4.canister_id = Some(canister_id_3);
+        domain4.certificate = Some(b"cert3_data".to_vec());
+        domain4.private_key = Some(b"key3_data".to_vec());
+        domain4.not_before = Some(1700);
+        domain4.not_after = Some(2700);
+        state.domains.insert("website.io".to_string(), domain4);
+
+        // Domain without certificate (should be excluded)
+        let mut domain5 = DomainEntry::new(None, 1400);
+        domain5.canister_id = Some(canister_id_1);
+        domain5.certificate = None;
+        state.domains.insert("incomplete.dev".to_string(), domain5);
+
+        // Another domain with certificate
+        let mut domain6 = DomainEntry::new(None, 1300);
+        domain6.canister_id = Some(canister_id_2);
+        domain6.certificate = Some(b"cert6_data".to_vec());
+        domain6.private_key = Some(b"key6_data".to_vec());
+        domain6.not_before = Some(1700);
+        domain6.not_after = Some(2700);
+        state.domains.insert("dfinity.org".to_string(), domain6);
+
+        state
+    }
+
+    #[test]
+    fn test_list_certificates_page_basic_functionality() {
+        let state = create_test_state();
+
+        let input = ListCertificatesPageInput {
+            start_key: None,
+            limit: None,
+        };
+        let result = state.list_certificates_page(input).unwrap();
+
+        // Should return only domains with certificates
+        assert_eq!(result.items.len(), 4);
+
+        // Verify the domains are sorted alphabetically
+        let domains: Vec<&str> = result.items.iter().map(|d| d.domain.as_str()).collect();
+        assert_eq!(
+            domains,
+            vec!["dfinity.org", "example.com", "test.org", "website.io"]
+        );
+
+        let first_domain = &result.items[1];
+        assert_eq!(first_domain.domain, "example.com");
+        assert_eq!(first_domain.cert_encrypted, b"cert1_data");
+        assert_eq!(first_domain.priv_key_encrypted, b"key1_data");
+        assert_eq!(
+            first_domain.canister_id,
+            Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_list_certificates_page_with_limit() {
+        let state = create_test_state();
+
+        let input = ListCertificatesPageInput {
+            start_key: None,
+            limit: Some(2),
+        };
+        let result = state.list_certificates_page(input).unwrap();
+
+        // Should return only 2 domains due to limit
+        assert_eq!(result.items.len(), 2);
+        assert_eq!(result.items[0].domain, "dfinity.org");
+        assert_eq!(result.items[1].domain, "example.com");
+
+        // Should have next_key for pagination
+        assert_eq!(result.next_key, Some("test.org".to_string()));
+    }
+
+    #[test]
+    fn test_list_certificates_page_pagination_with_start_key() {
+        let state = create_test_state();
+
+        let input = ListCertificatesPageInput {
+            start_key: Some("test.org".to_string()),
+            limit: None,
+        };
+        let result = state.list_certificates_page(input).unwrap();
+
+        assert_eq!(result.items.len(), 2);
+        assert_eq!(result.items[0].domain, "test.org");
+        assert_eq!(result.items[1].domain, "website.io");
+
+        // No next key since we've reached the end
+        assert_eq!(result.next_key, None);
+    }
+
+    #[test]
+    fn test_list_certificates_page_pagination_continuation() {
+        let state = create_test_state();
+
+        // First page with limit 1
+        let input1 = ListCertificatesPageInput {
+            start_key: None,
+            limit: Some(1),
+        };
+        let result1 = state.list_certificates_page(input1).unwrap();
+
+        assert_eq!(result1.items.len(), 1);
+        assert_eq!(result1.items[0].domain, "dfinity.org");
+        assert_eq!(result1.next_key, Some("example.com".to_string()));
+
+        // Second page using next_key and limit 2
+        let input2 = ListCertificatesPageInput {
+            start_key: result1.next_key,
+            limit: Some(2),
+        };
+        let result2 = state.list_certificates_page(input2).unwrap();
+
+        assert_eq!(result2.items.len(), 2);
+        assert_eq!(result2.items[0].domain, "example.com");
+        assert_eq!(result2.items[1].domain, "test.org");
+        assert_eq!(result2.next_key, Some("website.io".to_string()));
+
+        // Third page using next_key and limit 3
+        let input3 = ListCertificatesPageInput {
+            start_key: result2.next_key,
+            limit: Some(3),
+        };
+        let result3 = state.list_certificates_page(input3).unwrap();
+
+        assert_eq!(result3.items.len(), 1);
+        assert_eq!(result3.items[0].domain, "website.io");
+        assert_eq!(result3.next_key, None);
+    }
+
+    #[test]
+    fn test_list_certificates_page_nonexistent_start_key() {
+        let state = create_test_state();
+
+        // Use a start_key that doesn't exist but is lexicographically between domains
+        let input = ListCertificatesPageInput {
+            start_key: Some("middle.com".to_string()), // Between "example.com" and "test.org"
+            limit: None,
+        };
+        let result = state.list_certificates_page(input).unwrap();
+
+        // Should return domains that come after "middle.com" lexicographically
+        assert_eq!(result.items.len(), 2);
+        assert_eq!(result.items[0].domain, "test.org");
+        assert_eq!(result.items[1].domain, "website.io");
+    }
+
+    #[test]
+    fn test_list_certificates_page_empty_state() {
+        let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
+        let domains_memory = memory_manager.get(MemoryId::new(0));
+        let last_change_memory = memory_manager.get(MemoryId::new(1));
+
+        let domains = StableBTreeMap::init(domains_memory);
+        let last_change = StableCell::init(last_change_memory, 0);
+
+        let state = CanisterState {
+            domains,
+            last_change,
+        };
+
+        let input = ListCertificatesPageInput {
+            start_key: None,
+            limit: None,
+        };
+        let result = state.list_certificates_page(input).unwrap();
+
+        assert_eq!(result.items.len(), 0);
+        assert_eq!(result.next_key, None);
+    }
+
+    #[test]
+    fn test_list_certificates_page_start_key_at_end() {
+        let state = create_test_state();
+
+        // Use the last domain as start_key
+        let input = ListCertificatesPageInput {
+            start_key: Some("website.io".to_string()),
+            limit: None,
+        };
+        let result = state.list_certificates_page(input).unwrap();
+
+        // Should return this domain only
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.next_key, None);
+        assert_eq!(result.items[0].domain, "website.io");
+    }
 }

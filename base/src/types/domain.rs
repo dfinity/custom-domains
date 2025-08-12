@@ -1,7 +1,10 @@
 use std::str::FromStr;
 
 use candid::Principal;
-use canister_api::{DomainStatus as ApiDomainStatus, RegistrationStatus as ApiRegistrationStatus};
+use canister_api::{
+    DomainStatus as ApiDomainStatus, RegisteredDomain as ApiRegisteredDomain,
+    RegistrationStatus as ApiRegistrationStatus,
+};
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::custom_domains::CustomDomain as IcBnCustomDomain;
@@ -86,5 +89,18 @@ impl From<ApiRegistrationStatus> for RegistrationStatus {
             ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
             ApiRegistrationStatus::Failure(reason) => RegistrationStatus::Failure(reason),
         }
+    }
+}
+
+impl TryFrom<ApiRegisteredDomain> for RegisteredDomain {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ApiRegisteredDomain) -> Result<Self, Self::Error> {
+        Ok(RegisteredDomain {
+            domain: FQDN::from_str(&value.domain)?,
+            canister_id: value.canister_id,
+            cert_encrypted: value.cert_encrypted,
+            priv_key_encrypted: value.priv_key_encrypted,
+        })
     }
 }

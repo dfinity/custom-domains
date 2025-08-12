@@ -2,6 +2,8 @@ use std::str::FromStr;
 
 use canister_api::{
     FetchTaskError as ApiFetchTaskError, GetDomainStatusError as ApiGetDomainStatusError,
+    GetLastChangeTimeError as ApiGetLastChangeTimeError,
+    ListCertificatesPageError as ApiListCertificatesPageError,
     SubmitTaskError as ApiSubmitTaskError, TryAddTaskError as ApiTryAddTaskError,
 };
 use fqdn::FQDN;
@@ -120,6 +122,30 @@ impl TryFrom<ApiFetchTaskError> for RepositoryError {
     fn try_from(err: ApiFetchTaskError) -> Result<Self, Self::Error> {
         match err {
             ApiFetchTaskError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
+            }
+        }
+    }
+}
+
+impl TryFrom<ApiGetLastChangeTimeError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiGetLastChangeTimeError) -> Result<Self, Self::Error> {
+        match err {
+            ApiGetLastChangeTimeError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
+            }
+        }
+    }
+}
+
+impl TryFrom<ApiListCertificatesPageError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiListCertificatesPageError) -> Result<Self, Self::Error> {
+        match err {
+            ApiListCertificatesPageError::InternalError(err) => {
                 Ok(RepositoryError::InternalError(anyhow!(err)))
             }
         }

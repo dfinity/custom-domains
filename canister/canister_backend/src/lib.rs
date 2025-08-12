@@ -1,5 +1,6 @@
 use canister_api::{
-    FetchTaskResult, GetDomainStatusResult, InputTask, SubmitTaskResult, TaskResult,
+    FetchTaskResult, GetDomainStatusResult, GetLastChangeTimeResult, InputTask,
+    ListCertificatesPageInput, ListCertificatesPageResult, SubmitTaskResult, TaskResult,
     TryAddTaskResult,
 };
 use ic_cdk::{query, update};
@@ -27,4 +28,14 @@ async fn submit_task_result(result: TaskResult) -> SubmitTaskResult {
 #[update]
 async fn try_add_task(task: InputTask) -> TryAddTaskResult {
     with_state_mut(|state| state.try_add_task(task))
+}
+
+#[query]
+async fn get_last_change_time() -> GetLastChangeTimeResult {
+    with_state(|state| state.get_last_change_time())
+}
+
+#[query]
+async fn list_certificates_page(input: ListCertificatesPageInput) -> ListCertificatesPageResult {
+    with_state(|state| state.list_certificates_page(input))
 }
