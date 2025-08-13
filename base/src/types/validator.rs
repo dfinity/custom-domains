@@ -1,15 +1,14 @@
 use anyhow::anyhow;
 use candid::Principal;
 use fqdn::FQDN;
+use hickory_resolver::{
+    config::{ResolveHosts, ResolverConfig, ResolverOpts},
+    name_server::TokioConnectionProvider,
+    proto::rr::RecordType,
+    TokioResolver,
+};
 use reqwest::{Client, Method, Request, Url};
 use trait_async::trait_async;
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    error::ResolveErrorKind,
-    name_server::{ConnectionProvider, TokioConnectionProvider},
-    proto::rr::RecordType,
-    AsyncResolver,
-};
 
 use crate::traits::validation::{ValidatesDomains, ValidationError};
 
@@ -21,13 +20,13 @@ const DEFAULT_CANISTER_ID_PREFIX: &str = "_canister-id";
 ///
 /// Validates that a domain is properly configured for custom domain registration
 /// by checking DNS records, CNAME delegation, and canister ownership.
-pub struct Validator<T: ConnectionProvider> {
-    resolver: AsyncResolver<T>,
+pub struct Validator {
+    resolver: TokioResolver,
     dns_config: DnsConfig,
 }
 
 #[trait_async]
-impl ValidatesDomains for Validator<TokioConnectionProvider> {
+impl ValidatesDomains for Validator {
     async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
         self.validate_no_txt_challenge(domain).await?;
         self.validate_cname_delegation(domain).await?;
@@ -61,16 +60,16 @@ impl Default for DnsConfig {
     }
 }
 
-impl Default for Validator<TokioConnectionProvider> {
+impl Default for Validator {
     fn default() -> Self {
         // Use non-caching configuration as default
         Self::new_without_cache(DnsConfig::default()).unwrap()
     }
 }
 
-impl<T: ConnectionProvider> Validator<T> {
+impl Validator {
     /// Create a new Validator with custom resolver and DNS configuration
-    pub fn new(resolver: AsyncResolver<T>, dns_config: DnsConfig) -> Result<Self, ValidationError> {
+    pub fn new(resolver: TokioResolver, dns_config: DnsConfig) -> Result<Self, ValidationError> {
         if dns_config.delegation_domain.is_empty() {
             return Err(ValidationError::UnexpectedError(anyhow!(
                 "Delegation domain cannot be empty"
@@ -84,7 +83,7 @@ impl<T: ConnectionProvider> Validator<T> {
     }
 }
 
-impl Validator<TokioConnectionProvider> {
+impl Validator {
     /// Create a new Validator without DNS caching (useful for real-time validation)
     pub fn new_without_cache(dns_config: DnsConfig) -> Result<Self, ValidationError> {
         if dns_config.delegation_domain.is_empty() {
@@ -93,13 +92,18 @@ impl Validator<TokioConnectionProvider> {
             )));
         }
 
+        let cfg = ResolverConfig::cloudflare();
+
         let mut opts = ResolverOpts::default();
         opts.cache_size = 0;
-        opts.use_hosts_file = false;
+        opts.use_hosts_file = ResolveHosts::Never;
         opts.validate = false;
         opts.recursion_desired = true;
 
-        let resolver = AsyncResolver::tokio(ResolverConfig::default(), opts);
+        let builder = TokioResolver::builder_with_config(cfg, TokioConnectionProvider::default())
+            .with_options(opts);
+
+        let resolver = builder.build();
 
         Ok(Self {
             resolver,
@@ -152,14 +156,18 @@ impl Validator<TokioConnectionProvider> {
 
         match self.resolver.lookup(&txt_src, RecordType::TXT).await {
             Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: txt_src }),
-            Err(err) => match err.kind() {
-                ResolveErrorKind::NoRecordsFound { .. } => Ok(()),
-                _ => Err(ValidationError::UnexpectedError(anyhow!(
-                    "Failed to resolve TXT record for {}: {}",
-                    txt_src,
-                    err
-                ))),
-            },
+            Err(err) => {
+                let err_str = err.to_string();
+                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
+                    Ok(())
+                } else {
+                    Err(ValidationError::UnexpectedError(anyhow!(
+                        "Failed to resolve TXT record for {}: {}",
+                        txt_src,
+                        err
+                    )))
+                }
+            }
         }
     }
 
@@ -182,14 +190,18 @@ impl Validator<TokioConnectionProvider> {
                     .then_some(())
                     .ok_or(ValidationError::ExistingDnsTxtChallenge { src: txt_src })
             }
-            Err(err) => match err.kind() {
-                ResolveErrorKind::NoRecordsFound { .. } => Ok(()),
-                _ => Err(ValidationError::UnexpectedError(anyhow!(
-                    "Failed to resolve TXT record for {}: {}",
-                    txt_src,
-                    err
-                ))),
-            },
+            Err(err) => {
+                let err_str = err.to_string();
+                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
+                    Ok(())
+                } else {
+                    Err(ValidationError::UnexpectedError(anyhow!(
+                        "Failed to resolve TXT record for {}: {}",
+                        txt_src,
+                        err
+                    )))
+                }
+            }
         }
     }
 
@@ -209,16 +221,20 @@ impl Validator<TokioConnectionProvider> {
             .resolver
             .lookup(&cname_src, RecordType::CNAME)
             .await
-            .map_err(|err| match err.kind() {
-                ResolveErrorKind::NoRecordsFound { .. } => ValidationError::MissingDnsCname {
-                    src: cname_src.clone(),
-                    dst: cname_dst.clone(),
-                },
-                _ => ValidationError::UnexpectedError(anyhow!(
-                    "Failed to resolve CNAME from {}: {}",
-                    cname_src,
-                    err
-                )),
+            .map_err(|err| {
+                let err_str = err.to_string();
+                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
+                    ValidationError::MissingDnsCname {
+                        src: cname_src.clone(),
+                        dst: cname_dst.clone(),
+                    }
+                } else {
+                    ValidationError::UnexpectedError(anyhow!(
+                        "Failed to resolve CNAME from {}: {}",
+                        cname_src,
+                        err
+                    ))
+                }
             })?;
 
         // Validate expected CNAME record exists
@@ -244,17 +260,19 @@ impl Validator<TokioConnectionProvider> {
             .resolver
             .lookup(&txt_src, RecordType::TXT)
             .await
-            .map_err(|err| match err.kind() {
-                ResolveErrorKind::NoRecordsFound { .. } => {
+            .map_err(|err| {
+                let err_str = err.to_string();
+                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
                     ValidationError::MissingDnsTxtCanisterId {
                         src: txt_src.clone(),
                     }
+                } else {
+                    ValidationError::UnexpectedError(anyhow!(
+                        "Failed to resolve TXT record at {}: {}",
+                        txt_src,
+                        err
+                    ))
                 }
-                _ => ValidationError::UnexpectedError(anyhow!(
-                    "Failed to resolve TXT record at {}: {}",
-                    txt_src,
-                    err
-                )),
             })?;
 
         // Validate exactly one record exists

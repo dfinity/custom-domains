@@ -22,5 +22,5 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 trait-async = { workspace = true }
-trust-dns-resolver = { workspace = true }
+hickory-resolver = { workspace = true }
 x509-parser = { workspace = true }
