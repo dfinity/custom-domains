@@ -13,7 +13,7 @@ use base::{
         time::{UtcTimestamp, UtcTimestampProvider},
     },
     types::{
-        domain::{CustomDomain, DomainStatus, RegisteredDomain, RegistrationStatus},
+        domain::{DomainStatus, RegisteredDomain, RegistrationStatus},
         task::{InputTask, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult},
     },
 };
@@ -362,25 +362,6 @@ impl Repository for LocalState {
             .collect();
 
         Ok(registered_domains)
-    }
-
-    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError> {
-        let mutex = self.storage.lock().unwrap();
-
-        let domains = mutex
-            .iter()
-            .filter_map(
-                |(domain, entry)| match (&entry.certificate, entry.canister_id) {
-                    (Some(_), Some(canister_id)) => Some(CustomDomain {
-                        domain: domain.clone(),
-                        canister_id,
-                    }),
-                    _ => None,
-                },
-            )
-            .collect();
-
-        Ok(domains)
     }
 }
 

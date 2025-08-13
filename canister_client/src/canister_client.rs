@@ -3,9 +3,10 @@
 //! This module provides a client for interacting with the custom domains canister.
 //! It handles all communication, serialization, encryption, and error handling.
 
-use std::sync::Arc;
+use std::sync::{atomic::AtomicU64, atomic::Ordering, Arc};
 
 use anyhow::anyhow;
+use arc_swap::ArcSwap;
 use base::{
     traits::{
         cipher::CiphersCertificates,
@@ -13,7 +14,7 @@ use base::{
         time::UtcTimestamp,
     },
     types::{
-        domain::{CustomDomain, DomainStatus, RegisteredDomain},
+        domain::{DomainStatus, RegisteredDomain},
         task::{InputTask, ScheduledTask, TaskOutput, TaskResult},
     },
 };
@@ -22,6 +23,10 @@ use canister_api::ListCertificatesPageInput;
 use derive_new::new;
 use fqdn::FQDN;
 use ic_agent::Agent;
+use ic_bn_lib::{
+    custom_domains::{CustomDomain as IcBnCustomDomain, ProvidesCustomDomains},
+    tls::providers::{Pem, ProvidesCertificates},
+};
 use trait_async::trait_async;
 
 #[derive(Debug, new)]
@@ -29,14 +34,60 @@ pub struct CanisterClient {
     agent: Agent,
     canister_id: Principal,
     certificate_cipher: Arc<dyn CiphersCertificates>,
+    #[new(value = "AtomicU64::new(0)")]
+    last_change_time: AtomicU64,
+    #[new(value = "ArcSwap::from_pointee(Vec::new())")]
+    certificates: ArcSwap<Vec<Pem>>,
+    #[new(value = "ArcSwap::from_pointee(Vec::new())")]
+    custom_domains: ArcSwap<Vec<IcBnCustomDomain>>,
 }
 
 impl CanisterClient {
+    /// Method to fetch and cache registrations if changes happened.
+    async fn maybe_update_cache(&self) -> Result<(), anyhow::Error> {
+        let last_change = self.get_last_change_time().await?;
+        let cached_timestamp = self.last_change_time.load(Ordering::Relaxed);
+
+        if last_change != cached_timestamp {
+            // Certificates have changed, fetch new ones
+            let registered_domains = self.all_registrations().await?;
+
+            let mut pems = Vec::with_capacity(registered_domains.len());
+            let mut domains = Vec::with_capacity(registered_domains.len());
+
+            for domain in registered_domains {
+                let certificate = self.decrypt_field(&domain.cert_encrypted)?;
+                let private_key = self.decrypt_field(&domain.priv_key_encrypted)?;
+
+                pems.push(Pem([certificate, private_key].concat()));
+
+                domains.push(IcBnCustomDomain {
+                    name: domain.domain,
+                    canister_id: domain.canister_id,
+                });
+            }
+
+            // Update cache
+            self.certificates.store(Arc::new(pems));
+            self.custom_domains.store(Arc::new(domains));
+            self.last_change_time.store(last_change, Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+
     /// Encrypts sensitive data before sending it to canister
     fn encrypt_field(&self, field_name: &str, data: &[u8]) -> Result<Vec<u8>, RepositoryError> {
         self.certificate_cipher.encrypt(data).map_err(|err| {
             RepositoryError::InternalError(anyhow!("Failed to encrypt {field_name}: {err}"))
         })
+    }
+
+    /// Decrypts sensitive data received from canister
+    fn decrypt_field(&self, data: &[u8]) -> Result<Vec<u8>, RepositoryError> {
+        self.certificate_cipher
+            .decrypt(data)
+            .map_err(|err| RepositoryError::InternalError(anyhow!("Failed to decrypt data: {err}")))
     }
 
     /// Makes a query call to the canister, decodes the response, and handles canister API errors
@@ -242,8 +293,20 @@ impl Repository for CanisterClient {
 
         Ok(registered_domains)
     }
+}
 
-    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError> {
-        todo!()
+#[trait_async]
+impl ProvidesCertificates for CanisterClient {
+    async fn get_certificates(&self) -> Result<Vec<Pem>, anyhow::Error> {
+        self.maybe_update_cache().await?;
+        Ok(self.certificates.load().as_ref().clone())
+    }
+}
+
+#[trait_async]
+impl ProvidesCustomDomains for CanisterClient {
+    async fn get_custom_domains(&self) -> Result<Vec<IcBnCustomDomain>, anyhow::Error> {
+        self.maybe_update_cache().await?;
+        Ok(self.custom_domains.load().as_ref().clone())
     }
 }

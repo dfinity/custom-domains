@@ -27,6 +27,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+arc-swap = { version = "1.7.1" }
 anyhow = "1.0.98"
 axum = "0.8.4"
 axum-server = "0.7.2"

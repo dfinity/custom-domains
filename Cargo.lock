@@ -618,6 +618,7 @@ name = "canister-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "base",
  "candid",
  "canister-api",

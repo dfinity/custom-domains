@@ -15,7 +15,7 @@ use trait_async::trait_async;
 use crate::{
     traits::time::UtcTimestamp,
     types::{
-        domain::{CustomDomain, DomainStatus, RegisteredDomain},
+        domain::{DomainStatus, RegisteredDomain},
         task::{InputTask, ScheduledTask, TaskResult},
     },
 };
@@ -58,8 +58,6 @@ pub trait Repository: Send + Sync {
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError>;
     /// Fetches all registered domains with valid certificates.
     async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError>;
-    /// Fetches all registered domains (without certificates).
-    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError>;
 }
 
 impl TryFrom<ApiSubmitTaskError> for RepositoryError {
