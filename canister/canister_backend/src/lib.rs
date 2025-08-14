@@ -1,14 +1,27 @@
+use std::time::Duration;
+
 use canister_api::{
     FetchTaskResult, GetDomainStatusResult, GetLastChangeTimeResult, InputTask,
     ListCertificatesPageInput, ListCertificatesPageResult, SubmitTaskResult, TaskResult,
     TryAddTaskResult,
 };
-use ic_cdk::{query, update};
+use ic_cdk::{init, query, update};
+use ic_cdk_timers::set_timer_interval;
 
-use crate::state::{with_state, with_state_mut};
+use crate::state::{get_time_secs, with_state, with_state_mut};
 
 pub mod state;
 pub mod storage;
+
+const ENQUEUE_TASKS_INTERVAL: Duration = Duration::from_secs(5);
+
+#[init]
+fn init() {
+    set_timer_interval(ENQUEUE_TASKS_INTERVAL, move || {
+        let now = get_time_secs();
+        with_state_mut(|state| state.maybe_enqueue_tasks(now));
+    });
+}
 
 #[query]
 async fn get_domain_status(domain: String) -> GetDomainStatusResult {
