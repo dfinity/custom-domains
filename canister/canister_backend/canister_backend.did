@@ -104,18 +104,24 @@ type RegistrationStatus = variant {
 
 // Errors that can occur when fetching the next task
 type FetchTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal error with details
   InternalError: text;
 };
 
 // Errors that can occur when querying domain status
 type GetDomainStatusError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal error with details
   InternalError: text;
 };
 
 // Errors that can occur when submitting task results
 type SubmitTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // The specified domain was not found
   DomainNotFound: text;
   // Attempted to submit results for a non-existent task
@@ -126,6 +132,8 @@ type SubmitTaskError = variant {
 
 // Errors that can occur when trying to add a new task
 type TryAddTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // The specified domain was not found
   DomainNotFound: text;
   // Another task is already in progress for this domain
@@ -177,6 +185,8 @@ type GetLastChangeTimeResult = variant {
 
 // Errors that can occur when trying to get the last change time
 type GetLastChangeTimeError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal error with details
   InternalError: text;
 };
@@ -204,6 +214,8 @@ type RegisteredDomain = record {
 
 // Errors that can occur when getting certificates paginated
 type ListCertificatesPageError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal processing error
   InternalError: text;
 };
@@ -224,7 +236,12 @@ type ListCertificatesPageResult = variant {
   Err: ListCertificatesPageError;
 };
 
-service : {
+// Initialization arguments for the service
+type InitArg = record {
+  authorized_principal: opt principal;
+};
+
+service: (InitArg) -> {
   // Retrieves the domain status
   get_domain_status: (domain: Domain) -> (GetDomainStatusResult) query;
 

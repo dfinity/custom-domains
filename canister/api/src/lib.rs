@@ -17,6 +17,11 @@ pub type GetDomainStatusResult = Result<Option<DomainStatus>, GetDomainStatusErr
 pub type GetLastChangeTimeResult = Result<Timestamp, GetLastChangeTimeError>;
 pub type ListCertificatesPageResult = Result<CertificatesPage, ListCertificatesPageError>;
 
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub struct InitArg {
+    pub authorized_principal: Option<Principal>,
+}
+
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
     Issue,
@@ -130,26 +135,31 @@ pub struct RegisteredDomain {
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum GetLastChangeTimeError {
+    Unauthorized,
     InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum FetchTaskError {
+    Unauthorized,
     InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum GetDomainStatusError {
+    Unauthorized,
     InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum ListCertificatesPageError {
+    Unauthorized,
     InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum SubmitTaskError {
+    Unauthorized,
     DomainNotFound(String),
     NonExistingTaskSubmitted(TaskId),
     InternalError(String),
@@ -157,6 +167,7 @@ pub enum SubmitTaskError {
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum TryAddTaskError {
+    Unauthorized,
     DomainNotFound(String),
     AnotherTaskInProgress(String),
     CertificateAlreadyIssued(String),

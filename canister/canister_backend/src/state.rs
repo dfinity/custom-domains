@@ -20,6 +20,8 @@ type UtcTimestamp = u64;
 
 const MAX_DOMAIN_SIZE_BYTES: u32 = 256; // Maximum size of a domain name in bytes
 
+const MAX_TASK_QUEUE_SIZE: u64 = 1000;
+
 // The certificate renewal task is initiated this far ahead of the expiration
 const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
@@ -158,13 +160,15 @@ impl CanisterState {
 
             // Find if some task for the domain should be queued
             if let Some(task) = self.find_task_to_queue(&entry, now) {
-                entry.queued = true;
-                entry.task = Some(task);
-                entry.taken_at = None;
-                self.task_queue.push(&QueuedTask {
-                    queued_time: now,
-                    domain: domain.clone(),
-                });
+                if self.task_queue.len() < MAX_TASK_QUEUE_SIZE {
+                    entry.queued = true;
+                    entry.task = Some(task);
+                    entry.taken_at = None;
+                    self.task_queue.push(&QueuedTask {
+                        queued_time: now,
+                        domain: domain.clone(),
+                    });
+                }
             }
 
             self.domains.insert(domain.clone(), entry);
@@ -187,20 +191,23 @@ impl CanisterState {
     fn find_task_to_queue(&self, entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
         if let Some(task) = entry.task {
             if let Some(taken_at) = entry.taken_at {
-                // Check if the task timed out and should be reclaimed
+                // Reclaim task if it has been running longer than timeout
                 let expiry_time = taken_at.saturating_add(TASK_TIMEOUT.as_secs());
                 if now >= expiry_time {
                     return Some(task);
                 }
             } else if let Some(last_fail_time) = entry.last_fail_time {
+                // Retry a previously failed task after delay has elapsed
                 let next_allowed = last_fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
                 if now > next_allowed {
                     return Some(task);
                 }
             } else {
+                // Task is new and has not been taken or failed, schedule it
                 return Some(task);
             }
         } else if let Some(not_after) = entry.not_after {
+            // Schedule certificate renewal if time has come
             let renewal_time = not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs());
             if now >= renewal_time {
                 return Some(TaskKind::Renew);
