@@ -1,0 +1,261 @@
+// Unique identifier for a task
+type TaskId = nat64;
+// Unix timestamp in seconds
+type Timestamp = nat64;
+// Domain name (FQDN)
+type Domain = text;
+
+// Type of certificate management task
+type TaskKind = variant {
+  // Issue a new certificate for a domain
+  Issue;
+  // Renew an existing certificate
+  Renew;
+  // Update certificate configuration
+  Update;
+  // Delete a certificate with revocation
+  Delete;
+};
+
+// Input data for creating a new task
+type InputTask = record {
+  // Type of task to perform
+  kind: TaskKind;
+  // Target domain for the task
+  domain: text;
+};
+
+// Reasons why a task might fail
+type TaskFailReason = variant {
+  // Domain validation or canister ownership failed
+  ValidationFailed: text;
+  // Task exceeded maximum execution time
+  Timeout: record { duration_secs: nat64 };
+  // Generic failure with error message
+  GenericFailure: text;
+};
+
+// Output data produced by successful tasks
+type TaskOutput = variant {
+  // Certificate issuance output
+  Issue: IssueCertificateOutput;
+  // Update custom domain to canister mapping (returns principal of the new canister)
+  Update: principal;
+  // Certificate deletion
+  Delete;
+};
+
+// Output data for certificate issuance
+type IssueCertificateOutput = record {
+  // ID of the canister that custom domains points to
+  canister_id: principal;
+  // Encoded certificate
+  certificate: blob;
+  // Encoded private key
+  private_key: blob;
+  // Certificate validity start time (Unix timestamp)
+  not_before: Timestamp;
+  // Certificate validity end time (Unix timestamp)
+  not_after: Timestamp;
+};
+
+// Result of a completed task (success or failure)
+type TaskResult = record {
+  // Domain this task was performed on
+  domain: text;
+  // Task output (present only on success)
+  output: opt TaskOutput;
+  // Failure reason (present only on failure)
+  failure: opt TaskFailReason;
+  // ID of the completed task
+  task_id: TaskId;
+  // Total task execution time in seconds
+  duration_secs: nat64;
+};
+
+// A task that has been scheduled by canister and is awaiting processing by worker
+type ScheduledTask = record {
+  // Domain this task will operate on
+  domain: text;
+  // Type of task to perform
+  kind: TaskKind;
+  // Unique task identifier
+  id: TaskId;
+  // Existing certificate (only for delete operation)
+  certificate: opt blob;
+};
+
+// Status of a domain
+type DomainStatus = record {
+  domain: text;
+  canister_id: opt principal;
+  status: RegistrationStatus;
+};
+
+// Current registration status of a custom domain
+type RegistrationStatus = variant {
+  // A task is currently being processed for this domain
+  Processing;
+  // Domain is registered and has a valid certificate
+  Registered;
+  // Domain registration or certificate management (e.g. renewal) failure
+  Failure: text;
+};
+
+// Errors that can occur when fetching the next task
+type FetchTaskError = variant {
+  // Internal error with details
+  InternalError: text;
+};
+
+// Errors that can occur when querying domain status
+type GetDomainStatusError = variant {
+  // Internal error with details
+  InternalError: text;
+};
+
+// Errors that can occur when submitting task results
+type SubmitTaskError = variant {
+  // The specified domain was not found
+  DomainNotFound: text;
+  // Attempted to submit results for a non-existent task
+  NonExistingTaskSubmitted: text;
+  // Internal error with details
+  InternalError: text;
+};
+
+// Errors that can occur when trying to add a new task
+type TryAddTaskError = variant {
+  // The specified domain was not found
+  DomainNotFound: text;
+  // Another task is already in progress for this domain
+  AnotherTaskInProgress: text;
+  // Certificate already exists for this domain (relevant only for Issue tasks)
+  CertificateAlreadyIssued: text;
+  // No existing certificate found (relevant only for Update task)
+  MissingCertificateForUpdate: text;
+  // Internal error with details
+  InternalError: text;
+};
+
+// Result of domain status query
+type GetDomainStatusResult = variant {
+  // Success: domain status (None if domain not found)
+  Ok: opt DomainStatus;
+  // Error occurred during query
+  Err: GetDomainStatusError;
+};
+
+// Result of fetching the next scheduled task
+type FetchTaskResult = variant {
+  // Success: next task (None if no tasks available)
+  Ok: opt ScheduledTask;
+  // Error occurred during fetch
+  Err: FetchTaskError;
+};
+
+// Result of submitting task completion results
+type SubmitTaskResult = variant {
+  Ok;
+  Err: SubmitTaskError;
+};
+
+// Result of attempting to add a new task
+type TryAddTaskResult = variant {
+  // Task successfully added to queue
+  Ok;
+  // Error occurred while adding task
+  Err: TryAddTaskError;
+};
+
+// Result of getting the last change time of the stored domains
+type GetLastChangeTimeResult = variant {
+  Ok: Timestamp;
+  // Error occurred while adding task
+  Err: GetLastChangeTimeError;
+};
+
+// Errors that can occur when trying to get the last change time
+type GetLastChangeTimeError = variant {
+  // Internal error with details
+  InternalError: text;
+};
+
+// Input parameters for paginated certificate listing
+type ListCertificatesPageInput = record {
+  // Optional starting point for pagination (domain name to start from, inclusive)
+  // Use the `next_key` from a previous response to continue pagination
+  start_key: opt Domain;
+  // Maximum number of items to return per page
+  limit: opt nat32;
+};
+
+// A domain with successfully issued certificate data
+type RegisteredDomain = record {
+    // The fully qualified domain name
+    domain: Domain;
+    // Principal ID of the canister this domain points to
+    canister_id: principal;
+    // Encrypted certificate data
+    cert_encrypted: blob;
+    // Encrypted private key data
+    priv_key_encrypted: blob;
+};
+
+// Errors that can occur when getting certificates paginated
+type ListCertificatesPageError = variant {
+  // Internal processing error
+  InternalError: text;
+};
+
+// A page of certificates with pagination information
+type CertificatesPage = record {
+  // List of domains with certificates
+  items: vec RegisteredDomain;
+  // Domain name to use as start_key for the next page, null if this is the last page
+  next_key: opt text;
+};
+
+// Result type for certificate pagination requests
+type ListCertificatesPageResult = variant {
+  // Success: page of certificates
+  Ok: CertificatesPage;
+  // Error occurred during processing
+  Err: ListCertificatesPageError;
+};
+
+service : {
+  // Retrieves the domain status
+  get_domain_status: (domain: Domain) -> (GetDomainStatusResult) query;
+
+  // Fetch next pending task for execution
+  fetch_next_task: () -> (FetchTaskResult);
+
+  // Submits task execution result
+  submit_task_result: (result: TaskResult) -> (SubmitTaskResult);
+
+  // Tries to submit a new task of certain kind for a domain
+  try_add_task: (task: InputTask) -> (TryAddTaskResult);
+
+  // Returns the timestamp of the most recent change affecting stored domains.
+  // A change can be any of the following:
+  // - A new domain was registered
+  // - A certificate for a domain was renewed
+  // - A domain registraion was removed
+  // - The domain-to-canister mapping for any domain was updated
+  get_last_change_time: () -> (GetLastChangeTimeResult) query;
+
+  // Retrieves a paginated list of domains with successfully issued certificates.
+  //
+  // Pagination uses cursor-based approach with lexicographically ordered domain names.
+  // The `start_key` parameter specifies the domain to start from (inclusive), and
+  // `limit` controls the maximum number of items returned per page.
+  //
+  // The response includes a `next_key` field that can be used as `start_key`
+  // for the following page. When `next_key` is null, there are no more results.
+  //
+  // Default limit: 100 domains per page
+  // Maximum limit: 400 domains per page
+  // Minimum limit: 1 domain per page
+  list_certificates_page: (input: ListCertificatesPageInput) -> (ListCertificatesPageResult) query;
+};

@@ -1,0 +1,106 @@
+use std::str::FromStr;
+
+use candid::Principal;
+use canister_api::{
+    DomainStatus as ApiDomainStatus, RegisteredDomain as ApiRegisteredDomain,
+    RegistrationStatus as ApiRegistrationStatus,
+};
+use derive_new::new;
+use fqdn::FQDN;
+use ic_bn_lib::custom_domains::CustomDomain as IcBnCustomDomain;
+use serde::{Deserialize, Serialize};
+
+/// Represents a fully registered domain with encrypted certificate and private key.
+#[derive(Debug, Clone, new)]
+pub struct RegisteredDomain {
+    /// The fully qualified domain name
+    pub domain: FQDN,
+    /// The canister ID associated with this domain
+    pub canister_id: Principal,
+    /// The encrypted certificate data
+    pub cert_encrypted: Vec<u8>,
+    /// The encrypted private key data
+    pub priv_key_encrypted: Vec<u8>,
+}
+
+/// Represents a custom domain mapping to a canister.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomDomain {
+    /// The fully qualified domain name
+    pub domain: FQDN,
+    /// The canister ID associated with this domain
+    pub canister_id: Principal,
+}
+
+impl From<CustomDomain> for IcBnCustomDomain {
+    fn from(value: CustomDomain) -> Self {
+        IcBnCustomDomain {
+            name: value.domain,
+            canister_id: value.canister_id,
+        }
+    }
+}
+
+/// Represents the status of a domain registration process.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationStatus {
+    /// The registration is currently being processed
+    Processing,
+    /// The domain has been successfully registered
+    Registered,
+    /// The registration failed with an error message
+    Failure(String),
+}
+
+/// Represents the overall status of a domain including registration state.
+#[derive(Debug, Clone)]
+pub struct DomainStatus {
+    /// The fully qualified domain name
+    pub domain: FQDN,
+    /// The canister ID if the domain is registered
+    pub canister_id: Option<Principal>,
+    /// The current registration status
+    pub status: RegistrationStatus,
+}
+
+impl TryFrom<ApiDomainStatus> for DomainStatus {
+    type Error = anyhow::Error;
+
+    fn try_from(api_status: ApiDomainStatus) -> Result<Self, Self::Error> {
+        let status = match api_status.status {
+            ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
+            ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
+            ApiRegistrationStatus::Failure(reason) => RegistrationStatus::Failure(reason),
+        };
+
+        Ok(DomainStatus {
+            domain: FQDN::from_str(&api_status.domain)?,
+            canister_id: api_status.canister_id,
+            status,
+        })
+    }
+}
+
+impl From<ApiRegistrationStatus> for RegistrationStatus {
+    fn from(status: ApiRegistrationStatus) -> Self {
+        match status {
+            ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
+            ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
+            ApiRegistrationStatus::Failure(reason) => RegistrationStatus::Failure(reason),
+        }
+    }
+}
+
+impl TryFrom<ApiRegisteredDomain> for RegisteredDomain {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ApiRegisteredDomain) -> Result<Self, Self::Error> {
+        Ok(RegisteredDomain {
+            domain: FQDN::from_str(&value.domain)?,
+            canister_id: value.canister_id,
+            cert_encrypted: value.cert_encrypted,
+            priv_key_encrypted: value.priv_key_encrypted,
+        })
+    }
+}
