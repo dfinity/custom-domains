@@ -88,14 +88,21 @@ pub struct CanisterState {
 }
 
 impl CanisterState {
-    // Processes all domains and returns the next scheduled task if any.
-    // This method is executed as query, so it should not modify the state.
+    // Processes all domains and returns true if next task exists.
+    // This method is executed as query, so it will not modify the state.
     pub fn has_next_task(&mut self, now: UtcTimestamp) -> HasNextTaskResult {
-        let task = self.process_domains(now);
+        // If some task is found we can stop
+        let stop_early = true;
+        let task = self.process_domains(now, stop_early);
         Ok(task.is_some())
     }
 
-    pub fn process_domains(&mut self, now: UtcTimestamp) -> Option<ScheduledTask> {
+    // This method is called by both queries and updates to process domains.
+    pub fn process_domains(
+        &mut self,
+        now: UtcTimestamp,
+        stop_early: bool,
+    ) -> Option<ScheduledTask> {
         let domains: Vec<_> = self.domains.iter().map(|e| e.key().clone()).collect();
 
         let mut scheduled_task = None;
@@ -123,6 +130,8 @@ impl CanisterState {
                     ));
                     self.domains.insert(domain.clone(), entry);
                 }
+            } else if stop_early {
+                break;
             }
         }
 
@@ -200,7 +209,9 @@ impl CanisterState {
     }
 
     pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
-        let task = self.process_domains(now);
+        // This is an update call, we process all domains as multiple domains without registration can be removed
+        let stop_early = false;
+        let task = self.process_domains(now, stop_early);
         Ok(task)
     }
 
