@@ -89,50 +89,55 @@ pub struct CanisterState {
 
 impl CanisterState {
     // Processes all domains and returns true if next task exists.
-    // This method is executed as query, so it will not modify the state.
-    pub fn has_next_task(&mut self, now: UtcTimestamp) -> HasNextTaskResult {
-        // If some task is found we can stop
-        let stop_early = true;
-        let task = self.process_domains(now, stop_early);
-        Ok(task.is_some())
+    pub fn has_next_task(&self, now: UtcTimestamp) -> HasNextTaskResult {
+        let has_task = self
+            .domains
+            .values()
+            .any(|entry| self.has_pending_task(&entry, now).is_some());
+
+        Ok(has_task)
     }
 
-    // This method is called by both queries and updates to process domains.
-    pub fn process_domains(
-        &mut self,
-        now: UtcTimestamp,
-        stop_early: bool,
-    ) -> Option<ScheduledTask> {
-        let domains: Vec<_> = self.domains.iter().map(|e| e.key().clone()).collect();
-
+    pub fn process_domains(&mut self, now: UtcTimestamp) -> Option<ScheduledTask> {
         let mut scheduled_task = None;
+        let mut domains_to_remove = Vec::new();
+        let mut domain_to_update = None;
 
-        for domain in domains.iter() {
-            let mut entry = self.domains.get(domain).unwrap();
+        // Iterate over entries without mutating the map
+        for entry in self.domains.iter() {
+            let domain = entry.key().clone();
+            let mut domain_entry = entry.value();
 
-            // Remove domain if it has been unregistered for too long
-            if self.should_remove_unregistered_domain(&entry, now) {
-                self.domains.remove(domain);
-                // Skip any further processing for this domain
+            // Remove domain if unregistered too long
+            if self.should_remove_unregistered_domain(&domain_entry, now) {
+                domains_to_remove.push(domain);
                 continue;
             }
 
-            // Find if some task for domain exists
+            // Schedule only the first available pending task
             if scheduled_task.is_none() {
-                if let Some(task_kind) = self.find_pending_task(&entry, now) {
-                    entry.taken_at = Some(now);
-                    entry.task = Some(task_kind);
+                if let Some(task_kind) = self.has_pending_task(&domain_entry, now) {
+                    domain_entry.taken_at = Some(now);
+                    domain_entry.task = Some(task_kind);
                     scheduled_task = Some(ScheduledTask::new(
                         task_kind,
                         domain.clone(),
                         now,
-                        entry.certificate.clone(),
+                        domain_entry.certificate.clone(),
                     ));
-                    self.domains.insert(domain.clone(), entry);
+                    domain_to_update = Some((domain, domain_entry));
                 }
-            } else if stop_early {
-                break;
             }
+        }
+
+        // Update the entry with the scheduled task
+        if let Some((domain, entry)) = domain_to_update {
+            self.domains.insert(domain, entry);
+        }
+
+        // Remove expired/unregistered domains
+        for domain in domains_to_remove {
+            self.domains.remove(&domain);
         }
 
         scheduled_task
@@ -151,7 +156,7 @@ impl CanisterState {
         now >= expiry_time
     }
 
-    fn find_pending_task(&self, entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
+    fn has_pending_task(&self, entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
         if let Some(task) = entry.task {
             if let Some(taken_at) = entry.taken_at {
                 // Reclaim task if it has been running longer than timeout
@@ -162,7 +167,7 @@ impl CanisterState {
             } else if let Some(last_fail_time) = entry.last_fail_time {
                 // Retry a previously failed task after delay has elapsed
                 let next_allowed = last_fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
-                if now > next_allowed {
+                if now >= next_allowed {
                     return Some(task);
                 }
             } else {
@@ -209,9 +214,7 @@ impl CanisterState {
     }
 
     pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
-        // This is an update call, we process all domains as multiple domains without registration can be removed
-        let stop_early = false;
-        let task = self.process_domains(now, stop_early);
+        let task = self.process_domains(now);
         Ok(task)
     }
 

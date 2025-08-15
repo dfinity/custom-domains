@@ -64,7 +64,7 @@ async fn get_domain_status(domain: String) -> GetDomainStatusResult {
 async fn has_next_task() -> HasNextTaskResult {
     validate_caller(HasNextTaskError::Unauthorized)?;
     let now = get_time_secs();
-    with_state_mut(|state| state.has_next_task(now))
+    with_state(|state| state.has_next_task(now))
 }
 
 #[update]
