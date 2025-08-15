@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use canister_api::{
     FetchTaskError as ApiFetchTaskError, GetDomainStatusError as ApiGetDomainStatusError,
-    GetLastChangeTimeError as ApiGetLastChangeTimeError,
+    GetLastChangeTimeError as ApiGetLastChangeTimeError, HasNextTaskError as ApiHasNextTaskError,
     ListCertificatesPageError as ApiListCertificatesPageError,
     SubmitTaskError as ApiSubmitTaskError, TryAddTaskError as ApiTryAddTaskError,
 };
@@ -152,6 +152,19 @@ impl TryFrom<ApiListCertificatesPageError> for RepositoryError {
         match err {
             ApiListCertificatesPageError::Unauthorized => Ok(RepositoryError::Unauthorized),
             ApiListCertificatesPageError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
+            }
+        }
+    }
+}
+
+impl TryFrom<ApiHasNextTaskError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiHasNextTaskError) -> Result<Self, Self::Error> {
+        match err {
+            ApiHasNextTaskError::Unauthorized => Ok(RepositoryError::Unauthorized),
+            ApiHasNextTaskError::InternalError(err) => {
                 Ok(RepositoryError::InternalError(anyhow!(err)))
             }
         }

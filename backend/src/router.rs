@@ -113,7 +113,6 @@ mod tests {
             .unwrap();
 
         let response = router.clone().oneshot(request).await.unwrap();
-        println!("response {response:?}");
         assert_eq!(response.status(), StatusCode::ACCEPTED);
 
         // // Status 409, conflict

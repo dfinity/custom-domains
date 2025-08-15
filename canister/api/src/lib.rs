@@ -16,6 +16,7 @@ pub type TryAddTaskResult = Result<(), TryAddTaskError>;
 pub type GetDomainStatusResult = Result<Option<DomainStatus>, GetDomainStatusError>;
 pub type GetLastChangeTimeResult = Result<Timestamp, GetLastChangeTimeError>;
 pub type ListCertificatesPageResult = Result<CertificatesPage, ListCertificatesPageError>;
+pub type HasNextTaskResult = Result<bool, HasNextTaskError>;
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct InitArg {
@@ -162,6 +163,12 @@ pub enum SubmitTaskError {
     Unauthorized,
     DomainNotFound(String),
     NonExistingTaskSubmitted(TaskId),
+    InternalError(String),
+}
+
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+pub enum HasNextTaskError {
+    Unauthorized,
     InternalError(String),
 }
 

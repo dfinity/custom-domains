@@ -196,6 +196,14 @@ impl Repository for CanisterClient {
     }
 
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError> {
+        let has_next_task = self
+            .query::<(), bool, canister_api::HasNextTaskError>("has_next_task", &())
+            .await?;
+
+        if !has_next_task {
+            return Ok(None);
+        }
+
         let response = self
             .update::<(), Option<canister_api::ScheduledTask>, canister_api::FetchTaskError>(
                 "fetch_next_task",
@@ -236,11 +244,14 @@ impl Repository for CanisterClient {
     }
 
     async fn try_add_task(&self, input_task: InputTask) -> Result<(), RepositoryError> {
-        self.update::<canister_api::InputTask, (), canister_api::TryAddTaskError>(
-            "try_add_task",
-            &canister_api::InputTask::from(input_task),
-        )
-        .await?;
+        let response = self
+            .update::<canister_api::InputTask, (), canister_api::TryAddTaskError>(
+                "try_add_task",
+                &canister_api::InputTask::from(input_task),
+            )
+            .await;
+
+        response?;
 
         Ok(())
     }

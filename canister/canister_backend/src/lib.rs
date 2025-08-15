@@ -1,23 +1,21 @@
-use std::time::Duration;
-
 use canister_api::{
     FetchTaskError, FetchTaskResult, GetDomainStatusError, GetDomainStatusResult,
-    GetLastChangeTimeError, GetLastChangeTimeResult, InitArg, InputTask, ListCertificatesPageError,
-    ListCertificatesPageInput, ListCertificatesPageResult, SubmitTaskError, SubmitTaskResult,
-    TaskResult, TryAddTaskError, TryAddTaskResult,
+    GetLastChangeTimeError, GetLastChangeTimeResult, HasNextTaskError, HasNextTaskResult, InitArg,
+    InputTask, ListCertificatesPageError, ListCertificatesPageInput, ListCertificatesPageResult,
+    SubmitTaskError, SubmitTaskResult, TaskResult, TryAddTaskError, TryAddTaskResult,
 };
-use ic_cdk::{caller, init, inspect_message, post_upgrade, query, trap, update};
-use ic_cdk_timers::set_timer_interval;
+use ic_cdk::{
+    api::{call::accept_message, time},
+    caller, init, inspect_message, post_upgrade, query, trap, update,
+};
 
 use crate::{
-    state::{get_time_secs, with_state, with_state_mut},
+    state::{with_state, with_state_mut, UtcTimestamp},
     storage::AUTHORIZED_PRINCIPAL,
 };
 
 pub mod state;
 pub mod storage;
-
-const ENQUEUE_TASKS_INTERVAL: Duration = Duration::from_secs(30);
 
 // Inspect ingress messages in the pre-consensus phase and reject early, if the caller is unauthorized
 #[inspect_message]
@@ -27,6 +25,11 @@ fn inspect_message() {
             trap("message_inspection_failed: unauthorized call");
         }
     }
+    accept_message()
+}
+
+pub fn get_time_secs() -> UtcTimestamp {
+    time() / 1_000_000_000
 }
 
 fn validate_caller<T>(unauthorized_error: T) -> Result<(), T> {
@@ -42,11 +45,6 @@ fn validate_caller<T>(unauthorized_error: T) -> Result<(), T> {
 fn init(init_arg: InitArg) {
     // Initialize the authorized principal
     AUTHORIZED_PRINCIPAL.with(|p| *p.borrow_mut() = init_arg.authorized_principal);
-
-    set_timer_interval(ENQUEUE_TASKS_INTERVAL, move || {
-        let now = get_time_secs();
-        with_state_mut(|state| state.maybe_enqueue_tasks(now));
-    });
 }
 
 // Run every time a canister is upgraded
@@ -62,22 +60,32 @@ async fn get_domain_status(domain: String) -> GetDomainStatusResult {
     with_state(|state| state.get_domain_status(domain))
 }
 
+#[query]
+async fn has_next_task() -> HasNextTaskResult {
+    validate_caller(HasNextTaskError::Unauthorized)?;
+    let now = get_time_secs();
+    with_state_mut(|state| state.has_next_task(now))
+}
+
 #[update]
 async fn fetch_next_task() -> FetchTaskResult {
     validate_caller(FetchTaskError::Unauthorized)?;
-    with_state_mut(|state| state.fetch_next_task())
+    let now = get_time_secs();
+    with_state_mut(|state| state.fetch_next_task(now))
 }
 
 #[update]
 async fn submit_task_result(result: TaskResult) -> SubmitTaskResult {
     validate_caller(SubmitTaskError::Unauthorized)?;
-    with_state_mut(|state| state.submit_task_result(result))
+    let now = get_time_secs();
+    with_state_mut(|state| state.submit_task_result(result, now))
 }
 
 #[update]
 async fn try_add_task(task: InputTask) -> TryAddTaskResult {
     validate_caller(TryAddTaskError::Unauthorized)?;
-    with_state_mut(|state| state.try_add_task(task))
+    let now = get_time_secs();
+    with_state_mut(|state| state.try_add_task(task, now))
 }
 
 #[query]

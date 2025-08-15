@@ -1,26 +1,22 @@
 use candid::Principal;
 use canister_api::{
     CertificatesPage, DomainStatus, FetchTaskResult, GetDomainStatusResult,
-    GetLastChangeTimeResult, InputTask, ListCertificatesPageInput, ListCertificatesPageResult,
-    RegisteredDomain, RegistrationStatus, ScheduledTask, SubmitTaskError, SubmitTaskResult,
-    TaskFailReason, TaskKind, TaskOutput, TaskResult, TryAddTaskError, TryAddTaskResult,
+    GetLastChangeTimeResult, HasNextTaskResult, InputTask, ListCertificatesPageInput,
+    ListCertificatesPageResult, RegisteredDomain, RegistrationStatus, ScheduledTask,
+    SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutput, TaskResult,
+    TryAddTaskError, TryAddTaskResult,
 };
-use ic_cdk::api::time;
 use ic_stable_structures::{
     memory_manager::VirtualMemory, storable::Bound, DefaultMemoryImpl, StableBTreeMap, StableCell,
-    StableMinHeap, Storable,
+    Storable,
 };
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::{borrow::Cow, ops::Bound as RangeBound, time::Duration};
 
-use crate::storage::STATE;
+use crate::{get_time_secs, storage::STATE};
 
-type UtcTimestamp = u64;
-
-const MAX_DOMAIN_SIZE_BYTES: u32 = 256; // Maximum size of a domain name in bytes
-
-const MAX_TASK_QUEUE_SIZE: u64 = 1000;
+pub type UtcTimestamp = u64;
 
 // The certificate renewal task is initiated this far ahead of the expiration
 const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -53,7 +49,6 @@ pub struct DomainEntry {
     pub failures_count: u32,
     pub canister_id: Option<Principal>,
     pub created_at: UtcTimestamp,
-    pub queued: bool,
     pub taken_at: Option<UtcTimestamp>,
     pub certificate: Option<Vec<u8>>,
     pub private_key: Option<Vec<u8>>,
@@ -87,69 +82,26 @@ impl Storable for DomainEntry {
     const BOUND: Bound = Bound::Unbounded;
 }
 
-// Represents a task that has been queued for processing by workers.
-#[derive(Debug, Clone, Eq, Serialize, Deserialize)]
-pub struct QueuedTask {
-    pub queued_time: UtcTimestamp,
-    pub domain: String,
-}
-
-impl PartialEq for QueuedTask {
-    fn eq(&self, other: &Self) -> bool {
-        self.domain == other.domain && self.queued_time == other.queued_time
-    }
-}
-
-impl PartialOrd for QueuedTask {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(
-            self.queued_time
-                .cmp(&other.queued_time)
-                .then(self.domain.cmp(&other.domain)),
-        )
-    }
-}
-
-impl Storable for QueuedTask {
-    fn to_bytes(&self) -> Cow<'_, [u8]> {
-        Cow::Owned(to_vec(&self).expect("QueuedTask serialization failed"))
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        to_vec(&self).expect("QueuedTask serialization failed")
-    }
-
-    fn from_bytes(bytes: Cow<[u8]>) -> Self {
-        from_slice(&bytes).expect("QueuedTask deserialization failed")
-    }
-
-    const BOUND: Bound = Bound::Bounded {
-        max_size: std::mem::size_of::<UtcTimestamp>() as u32 + MAX_DOMAIN_SIZE_BYTES,
-        is_fixed_size: false,
-    };
-}
-
 pub struct CanisterState {
     pub domains: StableBTreeMap<String, DomainEntry, VirtualMemory<DefaultMemoryImpl>>,
     pub last_change: StableCell<UtcTimestamp, VirtualMemory<DefaultMemoryImpl>>,
-    pub task_queue: StableMinHeap<QueuedTask, VirtualMemory<DefaultMemoryImpl>>,
-}
-
-pub fn get_time_secs() -> UtcTimestamp {
-    time() / 1_000_000_000
 }
 
 impl CanisterState {
-    pub fn maybe_enqueue_tasks(&mut self, now: UtcTimestamp) {
+    // Processes all domains and returns the next scheduled task if any.
+    // This method is executed as query, so it should not modify the state.
+    pub fn has_next_task(&mut self, now: UtcTimestamp) -> HasNextTaskResult {
+        let task = self.process_domains(now);
+        Ok(task.is_some())
+    }
+
+    pub fn process_domains(&mut self, now: UtcTimestamp) -> Option<ScheduledTask> {
         let domains: Vec<_> = self.domains.iter().map(|e| e.key().clone()).collect();
+
+        let mut scheduled_task = None;
 
         for domain in domains.iter() {
             let mut entry = self.domains.get(domain).unwrap();
-
-            // Skip domains that already have a task queued
-            if entry.queued {
-                continue;
-            }
 
             // Remove domain if it has been unregistered for too long
             if self.should_remove_unregistered_domain(&entry, now) {
@@ -158,21 +110,23 @@ impl CanisterState {
                 continue;
             }
 
-            // Find if some task for the domain should be queued
-            if let Some(task) = self.find_task_to_queue(&entry, now) {
-                if self.task_queue.len() < MAX_TASK_QUEUE_SIZE {
-                    entry.queued = true;
-                    entry.task = Some(task);
-                    entry.taken_at = None;
-                    self.task_queue.push(&QueuedTask {
-                        queued_time: now,
-                        domain: domain.clone(),
-                    });
+            // Find if some task for domain exists
+            if scheduled_task.is_none() {
+                if let Some(task_kind) = self.find_pending_task(&entry, now) {
+                    entry.taken_at = Some(now);
+                    entry.task = Some(task_kind);
+                    scheduled_task = Some(ScheduledTask::new(
+                        task_kind,
+                        domain.clone(),
+                        now,
+                        entry.certificate.clone(),
+                    ));
+                    self.domains.insert(domain.clone(), entry);
                 }
             }
-
-            self.domains.insert(domain.clone(), entry);
         }
+
+        scheduled_task
     }
 
     /// Check if domain is unregistered for too long since creation
@@ -188,7 +142,7 @@ impl CanisterState {
         now >= expiry_time
     }
 
-    fn find_task_to_queue(&self, entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
+    fn find_pending_task(&self, entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
         if let Some(task) = entry.task {
             if let Some(taken_at) = entry.taken_at {
                 // Reclaim task if it has been running longer than timeout
@@ -245,36 +199,12 @@ impl CanisterState {
         Ok(Some(domain_status))
     }
 
-    pub fn fetch_next_task(&mut self) -> FetchTaskResult {
-        if self.task_queue.peek().is_none() {
-            return Ok(None);
-        }
-
-        // Dequeue the next task
-        if let Some(task) = self.task_queue.pop() {
-            let now = get_time_secs();
-
-            let mut entry = self.domains.get(&task.domain).unwrap();
-            entry.queued = false;
-            entry.taken_at = Some(now);
-
-            // Update domain entry
-            self.domains.insert(task.domain.clone(), entry.clone());
-
-            return Ok(Some(ScheduledTask::new(
-                entry.task.unwrap(),
-                task.domain,
-                now,
-                entry.certificate,
-            )));
-        }
-
-        Ok(None)
+    pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
+        let task = self.process_domains(now);
+        Ok(task)
     }
 
-    pub fn try_add_task(&mut self, task: InputTask) -> TryAddTaskResult {
-        let now = get_time_secs();
-
+    pub fn try_add_task(&mut self, task: InputTask, now: UtcTimestamp) -> TryAddTaskResult {
         let domain = task.domain;
         let domain_entry = match self.domains.get(&domain) {
             Some(mut entry) => {
@@ -315,8 +245,11 @@ impl CanisterState {
         Ok(())
     }
 
-    pub fn submit_task_result(&mut self, task_result: TaskResult) -> SubmitTaskResult {
-        let now = get_time_secs();
+    pub fn submit_task_result(
+        &mut self,
+        task_result: TaskResult,
+        now: UtcTimestamp,
+    ) -> SubmitTaskResult {
         let domain = task_result.domain.clone();
         let task_id = task_result.task_id;
 
@@ -447,7 +380,6 @@ impl CanisterState {
         let mut state = Self {
             domains,
             last_change,
-            task_queue: StableMinHeap::new(memory_manager.get(MemoryId::new(2))),
         };
 
         // Some sample canister IDs
@@ -475,6 +407,7 @@ impl CanisterState {
 
             // Generate private key data
             let key_data = format!("key_data_{}", i + 1);
+
             let now = get_time_secs();
             domain_entry.certificate = Some(cert_data.into_bytes());
             domain_entry.private_key = Some(key_data.into_bytes());
@@ -514,7 +447,6 @@ mod tests {
         let mut state = CanisterState {
             domains,
             last_change,
-            task_queue: StableMinHeap::new(memory_manager.get(MemoryId::new(2))),
         };
 
         let canister_id_1 = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
@@ -705,7 +637,6 @@ mod tests {
         let state = CanisterState {
             domains,
             last_change,
-            task_queue: StableMinHeap::new(memory_manager.get(MemoryId::new(2))),
         };
 
         let input = ListCertificatesPageInput {

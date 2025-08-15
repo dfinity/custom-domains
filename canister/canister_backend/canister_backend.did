@@ -102,6 +102,14 @@ type RegistrationStatus = variant {
   Failure: text;
 };
 
+// Errors that may occur while checking for the existence of a next task
+type HasNextTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
+  // Internal error with details
+  InternalError: text;
+};
+
 // Errors that can occur when fetching the next task
 type FetchTaskError = variant {
   // Indicates an unauthorized operation
@@ -160,6 +168,14 @@ type FetchTaskResult = variant {
   Ok: opt ScheduledTask;
   // Error occurred during fetch
   Err: FetchTaskError;
+};
+
+// Result of checking for the presence of a next task
+type HasNextTaskResult = variant {
+  // Success: True if there is next pending task
+  Ok: bool;
+  // Error occurred during check
+  Err: HasNextTaskError;
 };
 
 // Result of submitting task completion results
@@ -244,6 +260,9 @@ type InitArg = record {
 service: (InitArg) -> {
   // Retrieves the domain status
   get_domain_status: (domain: Domain) -> (GetDomainStatusResult) query;
+
+  // Checks whether there is a pending task ready for execution
+  has_next_task: () -> (HasNextTaskResult) query;
 
   // Fetch next pending task for execution
   fetch_next_task: () -> (FetchTaskResult);
