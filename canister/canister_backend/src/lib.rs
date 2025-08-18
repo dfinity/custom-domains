@@ -8,12 +8,15 @@ use ic_cdk::{
     api::{call::accept_message, time},
     caller, init, inspect_message, post_upgrade, query, trap, update,
 };
+use ic_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 
 use crate::{
+    metrics::export_metrics_as_http_response,
     state::{with_state, with_state_mut, UtcTimestamp},
     storage::AUTHORIZED_PRINCIPAL,
 };
 
+pub mod metrics;
 pub mod state;
 pub mod storage;
 
@@ -98,4 +101,12 @@ async fn get_last_change_time() -> GetLastChangeTimeResult {
 async fn list_certificates_page(input: ListCertificatesPageInput) -> ListCertificatesPageResult {
     validate_caller(ListCertificatesPageError::Unauthorized)?;
     with_state(|state| state.list_certificates_page(input))
+}
+
+#[query(decoding_quota = 10000)]
+fn http_request(request: HttpRequest) -> HttpResponse {
+    match request.path() {
+        "/metrics" => export_metrics_as_http_response(),
+        _ => HttpResponseBuilder::not_found().build(),
+    }
 }

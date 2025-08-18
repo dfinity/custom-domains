@@ -4,6 +4,8 @@ type TaskId = nat64;
 type Timestamp = nat64;
 // Domain name (FQDN)
 type Domain = text;
+// Structured HTTP header representation
+type HeaderField = record { text; text; };
 
 // Type of certificate management task
 type TaskKind = variant {
@@ -252,6 +254,19 @@ type ListCertificatesPageResult = variant {
   Err: ListCertificatesPageError;
 };
 
+type HttpRequest = record {
+  method: text;
+  url: text;
+  headers: vec HeaderField;
+  body: blob;
+};
+
+type HttpResponse = record {
+  status_code: nat16;
+  headers: vec HeaderField;
+  body: blob;
+};
+
 // Initialization arguments for the service
 type InitArg = record {
   authorized_principal: opt principal;
@@ -294,4 +309,7 @@ service: (InitArg) -> {
   // Maximum limit: 400 domains per page
   // Minimum limit: 1 domain per page
   list_certificates_page: (input: ListCertificatesPageInput) -> (ListCertificatesPageResult) query;
+
+  // Canister metrics (Http Interface)
+  http_request: (HttpRequest) -> (HttpResponse) query;
 };
