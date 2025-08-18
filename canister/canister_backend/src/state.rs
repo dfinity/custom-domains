@@ -153,7 +153,7 @@ impl CanisterState {
     }
 
     // Removes unregistered domains that have been in the system for too long
-    pub fn purge_stale_domains(&mut self, now: UtcTimestamp) {
+    pub fn cleanup_stale_domains(&mut self, now: UtcTimestamp) {
         let mut domains_to_remove = Vec::new();
 
         for entry in self.domains.iter() {

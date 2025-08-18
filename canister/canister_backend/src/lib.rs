@@ -24,7 +24,7 @@ pub mod state;
 pub mod storage;
 
 // Interval for purging stale, unregistered domains
-const STALE_DOMAINS_PURGE_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
+const STALE_DOMAINS_CLEANUP_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 
 // Inspect ingress messages in the pre-consensus phase and reject early, if the caller is unauthorized
 #[inspect_message]
@@ -55,9 +55,9 @@ fn init(init_arg: InitArg) {
     // Initialize the authorized principal
     AUTHORIZED_PRINCIPAL.with(|p| *p.borrow_mut() = init_arg.authorized_principal);
 
-    set_timer_interval(STALE_DOMAINS_PURGE_INTERVAL, move || {
+    set_timer_interval(STALE_DOMAINS_CLEANUP_INTERVAL, move || {
         let now = get_time_secs();
-        with_state_mut(|state| state.purge_stale_domains(now));
+        with_state_mut(|state| state.cleanup_stale_domains(now));
     });
 }
 

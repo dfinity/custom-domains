@@ -24,6 +24,7 @@ pub struct CanisterMetrics {
     pub tasks_total: GaugeVec,
     pub stable_memory_size: Gauge,
     pub last_upgrade_time: IntGauge,
+    pub last_stale_domains_cleanup: IntGauge
 }
 
 impl CanisterMetrics {
@@ -78,6 +79,12 @@ impl CanisterMetrics {
             &registry,
         )?;
 
+        let last_stale_domains_cleanup = register_int_gauge_with_registry!(
+            "last_stale_domains_cleanup",
+            "The Unix timestamp of the last stale domains cleanup",
+            &registry,
+        )?;
+
         Ok(Self {
             registry,
             cycle_balance,
@@ -86,6 +93,7 @@ impl CanisterMetrics {
             tasks_total,
             stable_memory_size,
             last_upgrade_time,
+            last_stale_domains_cleanup,
         })
     }
 }
