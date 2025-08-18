@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use canister_api::{
     FetchTaskError, FetchTaskResult, GetDomainStatusError, GetDomainStatusResult,
     GetLastChangeTimeError, GetLastChangeTimeResult, HasNextTaskError, HasNextTaskResult, InitArg,
@@ -8,6 +10,7 @@ use ic_cdk::{
     api::{call::accept_message, time},
     caller, init, inspect_message, post_upgrade, query, trap, update,
 };
+use ic_cdk_timers::set_timer_interval;
 use ic_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 
 use crate::{
@@ -19,6 +22,9 @@ use crate::{
 pub mod metrics;
 pub mod state;
 pub mod storage;
+
+// Interval for purging stale, unregistered domains
+const STALE_DOMAINS_PURGE_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 
 // Inspect ingress messages in the pre-consensus phase and reject early, if the caller is unauthorized
 #[inspect_message]
@@ -48,6 +54,11 @@ fn validate_caller<T>(unauthorized_error: T) -> Result<(), T> {
 fn init(init_arg: InitArg) {
     // Initialize the authorized principal
     AUTHORIZED_PRINCIPAL.with(|p| *p.borrow_mut() = init_arg.authorized_principal);
+
+    set_timer_interval(STALE_DOMAINS_PURGE_INTERVAL, move || {
+        let now = get_time_secs();
+        with_state_mut(|state| state.purge_stale_domains(now));
+    });
 }
 
 // Run every time a canister is upgraded

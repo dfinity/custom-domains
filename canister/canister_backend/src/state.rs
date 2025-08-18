@@ -93,96 +93,35 @@ impl CanisterState {
         let has_task = self
             .domains
             .values()
-            .any(|entry| self.has_pending_task(&entry, now).is_some());
+            .any(|entry| has_pending_task(&entry, now).is_some());
 
         Ok(has_task)
     }
 
-    pub fn process_domains(&mut self, now: UtcTimestamp) -> Option<ScheduledTask> {
-        let mut scheduled_task = None;
-        let mut domains_to_remove = Vec::new();
-        let mut domain_to_update = None;
-
-        // Iterate over entries without mutating the map
+    pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
+        // TODO: consider adding randomization to task selection
+        // Iterate through domains and find the first one with a pending task
         for entry in self.domains.iter() {
             let domain = entry.key().clone();
             let mut domain_entry = entry.value();
 
-            // Remove domain if unregistered too long
-            if self.should_remove_unregistered_domain(&domain_entry, now) {
-                domains_to_remove.push(domain);
-                continue;
-            }
-
             // Schedule only the first available pending task
-            if scheduled_task.is_none() {
-                if let Some(task_kind) = self.has_pending_task(&domain_entry, now) {
-                    domain_entry.taken_at = Some(now);
-                    domain_entry.task = Some(task_kind);
-                    scheduled_task = Some(ScheduledTask::new(
-                        task_kind,
-                        domain.clone(),
-                        now,
-                        domain_entry.certificate.clone(),
-                    ));
-                    domain_to_update = Some((domain, domain_entry));
-                }
+            if let Some(task_kind) = has_pending_task(&domain_entry, now) {
+                domain_entry.taken_at = Some(now);
+                domain_entry.task = Some(task_kind);
+                let scheduled_task = Some(ScheduledTask::new(
+                    task_kind,
+                    domain.clone(),
+                    now,
+                    domain_entry.certificate.clone(),
+                ));
+                // Update the domain entry
+                self.domains.insert(domain, domain_entry);
+                return Ok(scheduled_task);
             }
         }
 
-        // Update the entry with the scheduled task
-        if let Some((domain, entry)) = domain_to_update {
-            self.domains.insert(domain, entry);
-        }
-
-        // Remove expired/unregistered domains
-        for domain in domains_to_remove {
-            self.domains.remove(&domain);
-        }
-
-        scheduled_task
-    }
-
-    /// Check if domain is unregistered for too long since creation
-    fn should_remove_unregistered_domain(&self, entry: &DomainEntry, now: UtcTimestamp) -> bool {
-        if entry.certificate.is_some() {
-            return false;
-        }
-
-        let expiry_time = entry
-            .created_at
-            .saturating_add(UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs());
-
-        now >= expiry_time
-    }
-
-    fn has_pending_task(&self, entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
-        if let Some(task) = entry.task {
-            if let Some(taken_at) = entry.taken_at {
-                // Reclaim task if it has been running longer than timeout
-                let expiry_time = taken_at.saturating_add(TASK_TIMEOUT.as_secs());
-                if now >= expiry_time {
-                    return Some(task);
-                }
-            } else if let Some(last_fail_time) = entry.last_fail_time {
-                // Retry a previously failed task after delay has elapsed
-                let next_allowed = last_fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
-                if now >= next_allowed {
-                    return Some(task);
-                }
-            } else {
-                // Task is new and has not been taken or failed, schedule it
-                return Some(task);
-            }
-        } else if let Some(not_after) = entry.not_after {
-            // Schedule certificate renewal if time has come
-            let renewal_time = not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs());
-            if now >= renewal_time {
-                return Some(TaskKind::Renew);
-            }
-        }
-
-        None
+        Ok(None)
     }
 
     pub fn get_domain_status(&self, domain: String) -> GetDomainStatusResult {
@@ -213,9 +152,24 @@ impl CanisterState {
         Ok(Some(domain_status))
     }
 
-    pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
-        let task = self.process_domains(now);
-        Ok(task)
+    // Removes unregistered domains that have been in the system for too long
+    pub fn purge_stale_domains(&mut self, now: UtcTimestamp) {
+        let mut domains_to_remove = Vec::new();
+
+        for entry in self.domains.iter() {
+            let domain = entry.key().clone();
+            let domain_entry = entry.value();
+
+            // Remove domain if unregistered too long
+            if should_remove_unregistered_domain(&domain_entry, now) {
+                domains_to_remove.push(domain);
+            }
+        }
+
+        // Remove expired/unregistered domains
+        for domain in domains_to_remove {
+            self.domains.remove(&domain);
+        }
     }
 
     pub fn try_add_task(&mut self, task: InputTask, now: UtcTimestamp) -> TryAddTaskResult {
@@ -433,6 +387,49 @@ impl CanisterState {
 
         state
     }
+}
+
+/// Check if the domain has remained unregistered too long since creation
+fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> bool {
+    // If the domain has a certificate or a pending task, it should not be removed
+    if entry.certificate.is_some() || entry.task.is_some() {
+        return false;
+    }
+
+    let expiry_time = entry
+        .created_at
+        .saturating_add(UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs());
+
+    now >= expiry_time
+}
+
+fn has_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
+    if let Some(task) = entry.task {
+        if let Some(taken_at) = entry.taken_at {
+            // Reclaim task if it has been running longer than timeout
+            let expiry_time = taken_at.saturating_add(TASK_TIMEOUT.as_secs());
+            if now >= expiry_time {
+                return Some(task);
+            }
+        } else if let Some(last_fail_time) = entry.last_fail_time {
+            // Retry a previously failed task after delay has elapsed
+            let next_allowed = last_fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
+            if now >= next_allowed {
+                return Some(task);
+            }
+        } else {
+            // Task is new and has not been taken or failed, schedule it
+            return Some(task);
+        }
+    } else if let Some(not_after) = entry.not_after {
+        // Schedule certificate renewal if time has come
+        let renewal_time = not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs());
+        if now >= renewal_time {
+            return Some(TaskKind::Renew);
+        }
+    }
+
+    None
 }
 
 pub fn with_state<R>(f: impl FnOnce(&CanisterState) -> R) -> R {
