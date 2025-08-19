@@ -31,7 +31,7 @@ pub enum RegistrationStatus {
     /// The domain has been successfully registered
     Registered,
     /// The registration failed with an error message
-    Failure(String),
+    Failed(String),
 }
 
 /// Represents the overall status of a domain including registration state.
@@ -52,7 +52,7 @@ impl TryFrom<ApiDomainStatus> for DomainStatus {
         let status = match api_status.status {
             ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
             ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
-            ApiRegistrationStatus::Failure(reason) => RegistrationStatus::Failure(reason),
+            ApiRegistrationStatus::Failed(reason) => RegistrationStatus::Failed(reason),
         };
 
         Ok(DomainStatus {
@@ -68,7 +68,7 @@ impl From<ApiRegistrationStatus> for RegistrationStatus {
         match status {
             ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
             ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
-            ApiRegistrationStatus::Failure(reason) => RegistrationStatus::Failure(reason),
+            ApiRegistrationStatus::Failed(reason) => RegistrationStatus::Failed(reason),
         }
     }
 }

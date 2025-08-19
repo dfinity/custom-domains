@@ -12,7 +12,8 @@ use ic_stable_structures::{
 };
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
-use std::{borrow::Cow, ops::Bound as RangeBound, time::Duration};
+use std::{borrow::Cow, collections::HashMap, ops::Bound as RangeBound, time::Duration};
+use strum::IntoEnumIterator;
 
 use crate::{
     get_time_secs,
@@ -69,6 +70,20 @@ impl DomainEntry {
             task,
             created_at,
             ..Default::default()
+        }
+    }
+
+    pub fn domain_status(&self) -> RegistrationStatus {
+        if self.task.is_none() && self.certificate.is_some() {
+            RegistrationStatus::Registered
+        } else if self.task.is_some() {
+            RegistrationStatus::Processing
+        } else {
+            RegistrationStatus::Failed(
+                self.last_failure_reason
+                    .clone()
+                    .map_or("".to_string(), |err| err.to_string()),
+            )
         }
     }
 }
@@ -150,25 +165,33 @@ impl CanisterState {
         Ok(None)
     }
 
+    // Returns a map of domain statuses with their counts
+    pub fn domain_statuses(&self) -> HashMap<&'static str, u32> {
+        let mut statuses: HashMap<_, _> = HashMap::new();
+
+        for key in RegistrationStatus::iter() {
+            statuses.insert(key.into(), 0);
+        }
+
+        for entry in self.domains.iter() {
+            let entry = entry.value();
+            let status: &'static str = entry.domain_status().into();
+            statuses
+                .entry(status)
+                .and_modify(|v| *v += 1)
+                .or_insert(1);
+        }
+
+        statuses
+    }
+
     pub fn get_domain_status(&self, domain: String) -> GetDomainStatusResult {
         let entry = match self.domains.get(&domain) {
             Some(entry) => entry,
             None => return Ok(None),
         };
 
-        let status = if entry.task.is_none() && entry.certificate.is_some() {
-            RegistrationStatus::Registered
-        } else if entry.task.is_some() {
-            RegistrationStatus::Processing
-        } else {
-            RegistrationStatus::Failure(
-                entry
-                    .last_failure_reason
-                    .clone()
-                    .map_or("".to_string(), |err| format!("{err:?}")),
-            )
-        };
-
+        let status = entry.domain_status();
         let domain_status = DomainStatus {
             domain: domain.clone(),
             canister_id: entry.canister_id,

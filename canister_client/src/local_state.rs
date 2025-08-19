@@ -115,7 +115,7 @@ impl Repository for LocalState {
                 } else if entry.task.is_some() {
                     RegistrationStatus::Processing
                 } else {
-                    RegistrationStatus::Failure(
+                    RegistrationStatus::Failed(
                         entry
                             .last_failure_reason
                             .clone()

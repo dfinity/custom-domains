@@ -100,8 +100,8 @@ type RegistrationStatus = variant {
   Processing;
   // Domain is registered and has a valid certificate
   Registered;
-  // Domain registration or certificate management (e.g. renewal) failure
-  Failure: text;
+  // Domain registration or certificate management (e.g. renewal) failed
+  Failed: text;
 };
 
 // Errors that may occur while checking for the existence of a next task

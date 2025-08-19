@@ -11,6 +11,8 @@ use prometheus::{
     GaugeVec, IntGauge, Registry, Result as PrometheusResult, TextEncoder,
 };
 
+use crate::state::with_state;
+
 pub const TRY_ADD_TASK_FUNC: &str = "try_add_task";
 pub const FETCH_NEXT_TASK_FUNC: &str = "fetch_next_task";
 pub const SUBMIT_TASK_RESULT_FUNC: &str = "submit_task_result";
@@ -65,8 +67,8 @@ impl CanisterMetrics {
 
         let canister_api_calls = register_counter_vec_with_registry!(
             "canister_api_calls",
-            "Total number of API calls made to the canister by status, task_kind, and message (in case of error)",
-            &["method", "status", "task_kind", "message"],
+            "Total number of API calls made to the canister by status, task_kind, and error (in case of failure).",
+            &["method", "status", "task_kind", "error"],
             &registry,
         )?;
 
@@ -74,10 +76,11 @@ impl CanisterMetrics {
             "domains_total",
             "Total number of domains by status.",
             // status:
+            //  - processing: domain is being processed, has a task
             //  - registered: domain has valid certificate
-            //  - expired: has an expired certificate
+            //  - expired: has an expired certificate (TODO)
             //  - failed: has no certificate and no task
-            &["status"],
+            &["registration_status"],
             &registry,
         )?;
 
@@ -152,5 +155,12 @@ pub fn recompute_metrics() {
         let mut cell = cell.borrow_mut();
         cell.stable_memory_size.borrow_mut().set(memory);
         cell.cycle_balance.set(canister_balance() as f64);
+
+        let statuses = with_state(|state| state.domain_statuses());
+        for (domain_status, count) in statuses.iter() {
+            cell.domains_total
+                .with_label_values(&[domain_status])
+                .set(*count as f64);
+        }
     });
 }

@@ -13,6 +13,7 @@ ic-http-types = { workspace = true }
 prometheus = { workspace = true }
 serde = { workspace = true }
 serde_cbor = { workspace = true }
+strum = { workspace = true }
 ic-stable-structures = { workspace = true }
 
 [lib]
