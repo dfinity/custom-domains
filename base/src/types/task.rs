@@ -65,29 +65,43 @@ pub struct TaskResult {
     pub failure: Option<TaskFailReason>,
     /// Unique task identifier
     pub task_id: UtcTimestamp,
+    /// The type of task that was executed
+    pub task_kind: TaskKind,
     /// Time taken to execute the task
     pub duration: Duration,
 }
 
 impl TaskResult {
     /// Creates a successful task result.
-    pub fn success(domain: FQDN, output: TaskOutput, task_id: UtcTimestamp) -> Self {
+    pub fn success(
+        domain: FQDN,
+        output: TaskOutput,
+        task_id: UtcTimestamp,
+        task_kind: TaskKind,
+    ) -> Self {
         Self {
             domain,
             output: Some(output),
             failure: None,
             task_id,
+            task_kind,
             duration: Duration::ZERO,
         }
     }
 
     /// Creates a failed task result.
-    pub fn failure(domain: FQDN, failure: TaskFailReason, task_id: UtcTimestamp) -> Self {
+    pub fn failure(
+        domain: FQDN,
+        failure: TaskFailReason,
+        task_id: UtcTimestamp,
+        task_kind: TaskKind,
+    ) -> Self {
         Self {
             domain,
             output: None,
             failure: Some(failure),
             task_id,
+            task_kind,
             duration: Duration::ZERO,
         }
     }
@@ -218,6 +232,7 @@ impl From<TaskResult> for ApiTaskResult {
             output: task_result.output.map(ApiTaskOutput::from),
             failure: task_result.failure.map(ApiTaskFailReason::from),
             task_id: task_result.task_id,
+            task_kind: ApiTaskKind::from(task_result.task_kind),
             duration_secs: task_result.duration.as_secs(),
         }
     }

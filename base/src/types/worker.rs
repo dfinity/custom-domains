@@ -386,6 +386,7 @@ async fn execute_with_timeout(
 
     let domain = task.domain;
     let task_id = task.task_id;
+    let task_kind = task.kind;
 
     info!(
         domain = %domain,
@@ -398,11 +399,19 @@ async fn execute_with_timeout(
 
         match task.kind {
             TaskKind::Issue | TaskKind::Renew => {
-                issue_task(domain, validator, acme_client, task_id).await
+                issue_task(domain, validator, acme_client, task_id, task_kind).await
             }
-            TaskKind::Update => update_task(domain, validator, task_id).await,
+            TaskKind::Update => update_task(domain, validator, task_id, task_kind).await,
             TaskKind::Delete => {
-                delete_task(domain, validator, acme_client, task_id, task.certificate).await
+                delete_task(
+                    domain,
+                    validator,
+                    acme_client,
+                    task_id,
+                    task_kind,
+                    task.certificate,
+                )
+                .await
             }
         }
     })
@@ -415,6 +424,7 @@ async fn execute_with_timeout(
                 duration_secs: timeout.as_secs(),
             },
             task.task_id,
+            task_kind,
         )
         .with_duration(start.elapsed()),
     };
@@ -442,20 +452,23 @@ async fn issue_task(
     validator: Arc<dyn ValidatesDomains>,
     acme_client: Arc<Client>,
     task_id: UtcTimestamp,
+    task_kind: TaskKind,
 ) -> TaskResult {
     match validator.validate(&domain).await {
         Ok(canister_id) => match issue_certificate(&domain, canister_id, acme_client).await {
-            Ok(output) => TaskResult::success(domain.clone(), output, task_id),
+            Ok(output) => TaskResult::success(domain.clone(), output, task_id, task_kind),
             Err(err) => TaskResult::failure(
                 domain,
                 TaskFailReason::GenericFailure(format_error_chain(&err)),
                 task_id,
+                task_kind,
             ),
         },
         Err(err) => TaskResult::failure(
             domain,
             TaskFailReason::ValidationFailed(err.to_string()),
             task_id,
+            task_kind,
         ),
     }
 }
@@ -508,13 +521,17 @@ async fn update_task(
     domain: FQDN,
     validator: Arc<dyn ValidatesDomains>,
     task_id: UtcTimestamp,
+    task_kind: TaskKind,
 ) -> TaskResult {
     match validator.validate(&domain).await {
-        Ok(canister_id) => TaskResult::success(domain, TaskOutput::Update(canister_id), task_id),
+        Ok(canister_id) => {
+            TaskResult::success(domain, TaskOutput::Update(canister_id), task_id, task_kind)
+        }
         Err(err) => TaskResult::failure(
             domain,
             TaskFailReason::ValidationFailed(err.to_string()),
             task_id,
+            task_kind,
         ),
     }
 }
@@ -524,6 +541,7 @@ async fn delete_task(
     validator: Arc<dyn ValidatesDomains>,
     acme_client: Arc<Client>,
     task_id: UtcTimestamp,
+    task_kind: TaskKind,
     certificate: Option<Vec<u8>>,
 ) -> TaskResult {
     match validator.validate_deletion(&domain).await {
@@ -532,23 +550,30 @@ async fn delete_task(
             if let Some(certificate) = certificate {
                 match revoke_certificate(certificate.as_slice(), acme_client).await {
                     Ok(()) => {
-                        return TaskResult::success(domain.clone(), TaskOutput::Delete, task_id);
+                        return TaskResult::success(
+                            domain.clone(),
+                            TaskOutput::Delete,
+                            task_id,
+                            task_kind,
+                        );
                     }
                     Err(err) => {
                         return TaskResult::failure(
                             domain,
                             TaskFailReason::GenericFailure(format_error_chain(&err)),
                             task_id,
+                            task_kind,
                         );
                     }
                 }
             }
-            TaskResult::success(domain.clone(), TaskOutput::Delete, task_id)
+            TaskResult::success(domain.clone(), TaskOutput::Delete, task_id, task_kind)
         }
         Err(err) => TaskResult::failure(
             domain,
             TaskFailReason::ValidationFailed(err.to_string()),
             task_id,
+            task_kind,
         ),
     }
 }

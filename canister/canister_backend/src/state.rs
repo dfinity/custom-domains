@@ -14,7 +14,14 @@ use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::{borrow::Cow, ops::Bound as RangeBound, time::Duration};
 
-use crate::{get_time_secs, storage::STATE};
+use crate::{
+    get_time_secs,
+    metrics::{
+        update_metrics, MetricsName, FAILURE_STATUS, FETCH_NEXT_TASK_FUNC, SUBMIT_TASK_RESULT_FUNC,
+        SUCCESS_STATUS, TRY_ADD_TASK_FUNC,
+    },
+    storage::STATE,
+};
 
 pub type UtcTimestamp = u64;
 
@@ -98,6 +105,25 @@ impl CanisterState {
         Ok(has_task)
     }
 
+    pub fn fetch_next_task_with_metrics(&mut self, now: UtcTimestamp) -> FetchTaskResult {
+        let result = self.fetch_next_task(now);
+
+        // Update metrics based on result
+        let (status, error, task_kind) = match &result {
+            Ok(Some(task)) => (SUCCESS_STATUS, "", task.kind.into()),
+            Ok(None) => (SUCCESS_STATUS, "", ""),
+            Err(err) => (FAILURE_STATUS, err.into(), ""),
+        };
+
+        update_metrics(
+            MetricsName::CanisterApiCalls,
+            &[FETCH_NEXT_TASK_FUNC, status, task_kind, error],
+            None,
+        );
+
+        result
+    }
+
     pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
         // TODO: consider adding randomization to task selection
         // Iterate through domains and find the first one with a pending task
@@ -172,7 +198,30 @@ impl CanisterState {
         }
     }
 
-    pub fn try_add_task(&mut self, task: InputTask, now: UtcTimestamp) -> TryAddTaskResult {
+    pub fn try_add_task_with_metrics(
+        &mut self,
+        task: InputTask,
+        now: UtcTimestamp,
+    ) -> TryAddTaskResult {
+        let task_kind: &'static str = task.kind.into();
+        let result = self.try_add_task(task, now);
+
+        // Update metrics based on result
+        let (status, error) = match &result {
+            Ok(()) => (SUCCESS_STATUS, ""),
+            Err(err) => (FAILURE_STATUS, err.into()),
+        };
+
+        update_metrics(
+            MetricsName::CanisterApiCalls,
+            &[TRY_ADD_TASK_FUNC, status, task_kind, error],
+            None,
+        );
+
+        result
+    }
+
+    fn try_add_task(&mut self, task: InputTask, now: UtcTimestamp) -> TryAddTaskResult {
         let domain = task.domain;
         let domain_entry = match self.domains.get(&domain) {
             Some(mut entry) => {
@@ -211,6 +260,29 @@ impl CanisterState {
         self.domains.insert(domain, domain_entry);
 
         Ok(())
+    }
+
+    pub fn submit_task_result_with_metrics(
+        &mut self,
+        task_result: TaskResult,
+        now: UtcTimestamp,
+    ) -> SubmitTaskResult {
+        let task_kind: &'static str = task_result.task_kind.into();
+        let result = self.submit_task_result(task_result, now);
+
+        // Update metrics based on result
+        let (status, error, task_kind) = match &result {
+            Ok(()) => (SUCCESS_STATUS, "", task_kind),
+            Err(err) => (FAILURE_STATUS, err.into(), task_kind),
+        };
+
+        update_metrics(
+            MetricsName::CanisterApiCalls,
+            &[SUBMIT_TASK_RESULT_FUNC, status, task_kind, error],
+            None,
+        );
+
+        result
     }
 
     pub fn submit_task_result(

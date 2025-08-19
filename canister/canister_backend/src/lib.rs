@@ -14,7 +14,7 @@ use ic_cdk_timers::set_timer_interval;
 use ic_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 
 use crate::{
-    metrics::export_metrics_as_http_response,
+    metrics::{export_metrics_as_http_response, METRICS},
     state::{with_state, with_state_mut, UtcTimestamp},
     storage::AUTHORIZED_PRINCIPAL,
 };
@@ -59,6 +59,11 @@ fn init(init_arg: InitArg) {
         let now = get_time_secs();
         with_state_mut(|state| state.cleanup_stale_domains(now));
     });
+
+    METRICS.with(|cell| {
+        let metrics = cell.borrow();
+        metrics.last_upgrade_time.set(get_time_secs() as i64);
+    });
 }
 
 // Run every time a canister is upgraded
@@ -85,21 +90,21 @@ async fn has_next_task() -> HasNextTaskResult {
 async fn fetch_next_task() -> FetchTaskResult {
     validate_caller(FetchTaskError::Unauthorized)?;
     let now = get_time_secs();
-    with_state_mut(|state| state.fetch_next_task(now))
+    with_state_mut(|state| state.fetch_next_task_with_metrics(now))
 }
 
 #[update]
 async fn submit_task_result(result: TaskResult) -> SubmitTaskResult {
     validate_caller(SubmitTaskError::Unauthorized)?;
     let now = get_time_secs();
-    with_state_mut(|state| state.submit_task_result(result, now))
+    with_state_mut(|state| state.submit_task_result_with_metrics(result, now))
 }
 
 #[update]
 async fn try_add_task(task: InputTask) -> TryAddTaskResult {
     validate_caller(TryAddTaskError::Unauthorized)?;
     let now = get_time_secs();
-    with_state_mut(|state| state.try_add_task(task, now))
+    with_state_mut(|state| state.try_add_task_with_metrics(task, now))
 }
 
 #[query]

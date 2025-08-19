@@ -11,8 +11,34 @@ use prometheus::{
     GaugeVec, IntGauge, Registry, Result as PrometheusResult, TextEncoder,
 };
 
+pub const TRY_ADD_TASK_FUNC: &str = "try_add_task";
+pub const FETCH_NEXT_TASK_FUNC: &str = "fetch_next_task";
+pub const SUBMIT_TASK_RESULT_FUNC: &str = "submit_task_result";
+pub const SUCCESS_STATUS: &str = "success";
+pub const FAILURE_STATUS: &str = "failure";
+
 thread_local! {
     pub static METRICS: RefCell<CanisterMetrics> = RefCell::new(CanisterMetrics::new().expect("failed to create Prometheus metrics"));
+}
+
+pub enum MetricsName {
+    CanisterApiCalls,
+    DomainsTotal,
+}
+
+pub fn update_metrics(name: MetricsName, labels: &[&str], value: Option<f64>) {
+    METRICS.with(|cell| {
+        let metrics = cell.borrow();
+        match name {
+            MetricsName::CanisterApiCalls => {
+                metrics.canister_api_calls.with_label_values(labels).inc();
+            }
+            MetricsName::DomainsTotal => {
+                let v = value.unwrap_or(0.0);
+                metrics.domains_total.with_label_values(labels).set(v);
+            }
+        }
+    });
 }
 
 /// Represents all metrics collected in the canister
@@ -24,7 +50,7 @@ pub struct CanisterMetrics {
     pub tasks_total: GaugeVec,
     pub stable_memory_size: Gauge,
     pub last_upgrade_time: IntGauge,
-    pub last_stale_domains_cleanup: IntGauge
+    pub last_stale_domains_cleanup: IntGauge,
 }
 
 impl CanisterMetrics {
@@ -39,8 +65,8 @@ impl CanisterMetrics {
 
         let canister_api_calls = register_counter_vec_with_registry!(
             "canister_api_calls",
-            "Total number of API calls made to the canister by status and message (in case of error)",
-            &["method", "status", "message"],
+            "Total number of API calls made to the canister by status, task_kind, and message (in case of error)",
+            &["method", "status", "task_kind", "message"],
             &registry,
         )?;
 

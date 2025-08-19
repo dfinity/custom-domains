@@ -6,6 +6,7 @@
 use candid::{CandidType, Principal};
 use derive_new::new;
 use serde::{Deserialize, Serialize};
+use strum::IntoStaticStr;
 
 type TaskId = u64;
 type Timestamp = u64;
@@ -23,7 +24,8 @@ pub struct InitArg {
     pub authorized_principal: Option<Principal>,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum TaskKind {
     Issue,
     Renew,
@@ -51,6 +53,7 @@ pub struct TaskResult {
     pub output: Option<TaskOutput>,
     pub failure: Option<TaskFailReason>,
     pub task_id: TaskId,
+    pub task_kind: TaskKind,
     pub duration_secs: Timestamp,
 }
 
@@ -140,7 +143,8 @@ pub enum GetLastChangeTimeError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum FetchTaskError {
     Unauthorized,
     InternalError(String),
@@ -158,7 +162,8 @@ pub enum ListCertificatesPageError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum SubmitTaskError {
     Unauthorized,
     DomainNotFound(String),
@@ -172,7 +177,8 @@ pub enum HasNextTaskError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum TryAddTaskError {
     Unauthorized,
     DomainNotFound(String),
