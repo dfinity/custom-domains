@@ -76,7 +76,8 @@ fn post_upgrade(init_arg: InitArg) {
 #[query]
 async fn get_domain_status(domain: String) -> GetDomainStatusResult {
     validate_caller(GetDomainStatusError::Unauthorized)?;
-    with_state(|state| state.get_domain_status(domain))
+    let now = get_time_secs();
+    with_state(|state| state.get_domain_status(domain, now))
 }
 
 #[query]
@@ -121,8 +122,9 @@ async fn list_certificates_page(input: ListCertificatesPageInput) -> ListCertifi
 
 #[query(decoding_quota = 10000)]
 fn http_request(request: HttpRequest) -> HttpResponse {
+    let now = get_time_secs();
     match request.path() {
-        "/metrics" => export_metrics_as_http_response(),
+        "/metrics" => export_metrics_as_http_response(now),
         _ => HttpResponseBuilder::not_found().build(),
     }
 }

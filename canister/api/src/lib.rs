@@ -26,7 +26,9 @@ pub struct InitArg {
     pub authorized_principal: Option<Principal>,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+#[derive(
+    CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Hash, IntoStaticStr,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskKind {
     Issue,
@@ -109,8 +111,9 @@ pub struct DomainStatus {
 #[derive(CandidType, Clone, Deserialize, Serialize, Debug, EnumIter, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum RegistrationStatus {
-    Processing,
+    Registering,
     Registered,
+    Expired,
     Failed(String),
 }
 

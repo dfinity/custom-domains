@@ -11,7 +11,7 @@ use prometheus::{
     GaugeVec, IntGauge, Registry, Result as PrometheusResult, TextEncoder,
 };
 
-use crate::state::with_state;
+use crate::state::{with_state, UtcTimestamp};
 
 pub const TRY_ADD_TASK_FUNC: &str = "try_add_task";
 pub const FETCH_NEXT_TASK_FUNC: &str = "fetch_next_task";
@@ -23,26 +23,6 @@ thread_local! {
     pub static METRICS: RefCell<CanisterMetrics> = RefCell::new(CanisterMetrics::new().expect("failed to create Prometheus metrics"));
 }
 
-pub enum MetricsName {
-    CanisterApiCalls,
-    DomainsTotal,
-}
-
-pub fn update_metrics(name: MetricsName, labels: &[&str], value: Option<f64>) {
-    METRICS.with(|cell| {
-        let metrics = cell.borrow();
-        match name {
-            MetricsName::CanisterApiCalls => {
-                metrics.canister_api_calls.with_label_values(labels).inc();
-            }
-            MetricsName::DomainsTotal => {
-                let v = value.unwrap_or(0.0);
-                metrics.domains_total.with_label_values(labels).set(v);
-            }
-        }
-    });
-}
-
 /// Represents all metrics collected in the canister
 pub struct CanisterMetrics {
     pub registry: Registry, // Prometheus registry
@@ -50,6 +30,7 @@ pub struct CanisterMetrics {
     pub canister_api_calls: CounterVec,
     pub domains_total: GaugeVec,
     pub tasks_total: GaugeVec,
+    pub task_failures: CounterVec,
     pub stable_memory_size: Gauge,
     pub last_upgrade_time: IntGauge,
     pub last_stale_domains_cleanup: IntGauge,
@@ -75,24 +56,21 @@ impl CanisterMetrics {
         let domains_total = register_gauge_vec_with_registry!(
             "domains_total",
             "Total number of domains by status.",
-            // status:
-            //  - processing: domain is being processed, has a task
-            //  - registered: domain has valid certificate
-            //  - expired: has an expired certificate (TODO)
-            //  - failed: has no certificate and no task
             &["registration_status"],
+            &registry,
+        )?;
+
+        let task_failures = register_counter_vec_with_registry!(
+            "task_failures",
+            "Total number of task failures by error types.",
+            &["error"],
             &registry,
         )?;
 
         let tasks_total = register_gauge_vec_with_registry!(
             "tasks_total",
-            "Total number of tasks by: kind, status, attempt and last_fail_reason (e.g. timeout, rate-limit).",
-            // status:
-            //  - pending: task is Some, taken_at is None
-            //  - in_progress: task is Some, taken_at is Some
-            //  - completed: last_task (to be added to DomainEntry) is Some, task is None
-            //  - failed: last_task is Some, task is None and last_failure_reason is Some
-            &["task_kind", "status", "attempt", "last_fail_reason"],
+            "Total number of tasks by kind and status",
+            &["task_kind", "status"],
             &registry,
         )?;
 
@@ -120,6 +98,7 @@ impl CanisterMetrics {
             canister_api_calls,
             domains_total,
             tasks_total,
+            task_failures,
             stable_memory_size,
             last_upgrade_time,
             last_stale_domains_cleanup,
@@ -127,9 +106,9 @@ impl CanisterMetrics {
     }
 }
 
-pub fn export_metrics_as_http_response() -> HttpResponse {
+pub fn export_metrics_as_http_response(now: UtcTimestamp) -> HttpResponse {
     // Certain metrics need to be recomputed
-    recompute_metrics();
+    recompute_metrics(now);
 
     let mut buffer = vec![];
     let encoder = TextEncoder::new();
@@ -148,7 +127,7 @@ pub fn export_metrics_as_http_response() -> HttpResponse {
     }
 }
 
-pub fn recompute_metrics() {
+pub fn recompute_metrics(now: UtcTimestamp) {
     METRICS.with(|cell| {
         let memory = (stable_size() * WASM_PAGE_SIZE_IN_BYTES) as f64;
 
@@ -156,10 +135,19 @@ pub fn recompute_metrics() {
         cell.stable_memory_size.borrow_mut().set(memory);
         cell.cycle_balance.set(canister_balance() as f64);
 
-        let statuses = with_state(|state| state.domain_statuses());
-        for (domain_status, count) in statuses.iter() {
+        let stats = with_state(|state| state.compute_stats(now));
+
+        for (status, count) in stats.registrations.iter() {
+            let status: &'static str = status.into();
             cell.domains_total
-                .with_label_values(&[domain_status])
+                .with_label_values(&[status])
+                .set(*count as f64);
+        }
+
+        for (task_status, count) in stats.tasks.iter() {
+            let (status, task_kind) = task_status.as_str_pair();
+            cell.tasks_total
+                .with_label_values(&[task_kind, status])
                 .set(*count as f64);
         }
     });

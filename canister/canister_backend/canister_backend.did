@@ -96,10 +96,12 @@ type DomainStatus = record {
 
 // Current registration status of a custom domain
 type RegistrationStatus = variant {
-  // A task is currently being processed for this domain
-  Processing;
-  // Domain is registered and has a valid certificate
+  // The registration is currently being processed
+  Registering;
+  /// The domain has been successfully registered and has a valid certificate
   Registered;
+  /// The domain registration has expired
+  Expired;
   // Domain registration or certificate management (e.g. renewal) failed
   Failed: text;
 };

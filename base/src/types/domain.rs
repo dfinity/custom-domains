@@ -27,9 +27,11 @@ pub struct RegisteredDomain {
 #[serde(rename_all = "snake_case")]
 pub enum RegistrationStatus {
     /// The registration is currently being processed
-    Processing,
-    /// The domain has been successfully registered
+    Registering,
+    /// The domain has been successfully registered and has a valid certificate
     Registered,
+    /// The domain registration has expired
+    Expired,
     /// The registration failed with an error message
     Failed(String),
 }
@@ -50,8 +52,9 @@ impl TryFrom<ApiDomainStatus> for DomainStatus {
 
     fn try_from(api_status: ApiDomainStatus) -> Result<Self, Self::Error> {
         let status = match api_status.status {
-            ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
+            ApiRegistrationStatus::Registering => RegistrationStatus::Registering,
             ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
+            ApiRegistrationStatus::Expired => RegistrationStatus::Expired,
             ApiRegistrationStatus::Failed(reason) => RegistrationStatus::Failed(reason),
         };
 
@@ -66,8 +69,9 @@ impl TryFrom<ApiDomainStatus> for DomainStatus {
 impl From<ApiRegistrationStatus> for RegistrationStatus {
     fn from(status: ApiRegistrationStatus) -> Self {
         match status {
-            ApiRegistrationStatus::Processing => RegistrationStatus::Processing,
+            ApiRegistrationStatus::Registering => RegistrationStatus::Registering,
             ApiRegistrationStatus::Registered => RegistrationStatus::Registered,
+            ApiRegistrationStatus::Expired => RegistrationStatus::Expired,
             ApiRegistrationStatus::Failed(reason) => RegistrationStatus::Failed(reason),
         }
     }

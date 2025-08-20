@@ -12,14 +12,15 @@ use ic_stable_structures::{
 };
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
+use std::hash::Hash;
 use std::{borrow::Cow, collections::HashMap, ops::Bound as RangeBound, time::Duration};
-use strum::IntoEnumIterator;
+use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 
 use crate::{
     get_time_secs,
     metrics::{
-        update_metrics, MetricsName, FAILURE_STATUS, FETCH_NEXT_TASK_FUNC, SUBMIT_TASK_RESULT_FUNC,
-        SUCCESS_STATUS, TRY_ADD_TASK_FUNC,
+        FAILURE_STATUS, FETCH_NEXT_TASK_FUNC, METRICS, SUBMIT_TASK_RESULT_FUNC, SUCCESS_STATUS,
+        TRY_ADD_TASK_FUNC,
     },
     storage::STATE,
 };
@@ -64,6 +65,47 @@ pub struct DomainEntry {
     pub not_after: Option<UtcTimestamp>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum TaskStatus {
+    Pending(TaskKind),
+    InProgress(TaskKind),
+}
+
+impl TaskStatus {
+    pub fn as_str_pair(&self) -> (&'static str, &'static str) {
+        match self {
+            TaskStatus::Pending(kind) => (self.into(), kind.into()),
+            TaskStatus::InProgress(kind) => (self.into(), kind.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, EnumIter, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum RegistrationStatusLabel {
+    Processing,
+    Registered,
+    Expired,
+    Failed,
+}
+
+impl From<RegistrationStatus> for RegistrationStatusLabel {
+    fn from(value: RegistrationStatus) -> Self {
+        match value {
+            RegistrationStatus::Registering => RegistrationStatusLabel::Processing,
+            RegistrationStatus::Registered => RegistrationStatusLabel::Registered,
+            RegistrationStatus::Expired => RegistrationStatusLabel::Expired,
+            RegistrationStatus::Failed(_) => RegistrationStatusLabel::Failed,
+        }
+    }
+}
+
+pub struct Stats {
+    pub registrations: HashMap<RegistrationStatusLabel, u32>,
+    pub tasks: HashMap<TaskStatus, u32>,
+}
+
 impl DomainEntry {
     pub fn new(task: Option<TaskKind>, created_at: UtcTimestamp) -> Self {
         Self {
@@ -73,11 +115,16 @@ impl DomainEntry {
         }
     }
 
-    pub fn domain_status(&self) -> RegistrationStatus {
+    pub fn registration_status(&self, now: UtcTimestamp) -> RegistrationStatus {
         if self.task.is_none() && self.certificate.is_some() {
-            RegistrationStatus::Registered
+            if let Some(not_after) = self.not_after {
+                if now <= not_after {
+                    return RegistrationStatus::Registered;
+                }
+            }
+            RegistrationStatus::Expired
         } else if self.task.is_some() {
-            RegistrationStatus::Processing
+            RegistrationStatus::Registering
         } else {
             RegistrationStatus::Failed(
                 self.last_failure_reason
@@ -85,6 +132,18 @@ impl DomainEntry {
                     .map_or("".to_string(), |err| err.to_string()),
             )
         }
+    }
+
+    pub fn task_status(&self) -> Option<TaskStatus> {
+        if let Some(task) = &self.task {
+            if self.taken_at.is_some() {
+                return Some(TaskStatus::InProgress(*task));
+            } else {
+                return Some(TaskStatus::Pending(*task));
+            }
+        }
+
+        None
     }
 }
 
@@ -130,11 +189,13 @@ impl CanisterState {
             Err(err) => (FAILURE_STATUS, err.into(), ""),
         };
 
-        update_metrics(
-            MetricsName::CanisterApiCalls,
-            &[FETCH_NEXT_TASK_FUNC, status, task_kind, error],
-            None,
-        );
+        METRICS.with(|cell| {
+            let metrics = cell.borrow();
+            metrics
+                .canister_api_calls
+                .with_label_values(&[FETCH_NEXT_TASK_FUNC, status, task_kind, error])
+                .inc();
+        });
 
         result
     }
@@ -165,33 +226,47 @@ impl CanisterState {
         Ok(None)
     }
 
-    // Returns a map of domain statuses with their counts
-    pub fn domain_statuses(&self) -> HashMap<&'static str, u32> {
-        let mut statuses: HashMap<_, _> = HashMap::new();
+    // Compute statistics about the domains and tasks
+    pub fn compute_stats(&self, now: UtcTimestamp) -> Stats {
+        let mut registration_statuses: HashMap<_, _> = HashMap::new();
+        let mut task_statuses: HashMap<_, _> = HashMap::new();
 
-        for key in RegistrationStatus::iter() {
-            statuses.insert(key.into(), 0);
+        // Initialize registration statuses to display all possible states
+        for key in RegistrationStatusLabel::iter() {
+            registration_statuses.insert(key, 0);
         }
 
         for entry in self.domains.iter() {
             let entry = entry.value();
-            let status: &'static str = entry.domain_status().into();
-            statuses
-                .entry(status)
+
+            let reg_status: RegistrationStatusLabel = entry.registration_status(now).into();
+            registration_statuses
+                .entry(reg_status)
                 .and_modify(|v| *v += 1)
                 .or_insert(1);
+
+            if let Some(task_status) = entry.task_status() {
+                task_statuses
+                    .entry(task_status)
+                    .and_modify(|v| *v += 1)
+                    .or_insert(1);
+            }
         }
 
-        statuses
+        Stats {
+            registrations: registration_statuses,
+            tasks: task_statuses,
+        }
     }
 
-    pub fn get_domain_status(&self, domain: String) -> GetDomainStatusResult {
+    pub fn get_domain_status(&self, domain: String, now: UtcTimestamp) -> GetDomainStatusResult {
         let entry = match self.domains.get(&domain) {
             Some(entry) => entry,
             None => return Ok(None),
         };
 
-        let status = entry.domain_status();
+        let status = entry.registration_status(now);
+        
         let domain_status = DomainStatus {
             domain: domain.clone(),
             canister_id: entry.canister_id,
@@ -235,11 +310,13 @@ impl CanisterState {
             Err(err) => (FAILURE_STATUS, err.into()),
         };
 
-        update_metrics(
-            MetricsName::CanisterApiCalls,
-            &[TRY_ADD_TASK_FUNC, status, task_kind, error],
-            None,
-        );
+        METRICS.with(|cell| {
+            let metrics = cell.borrow();
+            metrics
+                .canister_api_calls
+                .with_label_values(&[TRY_ADD_TASK_FUNC, status, task_kind, error])
+                .inc();
+        });
 
         result
     }
@@ -299,11 +376,13 @@ impl CanisterState {
             Err(err) => (FAILURE_STATUS, err.into(), task_kind),
         };
 
-        update_metrics(
-            MetricsName::CanisterApiCalls,
-            &[SUBMIT_TASK_RESULT_FUNC, status, task_kind, error],
-            None,
-        );
+        METRICS.with(|cell| {
+            let metrics = cell.borrow();
+            metrics
+                .canister_api_calls
+                .with_label_values(&[SUBMIT_TASK_RESULT_FUNC, status, task_kind, error])
+                .inc();
+        });
 
         result
     }

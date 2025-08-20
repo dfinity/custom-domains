@@ -113,7 +113,7 @@ impl Repository for LocalState {
                 let status = if entry.task.is_none() && entry.certificate.is_some() {
                     RegistrationStatus::Registered
                 } else if entry.task.is_some() {
-                    RegistrationStatus::Processing
+                    RegistrationStatus::Registering
                 } else {
                     RegistrationStatus::Failed(
                         entry
