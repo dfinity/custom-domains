@@ -30,6 +30,9 @@ pub type UtcTimestamp = u64;
 // The certificate renewal task is initiated this far ahead of the expiration
 const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
+// A domain is considered close to certificate expiration if less than this fraction of its validity period remains
+const CERT_EXPIRATION_ALERT_THRESHOLD: f64 = 0.2;
+
 // Task is considered timed out, if its result isn't submitted within this time window.
 // This allows the task to be rescheduled if a worker fails.
 // Submitting results for timed out tasks results in a NonExistingTaskSubmitted error.
@@ -84,7 +87,7 @@ impl TaskStatus {
 #[derive(Debug, Clone, Eq, PartialEq, Hash, EnumIter, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum RegistrationStatusLabel {
-    Processing,
+    Registering,
     Registered,
     Expired,
     Failed,
@@ -93,7 +96,7 @@ pub enum RegistrationStatusLabel {
 impl From<RegistrationStatus> for RegistrationStatusLabel {
     fn from(value: RegistrationStatus) -> Self {
         match value {
-            RegistrationStatus::Registering => RegistrationStatusLabel::Processing,
+            RegistrationStatus::Registering => RegistrationStatusLabel::Registering,
             RegistrationStatus::Registered => RegistrationStatusLabel::Registered,
             RegistrationStatus::Expired => RegistrationStatusLabel::Expired,
             RegistrationStatus::Failed(_) => RegistrationStatusLabel::Failed,
@@ -104,6 +107,7 @@ impl From<RegistrationStatus> for RegistrationStatusLabel {
 pub struct Stats {
     pub registrations: HashMap<RegistrationStatusLabel, u32>,
     pub tasks: HashMap<TaskStatus, u32>,
+    pub domains_nearing_expiration: u32,
 }
 
 impl DomainEntry {
@@ -228,6 +232,7 @@ impl CanisterState {
 
     // Compute statistics about the domains and tasks
     pub fn compute_stats(&self, now: UtcTimestamp) -> Stats {
+        let mut domains_nearing_expiration = 0;
         let mut registration_statuses: HashMap<_, _> = HashMap::new();
         let mut task_statuses: HashMap<_, _> = HashMap::new();
 
@@ -251,11 +256,27 @@ impl CanisterState {
                     .and_modify(|v| *v += 1)
                     .or_insert(1);
             }
+
+            // Check if the domain is nearing expiration
+            if let Some(not_after) = entry.not_after {
+                if let Some(not_before) = entry.not_before {
+                    let validity_interval = not_after.saturating_sub(not_before);
+                    let remaining_validity = not_after.saturating_sub(now);
+                    if validity_interval != 0 {
+                        let remaining_percentage =
+                            remaining_validity as f64 / validity_interval as f64;
+                        if remaining_percentage < CERT_EXPIRATION_ALERT_THRESHOLD {
+                            domains_nearing_expiration += 1;
+                        }
+                    }
+                }
+            }
         }
 
         Stats {
             registrations: registration_statuses,
             tasks: task_statuses,
+            domains_nearing_expiration,
         }
     }
 
@@ -266,7 +287,7 @@ impl CanisterState {
         };
 
         let status = entry.registration_status(now);
-        
+
         let domain_status = DomainStatus {
             domain: domain.clone(),
             canister_id: entry.canister_id,

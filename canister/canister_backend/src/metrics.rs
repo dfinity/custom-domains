@@ -29,6 +29,7 @@ pub struct CanisterMetrics {
     pub cycle_balance: Gauge,
     pub canister_api_calls: CounterVec,
     pub domains_total: GaugeVec,
+    pub domains_nearing_expiration: IntGauge,
     pub tasks_total: GaugeVec,
     pub task_failures: CounterVec,
     pub stable_memory_size: Gauge,
@@ -57,6 +58,12 @@ impl CanisterMetrics {
             "domains_total",
             "Total number of domains by status.",
             &["registration_status"],
+            &registry,
+        )?;
+
+        let domains_nearing_expiration = register_int_gauge_with_registry!(
+            "domain_nearing_expiration",
+            "Number of domains nearing the expiration threshold.",
             &registry,
         )?;
 
@@ -97,6 +104,7 @@ impl CanisterMetrics {
             cycle_balance,
             canister_api_calls,
             domains_total,
+            domains_nearing_expiration,
             tasks_total,
             task_failures,
             stable_memory_size,
@@ -136,6 +144,9 @@ pub fn recompute_metrics(now: UtcTimestamp) {
         cell.cycle_balance.set(canister_balance() as f64);
 
         let stats = with_state(|state| state.compute_stats(now));
+
+        cell.domains_nearing_expiration
+            .set(stats.domains_nearing_expiration as i64);
 
         for (status, count) in stats.registrations.iter() {
             let status: &'static str = status.into();
