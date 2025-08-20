@@ -26,15 +26,15 @@ thread_local! {
 /// Represents all metrics collected in the canister
 pub struct CanisterMetrics {
     pub registry: Registry, // Prometheus registry
-    pub cycle_balance: Gauge,
     pub canister_api_calls: CounterVec,
-    pub domains_total: GaugeVec,
+    pub cycle_balance: Gauge,
     pub domains_nearing_expiration: IntGauge,
-    pub tasks_total: GaugeVec,
-    pub task_failures: CounterVec,
-    pub stable_memory_size: Gauge,
+    pub domains_total: GaugeVec,
     pub last_upgrade_time: IntGauge,
-    pub last_stale_domains_cleanup: IntGauge,
+    pub last_stale_domains_cleanup_time: IntGauge,
+    pub task_failures: CounterVec,
+    pub tasks_total: GaugeVec,
+    pub stable_memory_size: Gauge,
 }
 
 impl CanisterMetrics {
@@ -62,7 +62,7 @@ impl CanisterMetrics {
         )?;
 
         let domains_nearing_expiration = register_int_gauge_with_registry!(
-            "domain_nearing_expiration",
+            "domains_nearing_expiration",
             "Number of domains nearing the expiration threshold.",
             &registry,
         )?;
@@ -70,7 +70,7 @@ impl CanisterMetrics {
         let task_failures = register_counter_vec_with_registry!(
             "task_failures",
             "Total number of task failures by error types.",
-            &["error"],
+            &["task_kind", "error"],
             &registry,
         )?;
 
@@ -89,27 +89,27 @@ impl CanisterMetrics {
 
         let last_upgrade_time = register_int_gauge_with_registry!(
             "last_upgrade_time",
-            "The Unix timestamp of the last successful canister upgrade",
+            "The Unix timestamp (seconds) of the last successful canister upgrade",
             &registry,
         )?;
 
-        let last_stale_domains_cleanup = register_int_gauge_with_registry!(
-            "last_stale_domains_cleanup",
-            "The Unix timestamp of the last stale domains cleanup",
+        let last_stale_domains_cleanup_time = register_int_gauge_with_registry!(
+            "last_stale_domains_cleanup_time",
+            "The Unix timestamp (seconds) of the last stale domains cleanup",
             &registry,
         )?;
 
         Ok(Self {
             registry,
-            cycle_balance,
             canister_api_calls,
-            domains_total,
+            cycle_balance,
             domains_nearing_expiration,
-            tasks_total,
-            task_failures,
-            stable_memory_size,
+            domains_total,
             last_upgrade_time,
-            last_stale_domains_cleanup,
+            last_stale_domains_cleanup_time,
+            task_failures,
+            tasks_total,
+            stable_memory_size,
         })
     }
 }

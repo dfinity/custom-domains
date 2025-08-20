@@ -25,6 +25,7 @@ use crate::{
     storage::STATE,
 };
 
+/// Timestamp representing seconds in UTC since the UNIX epoch (January 1, 1970).
 pub type UtcTimestamp = u64;
 
 // The certificate renewal task is initiated this far ahead of the expiration
@@ -178,7 +179,7 @@ impl CanisterState {
         let has_task = self
             .domains
             .values()
-            .any(|entry| has_pending_task(&entry, now).is_some());
+            .any(|entry| get_pending_task(&entry, now).is_some());
 
         Ok(has_task)
     }
@@ -212,7 +213,7 @@ impl CanisterState {
             let mut domain_entry = entry.value();
 
             // Schedule only the first available pending task
-            if let Some(task_kind) = has_pending_task(&domain_entry, now) {
+            if let Some(task_kind) = get_pending_task(&domain_entry, now) {
                 domain_entry.taken_at = Some(now);
                 domain_entry.task = Some(task_kind);
                 let scheduled_task = Some(ScheduledTask::new(
@@ -389,7 +390,7 @@ impl CanisterState {
         now: UtcTimestamp,
     ) -> SubmitTaskResult {
         let task_kind: &'static str = task_result.task_kind.into();
-        let result = self.submit_task_result(task_result, now);
+        let result = self.submit_task_result(task_result.clone(), now);
 
         // Update metrics based on result
         let (status, error, task_kind) = match &result {
@@ -399,10 +400,20 @@ impl CanisterState {
 
         METRICS.with(|cell| {
             let metrics = cell.borrow();
+
             metrics
                 .canister_api_calls
                 .with_label_values(&[SUBMIT_TASK_RESULT_FUNC, status, task_kind, error])
                 .inc();
+
+            if result.is_ok() {
+                if let Some(error) = task_result.failure {
+                    metrics
+                        .task_failures
+                        .with_label_values(&[task_kind, error.into()])
+                        .inc();
+                }
+            }
         });
 
         result
@@ -598,7 +609,7 @@ fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> 
     now >= expiry_time
 }
 
-fn has_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
+fn get_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
     if let Some(task) = entry.task {
         if let Some(taken_at) = entry.taken_at {
             // Reclaim task if it has been running longer than timeout
