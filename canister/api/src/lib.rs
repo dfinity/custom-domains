@@ -85,6 +85,7 @@ pub enum TaskFailReason {
     GenericFailure(String),
 }
 
+// TODO: Use stums macro or this error
 impl fmt::Display for TaskFailReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
