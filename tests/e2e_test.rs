@@ -18,7 +18,6 @@ use base::{
     },
 };
 use canister_client::{local_client::LocalRepository, local_state::LocalState};
-use ic_bn_lib::{custom_domains::ProvidesCustomDomains, tls::providers::ProvidesCertificates};
 use prometheus::Registry;
 use serde_json::json;
 use tokio::spawn;
@@ -176,15 +175,6 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
 
     info!("awaiting the worker to obtain a certificate ...");
     await_registration_ready(&router, domain).await;
-
-    info!("getting all custom domains ...");
-    let domains = local_repository.get_custom_domains().await.unwrap();
-    assert_eq!(domains.len(), 1);
-    assert_eq!(domains[0].name.to_string(), *domain);
-
-    info!("getting all certificates ...");
-    let certificates = local_repository.get_certificates().await.unwrap();
-    assert_eq!(certificates.len(), 1);
 
     info!("user deletes the registration of domain={domain}");
     let response = delete_domain(&router, domain).await;

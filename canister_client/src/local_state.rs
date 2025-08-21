@@ -13,7 +13,7 @@ use base::{
         time::{UtcTimestamp, UtcTimestampProvider},
     },
     types::{
-        domain::{CustomDomain, DomainStatus, RegisteredDomain, RegistrationStatus},
+        domain::{DomainStatus, RegisteredDomain, RegistrationStatus},
         task::{InputTask, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult},
     },
 };
@@ -113,9 +113,9 @@ impl Repository for LocalState {
                 let status = if entry.task.is_none() && entry.certificate.is_some() {
                     RegistrationStatus::Registered
                 } else if entry.task.is_some() {
-                    RegistrationStatus::Processing
+                    RegistrationStatus::Registering
                 } else {
-                    RegistrationStatus::Failure(
+                    RegistrationStatus::Failed(
                         entry
                             .last_failure_reason
                             .clone()
@@ -362,25 +362,6 @@ impl Repository for LocalState {
             .collect();
 
         Ok(registered_domains)
-    }
-
-    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError> {
-        let mutex = self.storage.lock().unwrap();
-
-        let domains = mutex
-            .iter()
-            .filter_map(
-                |(domain, entry)| match (&entry.certificate, entry.canister_id) {
-                    (Some(_), Some(canister_id)) => Some(CustomDomain {
-                        domain: domain.clone(),
-                        canister_id,
-                    }),
-                    _ => None,
-                },
-            )
-            .collect();
-
-        Ok(domains)
     }
 }
 
@@ -695,8 +676,8 @@ mod tests {
             1,
             not_after,
         ));
-        let result_a = TaskResult::success(domain_a, output.clone(), init_time);
-        let result_b = TaskResult::success(domain_b, output, init_time);
+        let result_a = TaskResult::success(domain_a, output.clone(), init_time, TaskKind::Issue);
+        let result_b = TaskResult::success(domain_b, output, init_time, TaskKind::Issue);
         state.submit_task_result(result_a).await?;
         state.submit_task_result(result_b).await?;
         // check no renewal tasks appeared immediately after submission
@@ -806,7 +787,7 @@ mod tests {
                 TaskKind::Renew => TaskOutput::Issue(cert.clone()),
                 TaskKind::Delete => TaskOutput::Delete,
             };
-            let result = TaskResult::success(domain.clone(), task_output, task_id);
+            let result = TaskResult::success(domain.clone(), task_output, task_id, task);
             // Submit executed task.
             state.submit_task_result(result).await?;
             // Assert
@@ -867,7 +848,12 @@ mod tests {
             1,
             1,
         ));
-        let task_result = TaskResult::success(domain.clone(), output, task_to_timeout.task_id);
+        let task_result = TaskResult::success(
+            domain.clone(),
+            output,
+            task_to_timeout.task_id,
+            TaskKind::Issue,
+        );
         let result = state.submit_task_result(task_result).await;
         // verify the submission fails
         assert!(
@@ -884,7 +870,12 @@ mod tests {
             not_before,
             not_after,
         ));
-        let valid_result = TaskResult::success(domain.clone(), output, task_to_complete.task_id);
+        let valid_result = TaskResult::success(
+            domain.clone(),
+            output,
+            task_to_complete.task_id,
+            TaskKind::Issue,
+        );
         state.submit_task_result(valid_result).await?;
         let entry = state.get_domain(&domain).await?.expect("domain not found");
         let expected = DomainEntry {
@@ -918,7 +909,8 @@ mod tests {
         // Act: submit recoverable errors MAX_TASK_FAILURES - 1 times
         for i in 0..MAX_TASK_FAILURES - 1 {
             let failure = TaskFailReason::GenericFailure(i.to_string());
-            let result = TaskResult::failure(domain.clone(), failure.clone(), time);
+            let result =
+                TaskResult::failure(domain.clone(), failure.clone(), time, TaskKind::Update);
 
             state.submit_task_result(result).await?;
 
@@ -951,7 +943,7 @@ mod tests {
 
         // Sumbitting failed result once again frees up the task, sets task to `None`
         let failure = TaskFailReason::GenericFailure("last_error".to_string());
-        let result = TaskResult::failure(domain.clone(), failure.clone(), time);
+        let result = TaskResult::failure(domain.clone(), failure.clone(), time, TaskKind::Update);
 
         state.submit_task_result(result).await?;
 

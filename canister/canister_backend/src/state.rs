@@ -1,32 +1,43 @@
-use std::{borrow::Cow, time::Duration};
-
 use candid::Principal;
 use canister_api::{
     CertificatesPage, DomainStatus, FetchTaskResult, GetDomainStatusResult,
-    GetLastChangeTimeResult, InputTask, ListCertificatesPageInput, ListCertificatesPageResult,
-    RegisteredDomain, RegistrationStatus, ScheduledTask, SubmitTaskError, SubmitTaskResult,
-    TaskFailReason, TaskKind, TaskOutput, TaskResult, TryAddTaskError, TryAddTaskResult,
+    GetLastChangeTimeResult, HasNextTaskResult, InputTask, ListCertificatesPageInput,
+    ListCertificatesPageResult, RegisteredDomain, RegistrationStatus, ScheduledTask,
+    SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutput, TaskResult,
+    TryAddTaskError, TryAddTaskResult,
 };
-use ic_cdk::api::time;
 use ic_stable_structures::{
     memory_manager::VirtualMemory, storable::Bound, DefaultMemoryImpl, StableBTreeMap, StableCell,
     Storable,
 };
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
-use std::ops::Bound as RangeBound;
+use std::hash::Hash;
+use std::{borrow::Cow, collections::HashMap, ops::Bound as RangeBound, time::Duration};
+use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 
-use crate::storage::STATE;
+use crate::{
+    get_time_secs,
+    metrics::{
+        FAILURE_STATUS, FETCH_NEXT_TASK_FUNC, METRICS, SUBMIT_TASK_RESULT_FUNC, SUCCESS_STATUS,
+        TRY_ADD_TASK_FUNC,
+    },
+    storage::STATE,
+};
 
-type UtcTimestamp = u64;
+/// Timestamp representing seconds in UTC since the UNIX epoch (January 1, 1970).
+pub type UtcTimestamp = u64;
 
 // The certificate renewal task is initiated this far ahead of the expiration
 const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
-// The task expires (times out) after this time window if its result isn't submitted.
+// A domain is considered close to certificate expiration if less than this fraction of its validity period remains
+const CERT_EXPIRATION_ALERT_THRESHOLD: f64 = 0.2;
+
+// Task is considered timed out, if its result isn't submitted within this time window.
 // This allows the task to be rescheduled if a worker fails.
-// Submitting results for expired tasks results in a NonExistingTaskSubmitted error.
-const TASK_EXPIRATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+// Submitting results for timed out tasks results in a NonExistingTaskSubmitted error.
+const TASK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 // If no certificate has been issued, the domain entry is removed after this duration.
 const UNREGISTERED_DOMAIN_EXPIRATION_TIME: Duration = Duration::from_secs(24 * 60 * 60);
@@ -58,6 +69,48 @@ pub struct DomainEntry {
     pub not_after: Option<UtcTimestamp>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum TaskStatus {
+    Pending(TaskKind),
+    InProgress(TaskKind),
+}
+
+impl TaskStatus {
+    pub fn as_str_pair(&self) -> (&'static str, &'static str) {
+        match self {
+            TaskStatus::Pending(kind) => (self.into(), kind.into()),
+            TaskStatus::InProgress(kind) => (self.into(), kind.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, EnumIter, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum RegistrationStatusLabel {
+    Registering,
+    Registered,
+    Expired,
+    Failed,
+}
+
+impl From<RegistrationStatus> for RegistrationStatusLabel {
+    fn from(value: RegistrationStatus) -> Self {
+        match value {
+            RegistrationStatus::Registering => RegistrationStatusLabel::Registering,
+            RegistrationStatus::Registered => RegistrationStatusLabel::Registered,
+            RegistrationStatus::Expired => RegistrationStatusLabel::Expired,
+            RegistrationStatus::Failed(_) => RegistrationStatusLabel::Failed,
+        }
+    }
+}
+
+pub struct Stats {
+    pub registrations: HashMap<RegistrationStatusLabel, u32>,
+    pub tasks: HashMap<TaskStatus, u32>,
+    pub domains_nearing_expiration: u32,
+}
+
 impl DomainEntry {
     pub fn new(task: Option<TaskKind>, created_at: UtcTimestamp) -> Self {
         Self {
@@ -65,6 +118,37 @@ impl DomainEntry {
             created_at,
             ..Default::default()
         }
+    }
+
+    pub fn registration_status(&self, now: UtcTimestamp) -> RegistrationStatus {
+        if self.task.is_none() && self.certificate.is_some() {
+            if let Some(not_after) = self.not_after {
+                if now <= not_after {
+                    return RegistrationStatus::Registered;
+                }
+            }
+            RegistrationStatus::Expired
+        } else if self.task.is_some() {
+            RegistrationStatus::Registering
+        } else {
+            RegistrationStatus::Failed(
+                self.last_failure_reason
+                    .clone()
+                    .map_or("".to_string(), |err| err.to_string()),
+            )
+        }
+    }
+
+    pub fn task_status(&self) -> Option<TaskStatus> {
+        if let Some(task) = &self.task {
+            if self.taken_at.is_some() {
+                return Some(TaskStatus::InProgress(*task));
+            } else {
+                return Some(TaskStatus::Pending(*task));
+            }
+        }
+
+        None
     }
 }
 
@@ -90,83 +174,120 @@ pub struct CanisterState {
 }
 
 impl CanisterState {
-    /// Creates a new CanisterState with optionally pre-populated domains for testing
-    pub fn new_with_sample_domains(num_domains: usize, cert_size_bytes: usize) -> Self {
-        use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+    // Processes all domains and returns true if next task exists.
+    pub fn has_next_task(&self, now: UtcTimestamp) -> HasNextTaskResult {
+        let has_task = self
+            .domains
+            .values()
+            .any(|entry| get_pending_task(&entry, now).is_some());
 
-        let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
-        let domains_memory = memory_manager.get(MemoryId::new(0));
-        let last_change_memory = memory_manager.get(MemoryId::new(1));
+        Ok(has_task)
+    }
 
-        let domains = StableBTreeMap::init(domains_memory);
-        let last_change = StableCell::init(last_change_memory, 0);
+    pub fn fetch_next_task_with_metrics(&mut self, now: UtcTimestamp) -> FetchTaskResult {
+        let result = self.fetch_next_task(now);
 
-        let mut state = Self {
-            domains,
-            last_change,
+        // Update metrics based on result
+        let (status, error, task_kind) = match &result {
+            Ok(Some(task)) => (SUCCESS_STATUS, "", task.kind.into()),
+            Ok(None) => (SUCCESS_STATUS, "", ""),
+            Err(err) => (FAILURE_STATUS, err.into(), ""),
         };
 
-        // Some sample canister IDs
-        let sample_canister_ids = [
-            Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
-            Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
-            Principal::from_text("rno2w-sqaaa-aaaaa-aaacq-cai").unwrap(),
-            Principal::from_text("renrk-eyaaa-aaaaa-aaada-cai").unwrap(),
-            Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
-        ];
+        METRICS.with(|cell| {
+            let metrics = cell.borrow();
+            metrics
+                .canister_api_calls
+                .with_label_values(&[FETCH_NEXT_TASK_FUNC, status, task_kind, error])
+                .inc();
+        });
 
-        for i in 0..num_domains {
-            let domain = format!("domain_{i}.example.com");
-            let canister_id = sample_canister_ids[i % sample_canister_ids.len()];
+        result
+    }
 
-            let mut domain_entry = DomainEntry::new(None, i as u64);
-            domain_entry.canister_id = Some(canister_id);
+    pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
+        // TODO: consider adding randomization to task selection
+        // Iterate through domains and find the first one with a pending task
+        for entry in self.domains.iter() {
+            let domain = entry.key().clone();
+            let mut domain_entry = entry.value();
 
-            // Generate certificate data of specified size
-            let cert_data = {
-                let base_cert = format!("-----BEGIN CERTIFICATE-----\ncert_data_{}\n", i + 1);
-                let padding = "X".repeat(cert_size_bytes);
-                format!("{base_cert}{padding}-----END CERTIFICATE-----")
-            };
-
-            // Generate private key data
-            let key_data = format!("key_data_{}", i + 1);
-
-            domain_entry.certificate = Some(cert_data.into_bytes());
-            domain_entry.private_key = Some(key_data.into_bytes());
-            domain_entry.not_before = Some(1000);
-            domain_entry.not_after = Some(365 * 24 * 60 * 60);
-
-            state.domains.insert(domain, domain_entry);
+            // Schedule only the first available pending task
+            if let Some(task_kind) = get_pending_task(&domain_entry, now) {
+                domain_entry.taken_at = Some(now);
+                domain_entry.task = Some(task_kind);
+                let scheduled_task = Some(ScheduledTask::new(
+                    task_kind,
+                    domain.clone(),
+                    now,
+                    domain_entry.certificate.clone(),
+                ));
+                // Update the domain entry
+                self.domains.insert(domain, domain_entry);
+                return Ok(scheduled_task);
+            }
         }
 
-        state
+        Ok(None)
     }
-}
 
-fn get_time_secs() -> UtcTimestamp {
-    time() / 1_000_000_000
-}
+    // Compute statistics about the domains and tasks
+    pub fn compute_stats(&self, now: UtcTimestamp) -> Stats {
+        let mut domains_nearing_expiration = 0;
+        let mut registration_statuses: HashMap<_, _> = HashMap::new();
+        let mut task_statuses: HashMap<_, _> = HashMap::new();
 
-impl CanisterState {
-    pub fn get_domain_status(&self, domain: String) -> GetDomainStatusResult {
+        // Initialize registration statuses to display all possible states
+        for key in RegistrationStatusLabel::iter() {
+            registration_statuses.insert(key, 0);
+        }
+
+        for entry in self.domains.iter() {
+            let entry = entry.value();
+
+            let reg_status: RegistrationStatusLabel = entry.registration_status(now).into();
+            registration_statuses
+                .entry(reg_status)
+                .and_modify(|v| *v += 1)
+                .or_insert(1);
+
+            if let Some(task_status) = entry.task_status() {
+                task_statuses
+                    .entry(task_status)
+                    .and_modify(|v| *v += 1)
+                    .or_insert(1);
+            }
+
+            // Check if the domain is nearing expiration
+            if let Some(not_after) = entry.not_after {
+                if let Some(not_before) = entry.not_before {
+                    let validity_interval = not_after.saturating_sub(not_before);
+                    let remaining_validity = not_after.saturating_sub(now);
+                    if validity_interval != 0 {
+                        let remaining_percentage =
+                            remaining_validity as f64 / validity_interval as f64;
+                        if remaining_percentage < CERT_EXPIRATION_ALERT_THRESHOLD {
+                            domains_nearing_expiration += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Stats {
+            registrations: registration_statuses,
+            tasks: task_statuses,
+            domains_nearing_expiration,
+        }
+    }
+
+    pub fn get_domain_status(&self, domain: String, now: UtcTimestamp) -> GetDomainStatusResult {
         let entry = match self.domains.get(&domain) {
             Some(entry) => entry,
             None => return Ok(None),
         };
 
-        let status = if entry.task.is_none() && entry.certificate.is_some() {
-            RegistrationStatus::Registered
-        } else if entry.task.is_some() {
-            RegistrationStatus::Processing
-        } else {
-            RegistrationStatus::Failure(
-                entry
-                    .last_failure_reason
-                    .clone()
-                    .map_or("".to_string(), |err| format!("{err:?}")),
-            )
-        };
+        let status = entry.registration_status(now);
 
         let domain_status = DomainStatus {
             domain: domain.clone(),
@@ -177,90 +298,52 @@ impl CanisterState {
         Ok(Some(domain_status))
     }
 
-    pub fn fetch_next_task(&mut self) -> FetchTaskResult {
-        let now = get_time_secs();
+    // Removes unregistered domains that have been in the system for too long
+    pub fn cleanup_stale_domains(&mut self, now: UtcTimestamp) {
         let mut domains_to_remove = Vec::new();
 
-        let domains: Vec<_> = self.domains.iter().map(|e| e.key().clone()).collect();
+        for entry in self.domains.iter() {
+            let domain = entry.key().clone();
+            let domain_entry = entry.value();
 
-        for domain in domains.iter() {
-            let mut entry = self.domains.get(domain).unwrap();
-            // Reclaim tasks that have exceeded the timeout period.
-            if let Some(taken_at) = entry.taken_at {
-                let expiry_time = taken_at.saturating_add(TASK_EXPIRATION_TIMEOUT.as_secs());
-                if now >= expiry_time {
-                    entry.taken_at = None;
-                }
-            }
-
-            // Create a renewal task if the certificate is approaching expiration and no task is active.
-            if entry.task.is_none() {
-                if let Some(not_after) = entry.not_after {
-                    if now >= not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs()) {
-                        entry.task = Some(TaskKind::Renew);
-                    }
-                }
-            }
-
-            // Remove domains without certificates that have exceeded the retention period,
-            // unless a task is currently active
-            if entry.taken_at.is_none() && entry.certificate.is_none() {
-                let expiry_time = entry
-                    .created_at
-                    .saturating_add(UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs());
-                if now >= expiry_time {
-                    domains_to_remove.push(domain.clone());
-                }
+            // Remove domain if unregistered too long
+            if should_remove_unregistered_domain(&domain_entry, now) {
+                domains_to_remove.push(domain);
             }
         }
 
-        let mut scheduled_task = None;
-
-        for domain in domains.iter() {
-            let mut entry = self.domains.get(domain).unwrap();
-
-            // Skip if there's no task or it is already taken.
-            let task_kind = match &entry.task {
-                Some(task) if entry.taken_at.is_none() => task,
-                _ => continue,
-            };
-
-            // Skip if the task can't be retried now.
-            if let Some(last_fail) = entry.last_fail_time {
-                let next_allowed = last_fail.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
-                if now < next_allowed {
-                    continue;
-                }
-            }
-
-            // mark the task as taken
-            entry.taken_at = Some(now);
-            self.domains.insert(domain.clone(), entry.clone());
-
-            let certificate = match task_kind {
-                TaskKind::Delete => entry.certificate.clone(),
-                _ => None,
-            };
-
-            scheduled_task = Some(ScheduledTask::new(
-                *task_kind,
-                domain.clone(),
-                now,
-                certificate,
-            ));
-        }
-
-        // Remove expired domains
+        // Remove expired/unregistered domains
         for domain in domains_to_remove {
             self.domains.remove(&domain);
         }
-
-        Ok(scheduled_task)
     }
 
-    pub fn try_add_task(&mut self, task: InputTask) -> TryAddTaskResult {
-        let now = get_time_secs();
+    pub fn try_add_task_with_metrics(
+        &mut self,
+        task: InputTask,
+        now: UtcTimestamp,
+    ) -> TryAddTaskResult {
+        let task_kind: &'static str = task.kind.into();
+        let result = self.try_add_task(task, now);
 
+        // Update metrics based on result
+        let (status, error) = match &result {
+            Ok(()) => (SUCCESS_STATUS, ""),
+            Err(err) => (FAILURE_STATUS, err.into()),
+        };
+
+        METRICS.with(|cell| {
+            let metrics = cell.borrow();
+            metrics
+                .canister_api_calls
+                .with_label_values(&[TRY_ADD_TASK_FUNC, status, task_kind, error])
+                .inc();
+        });
+
+        result
+    }
+
+    fn try_add_task(&mut self, task: InputTask, now: UtcTimestamp) -> TryAddTaskResult {
         let domain = task.domain;
         let domain_entry = match self.domains.get(&domain) {
             Some(mut entry) => {
@@ -295,14 +378,52 @@ impl CanisterState {
             }
         };
 
-        // Insert new domain entry
+        // Upsert the domain entry
         self.domains.insert(domain, domain_entry);
 
         Ok(())
     }
 
-    pub fn submit_task_result(&mut self, task_result: TaskResult) -> SubmitTaskResult {
-        let now = get_time_secs();
+    pub fn submit_task_result_with_metrics(
+        &mut self,
+        task_result: TaskResult,
+        now: UtcTimestamp,
+    ) -> SubmitTaskResult {
+        let task_kind: &'static str = task_result.task_kind.into();
+        let result = self.submit_task_result(task_result.clone(), now);
+
+        // Update metrics based on result
+        let (status, error, task_kind) = match &result {
+            Ok(()) => (SUCCESS_STATUS, "", task_kind),
+            Err(err) => (FAILURE_STATUS, err.into(), task_kind),
+        };
+
+        METRICS.with(|cell| {
+            let metrics = cell.borrow();
+
+            metrics
+                .canister_api_calls
+                .with_label_values(&[SUBMIT_TASK_RESULT_FUNC, status, task_kind, error])
+                .inc();
+
+            if result.is_ok() {
+                if let Some(error) = task_result.failure {
+                    metrics
+                        .task_failures
+                        .with_label_values(&[task_kind, error.into()])
+                        .inc();
+                }
+            }
+        });
+
+        result
+    }
+
+    pub fn submit_task_result(
+        &mut self,
+        task_result: TaskResult,
+        now: UtcTimestamp,
+    ) -> SubmitTaskResult {
         let domain = task_result.domain.clone();
         let task_id = task_result.task_id;
 
@@ -347,12 +468,14 @@ impl CanisterState {
             entry.last_failure_reason = Some(failure);
             entry.taken_at = None;
             entry.last_fail_time = Some(now);
-            // delete the task if the retry limit is reached
+
+            // Delete the task if the retry limit is reached
             if entry.failures_count >= MAX_TASK_FAILURES {
                 entry.task = None;
             }
         }
 
+        // Update the domain entry
         self.domains.insert(domain.to_string(), entry);
 
         Ok(())
@@ -414,6 +537,105 @@ impl CanisterState {
 
         Ok(page)
     }
+}
+
+impl CanisterState {
+    /// Creates a new CanisterState with optionally pre-populated domains for testing
+    pub fn new_with_sample_domains(num_domains: usize, cert_size_bytes: usize) -> Self {
+        use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+
+        let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
+        let domains_memory = memory_manager.get(MemoryId::new(0));
+        let last_change_memory = memory_manager.get(MemoryId::new(1));
+
+        let domains = StableBTreeMap::init(domains_memory);
+        let last_change = StableCell::init(last_change_memory, 1);
+
+        let mut state = Self {
+            domains,
+            last_change,
+        };
+
+        // Some sample canister IDs
+        let sample_canister_ids = [
+            Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
+            Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
+            Principal::from_text("rno2w-sqaaa-aaaaa-aaacq-cai").unwrap(),
+            Principal::from_text("renrk-eyaaa-aaaaa-aaada-cai").unwrap(),
+            Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
+        ];
+
+        for i in 0..num_domains {
+            let domain = format!("domain_{i}.example.com");
+            let canister_id = sample_canister_ids[i % sample_canister_ids.len()];
+
+            let mut domain_entry = DomainEntry::new(None, i as u64);
+            domain_entry.canister_id = Some(canister_id);
+
+            // Generate certificate data of specified size
+            let cert_data = {
+                let base_cert = format!("-----BEGIN CERTIFICATE-----\ncert_data_{}\n", i + 1);
+                let padding = "X".repeat(cert_size_bytes);
+                format!("{base_cert}{padding}-----END CERTIFICATE-----")
+            };
+
+            // Generate private key data
+            let key_data = format!("key_data_{}", i + 1);
+
+            let now = get_time_secs();
+            domain_entry.certificate = Some(cert_data.into_bytes());
+            domain_entry.private_key = Some(key_data.into_bytes());
+            domain_entry.not_before = Some(now);
+            domain_entry.not_after = Some(now + 30 * 24 * 60 * 60);
+
+            state.domains.insert(domain, domain_entry);
+        }
+
+        state
+    }
+}
+
+/// Check if the domain has remained unregistered too long since creation
+fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> bool {
+    // If the domain has a certificate or a pending task, it should not be removed
+    if entry.certificate.is_some() || entry.task.is_some() {
+        return false;
+    }
+
+    let expiry_time = entry
+        .created_at
+        .saturating_add(UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs());
+
+    now >= expiry_time
+}
+
+fn get_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
+    if let Some(task) = entry.task {
+        if let Some(taken_at) = entry.taken_at {
+            // Reclaim task if it has been running longer than timeout
+            let expiry_time = taken_at.saturating_add(TASK_TIMEOUT.as_secs());
+            if now >= expiry_time {
+                return Some(task);
+            }
+        } else if let Some(last_fail_time) = entry.last_fail_time {
+            // Retry a previously failed task after delay has elapsed
+            let next_allowed = last_fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
+            if now >= next_allowed {
+                return Some(task);
+            }
+        } else {
+            // Task is new and has not been taken or failed, schedule it
+            return Some(task);
+        }
+    } else if let Some(not_after) = entry.not_after {
+        // Schedule certificate renewal if time has come
+        let renewal_time = not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs());
+        if now >= renewal_time {
+            return Some(TaskKind::Renew);
+        }
+    }
+
+    None
 }
 
 pub fn with_state<R>(f: impl FnOnce(&CanisterState) -> R) -> R {

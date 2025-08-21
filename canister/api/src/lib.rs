@@ -3,9 +3,12 @@
 //! This module defines the public API types and interfaces for the custom domains management canister.
 //! All types implement [`CandidType`] for integration with candid interface.
 
+use std::fmt;
+
 use candid::{CandidType, Principal};
 use derive_new::new;
 use serde::{Deserialize, Serialize};
+use strum::{EnumIter, IntoStaticStr};
 
 type TaskId = u64;
 type Timestamp = u64;
@@ -16,8 +19,17 @@ pub type TryAddTaskResult = Result<(), TryAddTaskError>;
 pub type GetDomainStatusResult = Result<Option<DomainStatus>, GetDomainStatusError>;
 pub type GetLastChangeTimeResult = Result<Timestamp, GetLastChangeTimeError>;
 pub type ListCertificatesPageResult = Result<CertificatesPage, ListCertificatesPageError>;
+pub type HasNextTaskResult = Result<bool, HasNextTaskError>;
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub struct InitArg {
+    pub authorized_principal: Option<Principal>,
+}
+
+#[derive(
+    CandidType, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Hash, IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum TaskKind {
     Issue,
     Renew,
@@ -45,6 +57,7 @@ pub struct TaskResult {
     pub output: Option<TaskOutput>,
     pub failure: Option<TaskFailReason>,
     pub task_id: TaskId,
+    pub task_kind: TaskKind,
     pub duration_secs: Timestamp,
 }
 
@@ -64,11 +77,29 @@ pub struct IssueCertificateOutput {
     pub not_after: Timestamp,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum TaskFailReason {
     ValidationFailed(String),
     Timeout { duration_secs: Timestamp },
     GenericFailure(String),
+}
+
+// TODO: Use stums macro or this error
+impl fmt::Display for TaskFailReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaskFailReason::ValidationFailed(msg) => {
+                write!(f, "validation_failed: {msg}")
+            }
+            TaskFailReason::Timeout { duration_secs } => {
+                write!(f, "timeout after {duration_secs}s")
+            }
+            TaskFailReason::GenericFailure(msg) => {
+                write!(f, "generic_failure: {msg}")
+            }
+        }
+    }
 }
 
 #[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
@@ -78,11 +109,13 @@ pub struct DomainStatus {
     pub status: RegistrationStatus,
 }
 
-#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug, EnumIter, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum RegistrationStatus {
-    Processing,
+    Registering,
     Registered,
-    Failure(String),
+    Expired,
+    Failed(String),
 }
 
 #[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
@@ -130,33 +163,48 @@ pub struct RegisteredDomain {
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum GetLastChangeTimeError {
+    Unauthorized,
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum FetchTaskError {
+    Unauthorized,
     InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum GetDomainStatusError {
+    Unauthorized,
     InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
 pub enum ListCertificatesPageError {
+    Unauthorized,
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum SubmitTaskError {
+    Unauthorized,
     DomainNotFound(String),
     NonExistingTaskSubmitted(TaskId),
     InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+pub enum HasNextTaskError {
+    Unauthorized,
+    InternalError(String),
+}
+
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum TryAddTaskError {
+    Unauthorized,
     DomainNotFound(String),
     AnotherTaskInProgress(String),
     CertificateAlreadyIssued(String),

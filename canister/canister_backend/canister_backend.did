@@ -4,6 +4,8 @@ type TaskId = nat64;
 type Timestamp = nat64;
 // Domain name (FQDN)
 type Domain = text;
+// Structured HTTP header representation
+type HeaderField = record { text; text; };
 
 // Type of certificate management task
 type TaskKind = variant {
@@ -94,28 +96,44 @@ type DomainStatus = record {
 
 // Current registration status of a custom domain
 type RegistrationStatus = variant {
-  // A task is currently being processed for this domain
-  Processing;
-  // Domain is registered and has a valid certificate
+  // The registration is currently being processed
+  Registering;
+  /// The domain has been successfully registered and has a valid certificate
   Registered;
-  // Domain registration or certificate management (e.g. renewal) failure
-  Failure: text;
+  /// The domain registration has expired
+  Expired;
+  // Domain registration or certificate management (e.g. renewal) failed
+  Failed: text;
+};
+
+// Errors that may occur while checking for the existence of a next task
+type HasNextTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
+  // Internal error with details
+  InternalError: text;
 };
 
 // Errors that can occur when fetching the next task
 type FetchTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal error with details
   InternalError: text;
 };
 
 // Errors that can occur when querying domain status
 type GetDomainStatusError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal error with details
   InternalError: text;
 };
 
 // Errors that can occur when submitting task results
 type SubmitTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // The specified domain was not found
   DomainNotFound: text;
   // Attempted to submit results for a non-existent task
@@ -126,6 +144,8 @@ type SubmitTaskError = variant {
 
 // Errors that can occur when trying to add a new task
 type TryAddTaskError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // The specified domain was not found
   DomainNotFound: text;
   // Another task is already in progress for this domain
@@ -154,6 +174,14 @@ type FetchTaskResult = variant {
   Err: FetchTaskError;
 };
 
+// Result of checking for the presence of a next task
+type HasNextTaskResult = variant {
+  // Success: True if there is next pending task
+  Ok: bool;
+  // Error occurred during check
+  Err: HasNextTaskError;
+};
+
 // Result of submitting task completion results
 type SubmitTaskResult = variant {
   Ok;
@@ -177,6 +205,8 @@ type GetLastChangeTimeResult = variant {
 
 // Errors that can occur when trying to get the last change time
 type GetLastChangeTimeError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal error with details
   InternalError: text;
 };
@@ -204,6 +234,8 @@ type RegisteredDomain = record {
 
 // Errors that can occur when getting certificates paginated
 type ListCertificatesPageError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
   // Internal processing error
   InternalError: text;
 };
@@ -224,9 +256,30 @@ type ListCertificatesPageResult = variant {
   Err: ListCertificatesPageError;
 };
 
-service : {
+type HttpRequest = record {
+  method: text;
+  url: text;
+  headers: vec HeaderField;
+  body: blob;
+};
+
+type HttpResponse = record {
+  status_code: nat16;
+  headers: vec HeaderField;
+  body: blob;
+};
+
+// Initialization arguments for the service
+type InitArg = record {
+  authorized_principal: opt principal;
+};
+
+service: (InitArg) -> {
   // Retrieves the domain status
   get_domain_status: (domain: Domain) -> (GetDomainStatusResult) query;
+
+  // Checks whether there is a pending task ready for execution
+  has_next_task: () -> (HasNextTaskResult) query;
 
   // Fetch next pending task for execution
   fetch_next_task: () -> (FetchTaskResult);
@@ -258,4 +311,7 @@ service : {
   // Maximum limit: 400 domains per page
   // Minimum limit: 1 domain per page
   list_certificates_page: (input: ListCertificatesPageInput) -> (ListCertificatesPageResult) query;
+
+  // Canister metrics (Http Interface)
+  http_request: (HttpRequest) -> (HttpResponse) query;
 };

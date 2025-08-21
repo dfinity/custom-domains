@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use canister_api::{
     FetchTaskError as ApiFetchTaskError, GetDomainStatusError as ApiGetDomainStatusError,
-    GetLastChangeTimeError as ApiGetLastChangeTimeError,
+    GetLastChangeTimeError as ApiGetLastChangeTimeError, HasNextTaskError as ApiHasNextTaskError,
     ListCertificatesPageError as ApiListCertificatesPageError,
     SubmitTaskError as ApiSubmitTaskError, TryAddTaskError as ApiTryAddTaskError,
 };
@@ -15,7 +15,7 @@ use trait_async::trait_async;
 use crate::{
     traits::time::UtcTimestamp,
     types::{
-        domain::{CustomDomain, DomainStatus, RegisteredDomain},
+        domain::{DomainStatus, RegisteredDomain},
         task::{InputTask, ScheduledTask, TaskResult},
     },
 };
@@ -26,6 +26,8 @@ pub type TaskId = UtcTimestamp;
 #[derive(Debug, Error, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum RepositoryError {
+    #[error("Unauthorized operation")]
+    Unauthorized,
     #[error("Another task is in progress for domain: {0}")]
     AnotherTaskInProgress(FQDN),
     #[error("Certificate already issued for domain: {0}")]
@@ -58,8 +60,6 @@ pub trait Repository: Send + Sync {
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError>;
     /// Fetches all registered domains with valid certificates.
     async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError>;
-    /// Fetches all registered domains (without certificates).
-    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError>;
 }
 
 impl TryFrom<ApiSubmitTaskError> for RepositoryError {
@@ -67,6 +67,7 @@ impl TryFrom<ApiSubmitTaskError> for RepositoryError {
 
     fn try_from(err: ApiSubmitTaskError) -> Result<Self, Self::Error> {
         match err {
+            ApiSubmitTaskError::Unauthorized => Ok(RepositoryError::Unauthorized),
             ApiSubmitTaskError::DomainNotFound(domain) => {
                 Ok(RepositoryError::DomainNotFound(FQDN::from_str(&domain)?))
             }
@@ -85,6 +86,7 @@ impl TryFrom<ApiTryAddTaskError> for RepositoryError {
 
     fn try_from(err: ApiTryAddTaskError) -> Result<Self, Self::Error> {
         match err {
+            ApiTryAddTaskError::Unauthorized => Ok(RepositoryError::Unauthorized),
             ApiTryAddTaskError::DomainNotFound(domain) => {
                 Ok(RepositoryError::DomainNotFound(FQDN::from_str(&domain)?))
             }
@@ -109,6 +111,7 @@ impl TryFrom<ApiGetDomainStatusError> for RepositoryError {
 
     fn try_from(err: ApiGetDomainStatusError) -> Result<Self, Self::Error> {
         match err {
+            ApiGetDomainStatusError::Unauthorized => Ok(RepositoryError::Unauthorized),
             ApiGetDomainStatusError::InternalError(err) => {
                 Ok(RepositoryError::InternalError(anyhow!(err)))
             }
@@ -121,6 +124,7 @@ impl TryFrom<ApiFetchTaskError> for RepositoryError {
 
     fn try_from(err: ApiFetchTaskError) -> Result<Self, Self::Error> {
         match err {
+            ApiFetchTaskError::Unauthorized => Ok(RepositoryError::Unauthorized),
             ApiFetchTaskError::InternalError(err) => {
                 Ok(RepositoryError::InternalError(anyhow!(err)))
             }
@@ -133,6 +137,7 @@ impl TryFrom<ApiGetLastChangeTimeError> for RepositoryError {
 
     fn try_from(err: ApiGetLastChangeTimeError) -> Result<Self, Self::Error> {
         match err {
+            ApiGetLastChangeTimeError::Unauthorized => Ok(RepositoryError::Unauthorized),
             ApiGetLastChangeTimeError::InternalError(err) => {
                 Ok(RepositoryError::InternalError(anyhow!(err)))
             }
@@ -145,7 +150,21 @@ impl TryFrom<ApiListCertificatesPageError> for RepositoryError {
 
     fn try_from(err: ApiListCertificatesPageError) -> Result<Self, Self::Error> {
         match err {
+            ApiListCertificatesPageError::Unauthorized => Ok(RepositoryError::Unauthorized),
             ApiListCertificatesPageError::InternalError(err) => {
+                Ok(RepositoryError::InternalError(anyhow!(err)))
+            }
+        }
+    }
+}
+
+impl TryFrom<ApiHasNextTaskError> for RepositoryError {
+    type Error = anyhow::Error;
+
+    fn try_from(err: ApiHasNextTaskError) -> Result<Self, Self::Error> {
+        match err {
+            ApiHasNextTaskError::Unauthorized => Ok(RepositoryError::Unauthorized),
+            ApiHasNextTaskError::InternalError(err) => {
                 Ok(RepositoryError::InternalError(anyhow!(err)))
             }
         }

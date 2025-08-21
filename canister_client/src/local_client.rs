@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Error};
+use anyhow::anyhow;
 use base::{
     traits::{
         cipher::CiphersCertificates,
@@ -6,16 +6,12 @@ use base::{
         time::UtcTimestamp,
     },
     types::{
-        domain::{CustomDomain, DomainStatus, RegisteredDomain},
+        domain::{DomainStatus, RegisteredDomain},
         task::{InputTask, ScheduledTask, TaskOutput, TaskResult},
     },
 };
 use derive_new::new;
 use fqdn::FQDN;
-use ic_bn_lib::{
-    custom_domains::{CustomDomain as IcBnCustomDomain, ProvidesCustomDomains},
-    tls::providers::{Pem, ProvidesCertificates},
-};
 use std::sync::Arc;
 use trait_async::trait_async;
 
@@ -42,13 +38,6 @@ impl LocalRepository {
     fn encrypt_field(&self, field_name: &str, data: &[u8]) -> Result<Vec<u8>, RepositoryError> {
         self.certificate_cipher.encrypt(data).map_err(|err| {
             RepositoryError::InternalError(anyhow!("failed to encrypt {field_name}: {err}"))
-        })
-    }
-
-    /// Decrypts sensitive field data from storage.
-    fn decrypt_field(&self, field_name: &str, data: &[u8]) -> Result<Vec<u8>, RepositoryError> {
-        self.certificate_cipher.decrypt(data).map_err(|err| {
-            RepositoryError::InternalError(anyhow!("failed to decrypt {field_name}: {err}"))
         })
     }
 }
@@ -89,40 +78,5 @@ impl Repository for LocalRepository {
 
     async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError> {
         self.state.all_registrations().await
-    }
-
-    async fn all_registered_domains(&self) -> Result<Vec<CustomDomain>, RepositoryError> {
-        self.state.all_registered_domains().await
-    }
-}
-
-#[trait_async]
-impl ProvidesCustomDomains for LocalRepository {
-    async fn get_custom_domains(&self) -> Result<Vec<IcBnCustomDomain>, Error> {
-        let domains: Vec<_> = self.state.all_registered_domains().await?;
-
-        let custom_domains = domains
-            .into_iter()
-            .map(|custom_domain| custom_domain.into())
-            .collect();
-
-        Ok(custom_domains)
-    }
-}
-
-#[trait_async]
-impl ProvidesCertificates for LocalRepository {
-    async fn get_certificates(&self) -> Result<Vec<Pem>, Error> {
-        let registered_domains = self.state.all_registrations().await?;
-
-        let mut pems = Vec::with_capacity(registered_domains.len());
-
-        for domain in registered_domains {
-            let certificate = self.decrypt_field("certificate", &domain.cert_encrypted)?;
-            let private_key = self.decrypt_field("private key", &domain.priv_key_encrypted)?;
-            pems.push(Pem([certificate, private_key].concat()));
-        }
-
-        Ok(pems)
     }
 }

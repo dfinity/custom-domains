@@ -27,6 +27,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+arc-swap = { version = "1.7.1" }
 anyhow = "1.0.98"
 axum = "0.8.4"
 axum-server = "0.7.2"
@@ -42,6 +43,7 @@ ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", features = [
 ] }
 ic-cdk = "0.17"
 ic-cdk-timers = "0.11"
+ic-http-types = "0.1.0"
 ic-stable-structures = "0.7.0"
 mockall = "0.13.1"
 pem = "3.0.5"

@@ -7,3 +7,4 @@ edition.workspace = true
 candid = { workspace = true }
 derive-new = { workspace = true }
 serde = { workspace = true }
+strum = { workspace = true }
