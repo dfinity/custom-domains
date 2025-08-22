@@ -147,12 +147,11 @@ impl Worker {
         certificate: Vec<u8>,
         delay: Duration,
     ) {
-        let task_tracker = self.task_tracker.clone();
         let acme_client = self.acme_client.clone();
         let metrics = self.metrics.clone();
         let token = self.token.clone();
 
-        task_tracker.spawn(async move {
+        self.task_tracker.spawn(async move {
             if delay.is_zero() {
                 info!(domain = %domain, "Certificate revocation starts now");
             } else {
