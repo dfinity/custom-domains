@@ -11,11 +11,12 @@ base = { path = "../base" }
 candid = { workspace = true }
 canister-client = { path = "../canister_client" }
 derive-new = { workspace = true }
-fqdn = { workspace = true }
+fqdn = { workspace = true, features = ["punycode"]}
 prometheus = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 strum = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

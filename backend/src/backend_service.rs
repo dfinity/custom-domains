@@ -75,6 +75,15 @@ impl BackendService {
 
 /// Parses a domain string into a validated FQDN.
 fn parse_domain(domain: &str) -> Result<FQDN, ApiError> {
+    if domain.is_empty() {
+        return Err(ApiError::BadRequest {
+            details: "Domain cannot be empty".to_string(),
+        });
+    } else if domain.len() > 255 {
+        return Err(ApiError::BadRequest {
+            details: "Domain is too long".to_string(),
+        });
+    }
     FQDN::from_str(domain).map_err(|_| ApiError::BadRequest {
         details: format!("Invalid domain: {domain}"),
     })

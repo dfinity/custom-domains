@@ -6,6 +6,7 @@ use base::{
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use candid::Principal;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Generic API response structure for all endpoints.
 #[derive(Serialize)]
@@ -26,32 +27,23 @@ pub struct ApiResponse<T> {
 }
 
 /// API error types with associated details.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Error)]
 pub enum ApiError {
     /// Invalid request data (400)
+    #[error("bad_request: {details}")]
     BadRequest { details: String },
     /// Resource not found (404)
+    #[error("not_found: {details}")]
     NotFound { details: String },
     /// Resource conflict (409)
+    #[error("conflict: {details}")]
     Conflict { details: String },
     /// Request validation failed (422)
+    #[error("unprocessable_entity: {details}")]
     UnprocessableEntity { details: String },
     /// Server error (500)
+    #[error("internal_server_error: An unexpected error occurred. Please try again later or contact support")]
     InternalServerError { details: String },
-}
-
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ApiError::BadRequest { details } => write!(f, "bad_request: {details}"),
-            ApiError::NotFound { details } => write!(f, "not_found: {details}"),
-            ApiError::Conflict { details } => write!(f, "conflict: {details}"),
-            ApiError::UnprocessableEntity { details } => {
-                write!(f, "unprocessable_entity: {details}")
-            }
-            ApiError::InternalServerError { .. } => write!(f, ""),
-        }
-    }
 }
 
 /// Response data payload for domain-related endpoints.
