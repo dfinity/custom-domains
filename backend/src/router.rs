@@ -1,4 +1,3 @@
-use base::traits::{repository::Repository, validation::ValidatesDomains};
 use std::sync::Arc;
 
 use axum::{
@@ -6,6 +5,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use base::traits::{repository::Repository, validation::ValidatesDomains};
 use prometheus::Registry;
 
 use crate::{
@@ -52,7 +52,10 @@ mod tests {
             repository::{MockRepository, RepositoryError},
             validation::{MockValidatesDomains, ValidationError},
         },
-        types::task::{InputTask, TaskKind},
+        types::{
+            domain::{DomainStatus, RegistrationStatus},
+            task::{InputTask, TaskKind},
+        },
     };
     use std::{str::FromStr, sync::Arc};
 
@@ -404,5 +407,307 @@ mod tests {
 
         // Assert
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    /// Helper function to make a GET request to /v1/domains/{domain}/status
+    async fn get_domain_status_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
+        let uri = format!("/v1/domains/{domain}/status");
+        let request = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body_bytes = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
+        let body_json: Value = serde_json::from_slice(&body_bytes).unwrap();
+        (status, body_json)
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_success_various_statuses() {
+        let test_cases = vec![
+            ("registered", RegistrationStatus::Registered),
+            ("registering", RegistrationStatus::Registering),
+            ("expired", RegistrationStatus::Expired),
+        ];
+
+        let domains = vec!["example.org", "тест.unicode.org"];
+
+        for (expected_status_str, registration_status) in test_cases {
+            for domain in &domains {
+                // Arrange
+                let mock_validator = MockValidatesDomains::new();
+                let mut mock_repository = MockRepository::new();
+
+                let expected_canister_id =
+                    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+                let domain_status = DomainStatus {
+                    domain: FQDN::from_str(domain).unwrap(),
+                    canister_id: Some(expected_canister_id),
+                    status: registration_status.clone(),
+                };
+
+                mock_repository
+                    .expect_get_domain_status()
+                    .returning(move |_| {
+                        let status = domain_status.clone();
+                        Box::pin(async move { Ok(Some(status)) })
+                    });
+
+                let router = create_test_router(mock_repository, mock_validator);
+
+                // Act
+                let (status, response_json) = get_domain_status_request(router, domain).await;
+
+                // Assert
+                assert_eq!(
+                    status,
+                    StatusCode::OK,
+                    "Failed for status: {expected_status_str} with domain: {domain}",
+                );
+                assert_eq!(response_json["status"], "success");
+                assert_eq!(response_json["code"], 200);
+                assert_eq!(response_json["data"]["domain"], *domain);
+                assert_eq!(
+                    response_json["data"]["canister_id"],
+                    "rrkah-fqaaa-aaaaa-aaaaq-cai"
+                );
+                assert_eq!(
+                    response_json["data"]["registration_status"],
+                    expected_status_str
+                );
+                assert_eq!(
+                    response_json["message"].as_str().unwrap(),
+                    "Registration status of the domain"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_success_failed() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mut mock_repository = MockRepository::new();
+
+        let failure_message = "some failure message";
+        let domain_status = DomainStatus {
+            domain: FQDN::from_str("example.org").unwrap(),
+            canister_id: None,
+            status: RegistrationStatus::Failed(failure_message.to_string()),
+        };
+
+        mock_repository
+            .expect_get_domain_status()
+            .returning(move |_| {
+                let status = domain_status.clone();
+                Box::pin(async move { Ok(Some(status)) })
+            });
+
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = get_domain_status_request(router, "example.org").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response_json["status"], "success");
+        assert_eq!(response_json["code"], 200);
+        assert_eq!(response_json["data"]["domain"], "example.org");
+        assert!(response_json["data"]["canister_id"].is_null());
+        // Important: internal failure message is not exposed in API response
+        assert_eq!(
+            response_json["data"]["registration_status"]["failed"],
+            "An unexpected error occurred during registration. Please try again later or contact support"
+        );
+        assert_eq!(
+            response_json["message"].as_str().unwrap(),
+            "Registration status of the domain"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_not_found() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mut mock_repository = MockRepository::new();
+
+        mock_repository
+            .expect_get_domain_status()
+            .returning(|_| Box::pin(async move { Ok(None) }));
+
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = get_domain_status_request(router, "nonexistent.org").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 404);
+        assert_eq!(response_json["data"]["domain"], "nonexistent.org");
+        assert_eq!(
+            response_json["message"].as_str().unwrap(),
+            "Registration status request failed"
+        );
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            "not_found: Domain nonexistent.org not found"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_bad_request_invalid_domain() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mock_repository = MockRepository::new();
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = get_domain_status_request(router, "invalid..domain").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 400);
+        assert_eq!(response_json["data"]["domain"], "invalid..domain");
+        assert_eq!(
+            response_json["message"].as_str().unwrap(),
+            "Registration status request failed"
+        );
+        assert!(response_json["errors"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid domain"));
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_bad_request_empty_domain() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mock_repository = MockRepository::new();
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = get_domain_status_request(router, "").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 400);
+        assert_eq!(response_json["data"]["domain"], "");
+        assert_eq!(
+            response_json["message"].as_str().unwrap(),
+            "Registration status request failed"
+        );
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            "bad_request: Domain cannot be empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_bad_request_very_long_domain() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mock_repository = MockRepository::new();
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let long_domain = "a".repeat(250) + ".example.org";
+        let (status, response_json) = get_domain_status_request(router, &long_domain).await;
+
+        // Assert
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 400);
+        assert_eq!(response_json["data"]["domain"], long_domain);
+        assert_eq!(
+            response_json["message"].as_str().unwrap(),
+            "Registration status request failed"
+        );
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            "bad_request: Domain is too long"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_internal_server_error_repository_failure() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mut mock_repository = MockRepository::new();
+
+        mock_repository.expect_get_domain_status().returning(|_| {
+            Box::pin(async {
+                Err(RepositoryError::InternalError(anyhow::anyhow!(
+                    "some real internal error"
+                )))
+            })
+        });
+
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = get_domain_status_request(router, "example.org").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 500);
+        assert_eq!(response_json["data"]["domain"], "example.org");
+        assert_eq!(
+            response_json["message"].as_str().unwrap(),
+            "Registration status request failed"
+        );
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            "internal_server_error: An unexpected error occurred. Please try again later or contact support"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_missing_domain_in_path() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mock_repository = MockRepository::new();
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act: request without domain in path
+        let request = Request::builder()
+            .method("GET")
+            .uri("/v1/domains//status")
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+
+        // Assert: should get bad request due to empty domain
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_status_invalid_path() {
+        // Arrange
+        let mock_validator = MockValidatesDomains::new();
+        let mock_repository = MockRepository::new();
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act: request with wrong path
+        let request = Request::builder()
+            .method("GET")
+            .uri("/v1/domains/example.org/wrong-path")
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
