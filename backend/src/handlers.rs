@@ -24,9 +24,9 @@ pub async fn logging_middleware(request: Request, next: Next) -> Response {
     let status_code = response.status().as_u16();
 
     info!(
-        method = method,
-        uri = uri,
-        status_code = status_code,
+        method,
+        uri,
+        status_code,
         duration_ms = duration.as_millis(),
         "http_request"
     );
