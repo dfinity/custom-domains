@@ -1,8 +1,10 @@
 use std::{
-    collections::HashMap, sync::{
+    collections::HashMap,
+    sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
-    }, time::Duration
+    },
+    time::Duration,
 };
 
 use base::{

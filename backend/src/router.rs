@@ -1,16 +1,20 @@
 use std::sync::Arc;
 
 use axum::{
-    middleware::from_fn_with_state,
+    middleware::{from_fn, from_fn_with_state},
     routing::{delete, get, post},
     Router,
 };
 use base::traits::{repository::Repository, validation::ValidatesDomains};
 use prometheus::Registry;
+use reqwest::StatusCode;
 
 use crate::{
     backend_service::BackendService,
-    handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
+    handlers::{
+        create_handler, delete_handler, get_handler, logging_middleware, update_handler,
+        validate_handler,
+    },
     metrics::{metrics_handler, metrics_middleware, HttpMetrics},
 };
 
@@ -28,10 +32,12 @@ pub fn create_router(
         .route("/v1/domains/{:id}/update", post(update_handler))
         .route("/v1/domains/{:id}", delete(delete_handler))
         .route("/v1/domains/{:id}/validate", get(validate_handler))
+        .fallback(|| async { (StatusCode::NOT_FOUND, "path not found") })
         .layer(from_fn_with_state(
             Arc::new(HttpMetrics::new(registry.clone())),
             metrics_middleware,
         ))
+        .layer(from_fn(logging_middleware))
         .with_state(backend_service);
 
     let metrics_router = if with_metrics_endpoint {
