@@ -113,6 +113,11 @@ impl TaskResult {
         self.duration = duration;
         self
     }
+
+    /// Checks if the task execution was successful
+    pub fn is_success(&self) -> bool {
+        self.failure.is_none()
+    }
 }
 
 /// Output data from successful task execution.

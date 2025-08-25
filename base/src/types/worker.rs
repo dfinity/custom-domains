@@ -26,7 +26,7 @@ use tokio::{
     select,
     time::{self, sleep},
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use x509_parser::parse_x509_certificate;
 
@@ -52,6 +52,8 @@ const DEFAULT_TASK_RESUBMIT_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_TASK_FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 /// The time window over which each worker's utilization is measured.
 const WORKER_UTILIZATION_WINDOW: Duration = Duration::from_secs(180);
+/// Delay before revoking an old certificate after a successful certificate renewal.
+const CERT_REVOCATION_DELAY_AFTER_RENEWAL: Duration = Duration::from_secs(10 * 60);
 
 /// Configuration settings for worker behavior and timeouts.
 #[derive(Debug, Clone, new)]
@@ -68,6 +70,8 @@ pub struct WorkerConfig {
     pub task_fetch_retry_interval: Duration,
     /// The time window over which each worker's utilization is measured
     pub worker_utilization_window: Duration,
+    /// Delay before revoking on old certificate after a successful renewal
+    pub cert_revocation_delay: Duration,
 }
 
 impl Default for WorkerConfig {
@@ -79,6 +83,7 @@ impl Default for WorkerConfig {
             DEFAULT_TASK_RESUBMIT_INTERVAL,
             DEFAULT_TASK_FETCH_RETRY_INTERVAL,
             WORKER_UTILIZATION_WINDOW,
+            CERT_REVOCATION_DELAY_AFTER_RENEWAL,
         )
     }
 }
@@ -107,6 +112,8 @@ pub struct Worker {
     pub idle_sec_since_reset: Arc<AtomicU64>,
     /// Cancellation token for graceful shutdown
     pub token: CancellationToken,
+    /// Task tracker for a graceful shutdown of revocation tasks
+    pub task_tracker: TaskTracker,
 }
 
 impl Worker {
@@ -130,6 +137,175 @@ impl Worker {
             total_sec_since_reset: Arc::new(AtomicU64::new(0)),
             idle_sec_since_reset: Arc::new(AtomicU64::new(0)),
             token,
+            task_tracker: TaskTracker::new(),
+        }
+    }
+
+    pub fn schedule_revocation_with_delay(
+        &self,
+        domain: FQDN,
+        certificate: Vec<u8>,
+        delay: Duration,
+    ) {
+        let acme_client = self.acme_client.clone();
+        let metrics = self.metrics.clone();
+        // Use a child token to allow cancelling revocation tasks independently of the worker
+        // Not used at the moment, but could be useful in the future (or as a precaution)
+        let token = self.token.child_token();
+
+        self.task_tracker.spawn(async move {
+            if delay.is_zero() {
+                info!(domain = %domain, "Certificate revocation starts now");
+            } else {
+                info!(
+                    domain = %domain,
+                    delay_secs = delay.as_secs(),
+                    "Certificate revocation scheduled"
+                );
+            }
+
+            select! {
+                _ = sleep(delay) => {
+                    revoke_certificate_with_metrics_update(domain, &certificate, acme_client, &metrics).await;
+                }
+                _ = token.cancelled() => {
+                    warn!(domain = %domain, "Certificate revocation cancelled externally");
+                }
+            }
+        });
+    }
+
+    /// Waits for all revocation tasks to complete
+    pub async fn shutdown_revocation_tasks(&self) {
+        self.task_tracker.close();
+        self.task_tracker.wait().await;
+    }
+
+    async fn execute_task_with_timeout(&self, task: ScheduledTask) -> TaskResult {
+        let start = Instant::now();
+
+        let domain = task.domain;
+        let task_id = task.task_id;
+        let task_kind = task.kind;
+        let certificate = task.certificate;
+
+        info!(
+            domain = %domain,
+            task_kind = %task.kind,
+            "Task execution started"
+        );
+
+        let task_result = match time::timeout(self.config.task_timeout, async {
+            let domain = domain.clone();
+
+            match task.kind {
+                TaskKind::Issue => {
+                    issue_task(
+                        domain,
+                        self.validator.clone(),
+                        self.acme_client.clone(),
+                        task_id,
+                        task_kind,
+                    )
+                    .await
+                }
+                TaskKind::Renew => {
+                    // - Issue a new certificate.
+                    // - If successful, schedule revocation of the old one.
+                    //   Revocation is delayed to ensure the new certificate has time to propagate across services (e.g., HTTP gateways).
+                    let result = issue_task(
+                        domain.clone(),
+                        self.validator.clone(),
+                        self.acme_client.clone(),
+                        task_id,
+                        task_kind,
+                    )
+                    .await;
+
+                    if result.is_success() {
+                        if let Some(certificate) = certificate {
+                            self.schedule_revocation_with_delay(
+                                domain.clone(),
+                                certificate,
+                                self.config.cert_revocation_delay,
+                            );
+                        } else {
+                            warn!(domain = %domain, "No old certificate provided for renewal task");
+                        }
+                    }
+
+                    result
+                }
+                TaskKind::Update => {
+                    update_task(domain, self.validator.clone(), task_id, task_kind).await
+                }
+                TaskKind::Delete => {
+                    self.delete_task(domain, task_id, task_kind, certificate)
+                        .await
+                }
+            }
+        })
+        .await
+        {
+            Ok(task_result) => task_result.with_duration(start.elapsed()),
+            Err(_) => TaskResult::failure(
+                domain.clone(),
+                TaskFailReason::Timeout {
+                    duration_secs: self.config.task_timeout.as_secs(),
+                },
+                task.task_id,
+                task_kind,
+            )
+            .with_duration(start.elapsed()),
+        };
+
+        if task_result.output.is_some() {
+            info!(
+                domain = %domain,
+                task_kind = %task_kind,
+                "Task execution succeeded"
+            );
+        } else if let Some(ref err) = task_result.failure {
+            error!(
+                domain = %domain,
+                task_kind = %task_kind,
+                error = ?err,
+                "Task execution failed"
+            );
+        }
+
+        task_result
+    }
+
+    /// Executes a delete task:
+    /// - validates DNS records for deletion
+    /// - schedules immediate certificate revocation
+    async fn delete_task(
+        &self,
+        domain: FQDN,
+        task_id: UtcTimestamp,
+        task_kind: TaskKind,
+        certificate: Option<Vec<u8>>,
+    ) -> TaskResult {
+        match self.validator.validate_deletion(&domain).await {
+            Ok(()) => {
+                // Schedule immediate certificate revocation if certificate is present
+                if let Some(certificate) = certificate {
+                    self.schedule_revocation_with_delay(
+                        domain.clone(),
+                        certificate,
+                        Duration::ZERO,
+                    );
+                }
+
+                TaskResult::success(domain, TaskOutput::Delete, task_id, task_kind)
+            }
+            Err(err) => TaskResult::failure(
+                domain,
+                TaskFailReason::ValidationFailed(err.to_string()),
+                task_id,
+                task_kind,
+            ),
         }
     }
 }
@@ -149,12 +325,12 @@ impl Worker {
             // Check for cancellation before proceeding
             if self.token.is_cancelled() {
                 warn!("Worker {} stopped due to cancellation", self.name);
-                return;
+                break;
             }
 
             // Fetch and process the next pending task
             if self.fetch_and_process_task().await.is_err() {
-                return;
+                break;
             }
 
             // Publish worker utilization metric if a time window has passed
@@ -163,6 +339,10 @@ impl Worker {
                 .fetch_add(cycle_duration, Ordering::Relaxed);
             self.maybe_update_utilization_metric();
         }
+
+        info!("Worker {} is shutting down ...", self.name);
+        self.shutdown_revocation_tasks().await;
+        info!("Worker {} shutdown complete", self.name);
     }
 
     /// Fetches the next task and processes it, returning whether the worker should continue running
@@ -218,12 +398,7 @@ impl Worker {
                 return Err(WorkerStopped);
             }
 
-            result = execute_with_timeout(
-                self.config.task_timeout,
-                task.clone(),
-                self.acme_client.clone(),
-                self.validator.clone(),
-            ) => result,
+            result = self.execute_task_with_timeout(task.clone()) => result,
         };
 
         // Submit task result with retries
@@ -232,11 +407,12 @@ impl Worker {
         // Calculate task duration
         let task_duration = task_start.elapsed();
 
-        let execution_status = if task_result.output.is_some() {
+        let execution_status = if task_result.is_success() {
             "success"
         } else {
             "failure"
         };
+
         let execution_failure = task_result
             .failure
             .as_ref()
@@ -376,77 +552,6 @@ impl Worker {
     }
 }
 
-async fn execute_with_timeout(
-    timeout: Duration,
-    task: ScheduledTask,
-    acme_client: Arc<Client>,
-    validator: Arc<dyn ValidatesDomains>,
-) -> TaskResult {
-    let start = Instant::now();
-
-    let domain = task.domain;
-    let task_id = task.task_id;
-    let task_kind = task.kind;
-
-    info!(
-        domain = %domain,
-        task_kind = %task.kind,
-        "Task execution started"
-    );
-
-    let task_result = match time::timeout(timeout, async {
-        let domain = domain.clone();
-
-        match task.kind {
-            TaskKind::Issue | TaskKind::Renew => {
-                issue_task(domain, validator, acme_client, task_id, task_kind).await
-            }
-            TaskKind::Update => update_task(domain, validator, task_id, task_kind).await,
-            TaskKind::Delete => {
-                delete_task(
-                    domain,
-                    validator,
-                    acme_client,
-                    task_id,
-                    task_kind,
-                    task.certificate,
-                )
-                .await
-            }
-        }
-    })
-    .await
-    {
-        Ok(task_result) => task_result.with_duration(start.elapsed()),
-        Err(_) => TaskResult::failure(
-            domain.clone(),
-            TaskFailReason::Timeout {
-                duration_secs: timeout.as_secs(),
-            },
-            task.task_id,
-            task_kind,
-        )
-        .with_duration(start.elapsed()),
-    };
-
-    if task_result.output.is_some() {
-        info!(
-            domain = %domain,
-            task_kind = %task.kind,
-            "Task execution succeeded"
-        );
-    } else if let Some(ref err) = task_result.failure {
-        error!(
-            domain = %domain,
-            task_kind = %task.kind,
-            error = ?err,
-            "Task execution failed"
-        );
-    }
-
-    task_result
-}
-
 async fn issue_task(
     domain: FQDN,
     validator: Arc<dyn ValidatesDomains>,
@@ -536,48 +641,7 @@ async fn update_task(
     }
 }
 
-async fn delete_task(
-    domain: FQDN,
-    validator: Arc<dyn ValidatesDomains>,
-    acme_client: Arc<Client>,
-    task_id: UtcTimestamp,
-    task_kind: TaskKind,
-    certificate: Option<Vec<u8>>,
-) -> TaskResult {
-    match validator.validate_deletion(&domain).await {
-        Ok(()) => {
-            // Revoke certificate if present
-            if let Some(certificate) = certificate {
-                match revoke_certificate(certificate.as_slice(), acme_client).await {
-                    Ok(()) => {
-                        return TaskResult::success(
-                            domain.clone(),
-                            TaskOutput::Delete,
-                            task_id,
-                            task_kind,
-                        );
-                    }
-                    Err(err) => {
-                        return TaskResult::failure(
-                            domain,
-                            TaskFailReason::GenericFailure(format_error_chain(&err)),
-                            task_id,
-                            task_kind,
-                        );
-                    }
-                }
-            }
-            TaskResult::success(domain.clone(), TaskOutput::Delete, task_id, task_kind)
-        }
-        Err(err) => TaskResult::failure(
-            domain,
-            TaskFailReason::ValidationFailed(err.to_string()),
-            task_id,
-            task_kind,
-        ),
-    }
-}
-
+/// Revokes a certificate using the ACME protocol.
 async fn revoke_certificate(certificate: &[u8], acme_client: Arc<Client>) -> anyhow::Result<()> {
     // Parse certificate chain
     let pem_str =
@@ -600,9 +664,33 @@ async fn revoke_certificate(certificate: &[u8], acme_client: Arc<Client>) -> any
     acme_client
         .revoke(revocation_request)
         .await
-        .with_context(|| "revocation failed")?;
+        .with_context(|| "certificate revocation failed")?;
 
     Ok(())
+}
+
+async fn revoke_certificate_with_metrics_update(
+    domain: FQDN,
+    certificate: &[u8],
+    acme_client: Arc<Client>,
+    metrics: &WorkerMetrics,
+) {
+    match revoke_certificate(certificate, acme_client).await {
+        Ok(_) => {
+            info!(domain = %domain, "Certificate revocation succeeded");
+            metrics
+                .certificate_revocations
+                .with_label_values(&["success"])
+                .inc();
+        }
+        Err(err) => {
+            error!(domain = %domain, error = ?err, "Certificate revocation failed");
+            metrics
+                .certificate_revocations
+                .with_label_values(&["failure"])
+                .inc();
+        }
+    }
 }
 
 /// Prometheus metrics for monitoring worker performance and activity.
@@ -616,6 +704,8 @@ pub struct WorkerMetrics {
     pub task_fetches: IntCounterVec,
     /// Gauge tracking worker utilization percentage
     pub worker_utilization: GaugeVec,
+    /// Counter tracking certificate revocations by status
+    pub certificate_revocations: IntCounterVec,
 }
 
 impl WorkerMetrics {
@@ -653,6 +743,13 @@ impl WorkerMetrics {
                 "worker_utilization_percent",
                 "Worker utilization percentage",
                 &["worker_name"],
+                registry
+            )
+            .unwrap(),
+            certificate_revocations: register_int_counter_vec_with_registry!(
+                "certificate_revocation",
+                "Total number of certificate revocations by status",
+                &["status"],
                 registry
             )
             .unwrap(),
