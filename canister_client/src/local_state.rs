@@ -1,10 +1,8 @@
 use std::{
-    collections::HashMap,
-    sync::{
+    collections::HashMap, sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
-    },
-    time::Duration,
+    }, time::Duration
 };
 
 use base::{
@@ -119,7 +117,7 @@ impl Repository for LocalState {
                         entry
                             .last_failure_reason
                             .clone()
-                            .map_or("".to_string(), |failure| failure.to_string()),
+                            .map_or("".to_string(), |failure| format!("{failure:?}")),
                     )
                 };
 
