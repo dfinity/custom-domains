@@ -168,16 +168,17 @@ mod tests {
             Box::pin(async { Ok(Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap()) })
         });
 
+        let domain = "example.org";
         let mut mock_repository = MockRepository::new();
         mock_repository.expect_try_add_task().returning(|_| {
-            let domain = FQDN::from_str("example.org").unwrap();
+            let domain = FQDN::from_str(domain).unwrap();
             Box::pin(async { Err(RepositoryError::CertificateAlreadyIssued(domain)) })
         });
 
         let router = create_test_router(mock_repository, mock_validator);
 
         // Act
-        let (status, response_json) = post_domain_request(router, "example.org").await;
+        let (status, response_json) = post_domain_request(router, domain).await;
 
         // Assert
         assert_eq!(status, StatusCode::CONFLICT);
@@ -188,10 +189,12 @@ mod tests {
             "Domain registration request failed"
         );
         assert_eq!(response_json["data"]["domain"], "example.org");
-        assert!(response_json["errors"]
-            .as_str()
-            .unwrap()
-            .contains("already issued"));
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            format!(
+                "conflict: Certificate for {domain} already exists; reissuance is not permitted."
+            )
+        );
     }
 
     #[tokio::test]
@@ -202,26 +205,29 @@ mod tests {
             Box::pin(async { Ok(Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap()) })
         });
 
+        let domain = "example.org";
         let mut mock_repository = MockRepository::new();
         mock_repository.expect_try_add_task().returning(|_| {
-            let domain = FQDN::from_str("example.org").unwrap();
+            let domain = FQDN::from_str(domain).unwrap();
             Box::pin(async { Err(RepositoryError::AnotherTaskInProgress(domain)) })
         });
 
         let router = create_test_router(mock_repository, mock_validator);
 
         // Act
-        let (status, response_json) = post_domain_request(router, "example.org").await;
+        let (status, response_json) = post_domain_request(router, domain).await;
 
         // Assert
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(response_json["status"], "error");
         assert_eq!(response_json["code"], 409);
-        assert_eq!(response_json["data"]["domain"], "example.org");
-        assert!(response_json["errors"]
-            .as_str()
-            .unwrap()
-            .contains("in progress"));
+        assert_eq!(response_json["data"]["domain"], domain);
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            format!(
+                "conflict: A task for {domain} is already in progress. Please retry after it completes."
+            )
+        );
     }
 
     #[tokio::test]
@@ -302,7 +308,7 @@ mod tests {
         assert_eq!(response_json["status"], "error");
         assert_eq!(response_json["code"], 500);
         assert_eq!(response_json["data"]["domain"], "example.org");
-        assert_eq!(response_json["errors"], "internal_server_error: An unexpected error occurred. Please try again later or contact support");
+        assert_eq!(response_json["errors"], "internal_server_error: An unexpected error occurred. Please try again later or contact support.");
     }
 
     #[tokio::test]
@@ -521,7 +527,7 @@ mod tests {
         // Important: internal failure message is not exposed in API response
         assert_eq!(
             response_json["data"]["registration_status"]["failed"],
-            "An unexpected error occurred during registration. Please try again later or contact support"
+            "An unexpected error occurred during registration. Please try again later or contact support."
         );
         assert_eq!(
             response_json["message"].as_str().unwrap(),
@@ -555,7 +561,7 @@ mod tests {
         );
         assert_eq!(
             response_json["errors"].as_str().unwrap(),
-            "not_found: Domain nonexistent.org not found"
+            "not_found: Domain nonexistent.org not found."
         );
     }
 
@@ -665,7 +671,7 @@ mod tests {
         );
         assert_eq!(
             response_json["errors"].as_str().unwrap(),
-            "internal_server_error: An unexpected error occurred. Please try again later or contact support"
+            "internal_server_error: An unexpected error occurred. Please try again later or contact support."
         );
     }
 
@@ -798,6 +804,214 @@ mod tests {
         assert_eq!(
             response_json["errors"].as_str().unwrap(),
             "unprocessable_entity: missing DNS CNAME record from _acme-challenge.example.org. to _acme-challenge.example.org.icp2.io."
+        );
+    }
+
+    /// Helper function to make a POST request to /v1/domains/{domain}/update
+    async fn post_domain_update_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
+        let uri = format!("/v1/domains/{domain}/update");
+        let request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body_bytes = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
+        let body_json: Value = serde_json::from_slice(&body_bytes).unwrap();
+        (status, body_json)
+    }
+
+    #[tokio::test]
+    async fn test_post_domain_update_success_accepted() {
+        // Arrange
+        let mut mock_validator = MockValidatesDomains::new();
+        let expected_canister_id = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        mock_validator
+            .expect_validate()
+            .returning(move |_| Box::pin(async move { Ok(expected_canister_id) }));
+
+        let mut mock_repository = MockRepository::new();
+        let domain_normal = "example.org";
+        let subdomain_unicode = "тест.unicode.org";
+
+        let expected_task_normal =
+            InputTask::new(TaskKind::Update, FQDN::from_str(domain_normal).unwrap());
+        let expected_task_unicode =
+            InputTask::new(TaskKind::Update, FQDN::from_str(subdomain_unicode).unwrap());
+        mock_repository
+            .expect_try_add_task()
+            .withf(move |task| *task == expected_task_normal)
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        mock_repository
+            .expect_try_add_task()
+            .withf(move |task| *task == expected_task_unicode)
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) =
+            post_domain_update_request(router.clone(), domain_normal).await;
+        let (status_unicode, response_json_unicode) =
+            post_domain_update_request(router, subdomain_unicode).await;
+
+        // Assert
+        for (status, response_json, domain) in [
+            (status, response_json, domain_normal),
+            (status_unicode, response_json_unicode, subdomain_unicode),
+        ] {
+            assert_eq!(status, StatusCode::ACCEPTED);
+            assert_eq!(response_json["status"], "success");
+            assert_eq!(response_json["code"], 202);
+            assert_eq!(response_json["data"]["domain"], domain);
+            assert_eq!(
+                response_json["data"]["canister_id"],
+                "rrkah-fqaaa-aaaaa-aaaaq-cai"
+            );
+            assert_eq!(
+                response_json["message"].as_str().unwrap(),
+                "Update domain registration request accepted and may take a few minutes to process"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_post_domain_update_bad_request_missing_certificate() {
+        // Arrange
+        let mut mock_validator = MockValidatesDomains::new();
+        mock_validator.expect_validate().returning(|_| {
+            Box::pin(async { Ok(Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap()) })
+        });
+
+        let mut mock_repository = MockRepository::new();
+        mock_repository.expect_try_add_task().returning(|_| {
+            let domain = FQDN::from_str("example.org").unwrap();
+            Box::pin(async { Err(RepositoryError::MissingCertificateForUpdate(domain)) })
+        });
+
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = post_domain_update_request(router, "example.org").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 400);
+        assert_eq!(
+            response_json["message"],
+            "Update domain registration request failed"
+        );
+        assert_eq!(response_json["data"]["domain"], "example.org");
+        assert_eq!(response_json["errors"].as_str().unwrap(), "bad_request: Cannot update domain-to-canister mapping: no valid certificate found for domain example.org.");
+    }
+
+    /// Helper function to make a DELETE request to /v1/domains/{domain}
+    async fn delete_domain_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
+        let uri = format!("/v1/domains/{domain}");
+        let request = Request::builder()
+            .method("DELETE")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body_bytes = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
+        let body_json: Value = serde_json::from_slice(&body_bytes).unwrap();
+        (status, body_json)
+    }
+
+    #[tokio::test]
+    async fn test_delete_domain_success_accepted() {
+        // Arrange
+        let mut mock_validator = MockValidatesDomains::new();
+        mock_validator
+            .expect_validate_deletion()
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let mut mock_repository = MockRepository::new();
+        let domain_normal = "example.org";
+        let subdomain_unicode = "тест.unicode.org";
+
+        let expected_task_normal =
+            InputTask::new(TaskKind::Delete, FQDN::from_str(domain_normal).unwrap());
+        let expected_task_unicode =
+            InputTask::new(TaskKind::Delete, FQDN::from_str(subdomain_unicode).unwrap());
+        mock_repository
+            .expect_try_add_task()
+            .withf(move |task| *task == expected_task_normal)
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        mock_repository
+            .expect_try_add_task()
+            .withf(move |task| *task == expected_task_unicode)
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = delete_domain_request(router.clone(), domain_normal).await;
+        let (status_unicode, response_json_unicode) =
+            delete_domain_request(router, subdomain_unicode).await;
+
+        // Assert
+        for (status, response_json, domain) in [
+            (status, response_json, domain_normal),
+            (status_unicode, response_json_unicode, subdomain_unicode),
+        ] {
+            assert_eq!(status, StatusCode::ACCEPTED);
+            assert_eq!(response_json["status"], "success");
+            assert_eq!(response_json["code"], 202);
+            assert_eq!(response_json["data"]["domain"], domain);
+            assert!(response_json["data"]["canister_id"].is_null());
+            assert_eq!(
+                response_json["message"].as_str().unwrap(),
+                "Delete domain registration request accepted and may take a few minutes to process"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_domain_not_found() {
+        // Arrange
+        let mut mock_validator = MockValidatesDomains::new();
+        mock_validator
+            .expect_validate_deletion()
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let mut mock_repository = MockRepository::new();
+        mock_repository.expect_try_add_task().returning(|_| {
+            let domain = FQDN::from_str("example.org").unwrap();
+            Box::pin(async { Err(RepositoryError::DomainNotFound(domain)) })
+        });
+
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = delete_domain_request(router, "example.org").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 404);
+        assert_eq!(
+            response_json["message"],
+            "Delete domain registration request failed"
+        );
+        assert_eq!(response_json["data"]["domain"], "example.org");
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            "not_found: Domain example.org not found."
         );
     }
 }

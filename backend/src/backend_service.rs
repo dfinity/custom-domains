@@ -53,7 +53,7 @@ impl BackendService {
         match self.repository.get_domain_status(&fqdn).await {
             Ok(Some(entry)) => Ok(entry),
             Ok(None) => Err(ApiError::NotFound {
-                details: format!("Domain {domain} not found"),
+                details: format!("Domain {domain} not found."),
             }),
             Err(_) => Err(ApiError::InternalServerError {
                 details: "".to_string(),

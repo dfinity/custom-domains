@@ -42,7 +42,7 @@ pub enum ApiError {
     #[error("unprocessable_entity: {details}")]
     UnprocessableEntity { details: String },
     /// Server error (500)
-    #[error("internal_server_error: An unexpected error occurred. Please try again later or contact support")]
+    #[error("internal_server_error: An unexpected error occurred. Please try again later or contact support.")]
     InternalServerError { details: String },
 }
 
@@ -67,13 +67,18 @@ impl From<RepositoryError> for ApiError {
     fn from(err: RepositoryError) -> Self {
         match err {
             RepositoryError::CertificateAlreadyIssued(domain) => ApiError::Conflict {
-                details: format!("Certificate for {domain} already issued"),
+                details: format!("Certificate for {domain} already exists; reissuance is not permitted."),
             },
             RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict {
-                details: format!("Another task for {domain} is currently in progress"),
+                details: format!("A task for {domain} is already in progress. Please retry after it completes."),
             },
             RepositoryError::DomainNotFound(domain) => ApiError::NotFound {
-                details: format!("Domain {domain} not found"),
+                details: format!("Domain {domain} not found."),
+            },
+            RepositoryError::MissingCertificateForUpdate(domain) => ApiError::BadRequest {
+                details: format!(
+                    "Cannot update domain-to-canister mapping: no valid certificate found for domain {domain}."
+                ),
             },
             _ => ApiError::InternalServerError {
                 details: "".to_string(),

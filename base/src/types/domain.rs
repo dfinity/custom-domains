@@ -43,7 +43,7 @@ where
     S: Serializer,
 {
     serializer.serialize_str(
-        "An unexpected error occurred during registration. Please try again later or contact support",
+        "An unexpected error occurred during registration. Please try again later or contact support.",
     )
 }
 
