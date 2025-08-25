@@ -710,4 +710,94 @@ mod tests {
         // Assert
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    /// Helper function to make a GET request to /v1/domains/{domain}/validate
+    async fn get_domain_validate_request(
+        router: axum::Router,
+        domain: &str,
+    ) -> (StatusCode, Value) {
+        let uri = format!("/v1/domains/{domain}/validate");
+        let request = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body_bytes = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
+        let body_json: Value = serde_json::from_slice(&body_bytes).unwrap();
+        (status, body_json)
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_validate_success() {
+        let domains = vec!["example.org", "тест.unicode.org"];
+
+        for domain in &domains {
+            // Arrange
+            let mut mock_validator = MockValidatesDomains::new();
+            let expected_canister_id = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+
+            mock_validator
+                .expect_validate()
+                .returning(move |_| Box::pin(async move { Ok(expected_canister_id) }));
+
+            let mock_repository = MockRepository::new();
+            let router = create_test_router(mock_repository, mock_validator);
+
+            // Act
+            let (status, response_json) = get_domain_validate_request(router, domain).await;
+
+            // Assert
+            assert_eq!(status, StatusCode::OK,);
+            assert_eq!(response_json["status"], "success");
+            assert_eq!(response_json["code"], 200);
+            assert_eq!(response_json["data"]["domain"], *domain);
+            assert_eq!(
+                response_json["data"]["canister_id"],
+                "rrkah-fqaaa-aaaaa-aaaaq-cai"
+            );
+            assert_eq!(response_json["data"]["validation_status"], "valid");
+            assert_eq!(
+                response_json["message"].as_str().unwrap(),
+                "Domain is eligible for registration: DNS records are valid and canister ownership is verified"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_validate_invalid_dns_record() {
+        // Arrange
+        let mut mock_validator = MockValidatesDomains::new();
+        mock_validator.expect_validate().returning(|_| {
+            Box::pin(async {
+                Err(ValidationError::MissingDnsCname {
+                    src: "_acme-challenge.example.org.".to_string(),
+                    dst: "_acme-challenge.example.org.icp2.io.".to_string(),
+                })
+            })
+        });
+
+        let mock_repository = MockRepository::new();
+        let router = create_test_router(mock_repository, mock_validator);
+
+        // Act
+        let (status, response_json) = get_domain_validate_request(router, "example.org").await;
+
+        // Assert
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response_json["status"], "error");
+        assert_eq!(response_json["code"], 422);
+        assert_eq!(response_json["data"]["domain"], "example.org");
+        assert_eq!(
+            response_json["message"].as_str().unwrap(),
+            "Failed to validate DNS records or verify canister ownership"
+        );
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            "unprocessable_entity: missing DNS CNAME record from _acme-challenge.example.org. to _acme-challenge.example.org.icp2.io."
+        );
+    }
 }
