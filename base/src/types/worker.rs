@@ -149,7 +149,9 @@ impl Worker {
     ) {
         let acme_client = self.acme_client.clone();
         let metrics = self.metrics.clone();
-        let token = self.token.clone();
+        // Use a child token to allow cancelling revocation tasks independently of the worker
+        // Not used at the moment, but could be useful in the future (or as a precaution)
+        let token = self.token.child_token();
 
         self.task_tracker.spawn(async move {
             if delay.is_zero() {
