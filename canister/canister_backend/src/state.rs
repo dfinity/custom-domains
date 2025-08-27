@@ -365,6 +365,9 @@ impl CanisterState {
 
                 // Set the task field
                 entry.task = Some(task.kind);
+                // Reset failure count on task to make sure it gets retried if it was failing before
+                entry.failures_count = 0;
+                entry.last_failure_reason = None;
 
                 entry
             }

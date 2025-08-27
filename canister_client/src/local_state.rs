@@ -119,7 +119,7 @@ impl Repository for LocalState {
                         entry
                             .last_failure_reason
                             .clone()
-                            .map_or("".to_string(), |failure| failure.to_string()),
+                            .map_or("".to_string(), |failure| format!("{failure:?}")),
                     )
                 };
 

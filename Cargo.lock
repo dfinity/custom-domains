@@ -367,6 +367,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
+ "thiserror 2.0.15",
  "tokio",
  "tokio-util",
  "tower",
@@ -1352,6 +1353,7 @@ version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0f5d7f7b3eed2f771fc7f6fcb651f9560d7b0c483d75876082acb4649d266b3"
 dependencies = [
+ "punycode",
  "serde",
 ]
 
@@ -3209,6 +3211,12 @@ checksum = "6e944464ec8536cd1beb0bbfd96987eb5e3b72f2ecdafdc5c769a37f1fa2ae1f"
 dependencies = [
  "cc",
 ]
+
+[[package]]
+name = "punycode"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9e1dcb320d6839f6edb64f7a4a59d39b30480d4d1765b56873f7c858538a5fe"
 
 [[package]]
 name = "quanta"

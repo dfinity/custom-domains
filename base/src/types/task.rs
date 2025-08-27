@@ -8,7 +8,6 @@ use canister_api::{
 };
 use derive_new::new;
 use fqdn::FQDN;
-use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, Display, IntoStaticStr};
 
 use crate::traits::time::UtcTimestamp;
@@ -131,21 +130,15 @@ pub enum TaskOutput {
     Delete,
 }
 
-// The `to_string()` output is user-facing.
-// Only validation failures are actionable by the user.
-// All other errors suggest retrying or contacting support.
 // TODO: add request_id to the body? (should be already in the header once intergrated into ic-gateway)
-#[derive(Debug, Serialize, Deserialize, Clone, Display, PartialEq, Eq, IntoStaticStr)]
+#[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskFailReason {
     /// Domain validation failed with a specific error message
-    #[strum(to_string = "Validation failed: {0}. Please review your settings and try again.")]
     ValidationFailed(String),
     /// Task execution exceeded the allowed time limit
-    #[strum(to_string = "An unexpected error occurred. Please try again later or contact support")]
     Timeout { duration_secs: u64 },
     /// Generic failure with error details
-    #[strum(to_string = "An unexpected error occurred. Please try again later or contact support")]
     GenericFailure(String),
 }
 

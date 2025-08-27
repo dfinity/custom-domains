@@ -6,6 +6,7 @@ use base::{
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use candid::Principal;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Generic API response structure for all endpoints.
 #[derive(Serialize)]
@@ -26,32 +27,23 @@ pub struct ApiResponse<T> {
 }
 
 /// API error types with associated details.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Error)]
 pub enum ApiError {
     /// Invalid request data (400)
-    BadRequest { details: String },
+    #[error("bad_request: {0}")]
+    BadRequest(String),
     /// Resource not found (404)
-    NotFound { details: String },
+    #[error("not_found: {0}")]
+    NotFound(String),
     /// Resource conflict (409)
-    Conflict { details: String },
+    #[error("conflict: {0}")]
+    Conflict(String),
     /// Request validation failed (422)
-    UnprocessableEntity { details: String },
+    #[error("unprocessable_entity: {0}")]
+    UnprocessableEntity(String),
     /// Server error (500)
-    InternalServerError { details: String },
-}
-
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ApiError::BadRequest { details } => write!(f, "bad_request: {details}"),
-            ApiError::NotFound { details } => write!(f, "not_found: {details}"),
-            ApiError::Conflict { details } => write!(f, "conflict: {details}"),
-            ApiError::UnprocessableEntity { details } => {
-                write!(f, "unprocessable_entity: {details}")
-            }
-            ApiError::InternalServerError { .. } => write!(f, ""),
-        }
-    }
+    #[error("internal_server_error: An unexpected error occurred. Please try again later or contact support.")]
+    InternalServerError(String),
 }
 
 /// Response data payload for domain-related endpoints.
@@ -74,18 +66,11 @@ pub struct DomainData {
 impl From<RepositoryError> for ApiError {
     fn from(err: RepositoryError) -> Self {
         match err {
-            RepositoryError::CertificateAlreadyIssued(domain) => ApiError::Conflict {
-                details: format!("Certificate for {domain} already issued"),
-            },
-            RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict {
-                details: format!("Another task for {domain} is currently in progress"),
-            },
-            RepositoryError::DomainNotFound(domain) => ApiError::NotFound {
-                details: format!("Domain {domain} not found"),
-            },
-            _ => ApiError::InternalServerError {
-                details: "".to_string(),
-            },
+            RepositoryError::CertificateAlreadyIssued(domain) => ApiError::Conflict(format!("Certificate for {domain} already exists; reissuance is not permitted.")),
+            RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict(format!("Another task for {domain} is already in progress. Please retry after it completes.")),
+            RepositoryError::DomainNotFound(domain) => ApiError::NotFound(format!("Domain {domain} not found.")),
+            RepositoryError::MissingCertificateForUpdate(domain) => ApiError::BadRequest(format!("Cannot update domain-to-canister mapping: no valid certificate found for domain {domain}.")),
+            _ => ApiError::InternalServerError("".to_string()),
         }
     }
 }
@@ -93,9 +78,7 @@ impl From<RepositoryError> for ApiError {
 // All validation errors should be converted to BadRequest
 impl From<ValidationError> for ApiError {
     fn from(value: ValidationError) -> Self {
-        Self::BadRequest {
-            details: value.to_string(),
-        }
+        Self::BadRequest(value.to_string())
     }
 }
 

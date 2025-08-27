@@ -7,7 +7,7 @@ use canister_api::{
 };
 use derive_new::new;
 use fqdn::FQDN;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 /// Represents a fully registered domain with encrypted certificate and private key.
 #[derive(Debug, Clone, new)]
@@ -32,8 +32,19 @@ pub enum RegistrationStatus {
     Registered,
     /// The domain registration has expired
     Expired,
-    /// The registration failed with an error message
+    /// The registration failed with an error message.
+    /// Note: The message is not exposed directly in API responses.
+    #[serde(serialize_with = "serialize_failed")]
     Failed(String),
+}
+
+fn serialize_failed<S>(_: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(
+        "An unexpected error occurred during registration. Please try again later or contact support.",
+    )
 }
 
 /// Represents the overall status of a domain including registration state.
