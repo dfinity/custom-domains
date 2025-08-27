@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(
             response_json["errors"].as_str().unwrap(),
             format!(
-                "conflict: A task for {domain} is already in progress. Please retry after it completes."
+                "conflict: Another task for {domain} is already in progress. Please retry after it completes."
             )
         );
     }
@@ -567,7 +567,7 @@ mod tests {
         );
         assert_eq!(
             response_json["errors"].as_str().unwrap(),
-            "not_found: Domain nonexistent.org not found."
+            "not_found: Domain nonexistent.org not found"
         );
     }
 

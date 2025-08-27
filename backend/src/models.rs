@@ -30,20 +30,20 @@ pub struct ApiResponse<T> {
 #[derive(Serialize, Deserialize, Debug, Clone, Error)]
 pub enum ApiError {
     /// Invalid request data (400)
-    #[error("bad_request: {details}")]
-    BadRequest { details: String },
+    #[error("bad_request: {0}")]
+    BadRequest(String),
     /// Resource not found (404)
-    #[error("not_found: {details}")]
-    NotFound { details: String },
+    #[error("not_found: {0}")]
+    NotFound(String),
     /// Resource conflict (409)
-    #[error("conflict: {details}")]
-    Conflict { details: String },
+    #[error("conflict: {0}")]
+    Conflict(String),
     /// Request validation failed (422)
-    #[error("unprocessable_entity: {details}")]
-    UnprocessableEntity { details: String },
+    #[error("unprocessable_entity: {0}")]
+    UnprocessableEntity(String),
     /// Server error (500)
     #[error("internal_server_error: An unexpected error occurred. Please try again later or contact support.")]
-    InternalServerError { details: String },
+    InternalServerError(String),
 }
 
 /// Response data payload for domain-related endpoints.
@@ -66,23 +66,11 @@ pub struct DomainData {
 impl From<RepositoryError> for ApiError {
     fn from(err: RepositoryError) -> Self {
         match err {
-            RepositoryError::CertificateAlreadyIssued(domain) => ApiError::Conflict {
-                details: format!("Certificate for {domain} already exists; reissuance is not permitted."),
-            },
-            RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict {
-                details: format!("A task for {domain} is already in progress. Please retry after it completes."),
-            },
-            RepositoryError::DomainNotFound(domain) => ApiError::NotFound {
-                details: format!("Domain {domain} not found."),
-            },
-            RepositoryError::MissingCertificateForUpdate(domain) => ApiError::BadRequest {
-                details: format!(
-                    "Cannot update domain-to-canister mapping: no valid certificate found for domain {domain}."
-                ),
-            },
-            _ => ApiError::InternalServerError {
-                details: "".to_string(),
-            },
+            RepositoryError::CertificateAlreadyIssued(domain) => ApiError::Conflict(format!("Certificate for {domain} already exists; reissuance is not permitted.")),
+            RepositoryError::AnotherTaskInProgress(domain) => ApiError::Conflict(format!("Another task for {domain} is already in progress. Please retry after it completes.")),
+            RepositoryError::DomainNotFound(domain) => ApiError::NotFound(format!("Domain {domain} not found.")),
+            RepositoryError::MissingCertificateForUpdate(domain) => ApiError::BadRequest(format!("Cannot update domain-to-canister mapping: no valid certificate found for domain {domain}.")),
+            _ => ApiError::InternalServerError("".to_string()),
         }
     }
 }
@@ -90,9 +78,7 @@ impl From<RepositoryError> for ApiError {
 // All validation errors should be converted to BadRequest
 impl From<ValidationError> for ApiError {
     fn from(value: ValidationError) -> Self {
-        Self::BadRequest {
-            details: value.to_string(),
-        }
+        Self::BadRequest(value.to_string())
     }
 }
 

@@ -52,12 +52,8 @@ impl BackendService {
         let fqdn = parse_domain(domain)?;
         match self.repository.get_domain_status(&fqdn).await {
             Ok(Some(entry)) => Ok(entry),
-            Ok(None) => Err(ApiError::NotFound {
-                details: format!("Domain {domain} not found."),
-            }),
-            Err(_) => Err(ApiError::InternalServerError {
-                details: "".to_string(),
-            }),
+            Ok(None) => Err(ApiError::NotFound(format!("Domain {domain} not found"))),
+            Err(_) => Err(ApiError::InternalServerError("".to_string())),
         }
     }
 
@@ -66,9 +62,7 @@ impl BackendService {
         let fqdn = parse_domain(domain)?;
         match self.validator.validate(&fqdn).await {
             Ok(canister_id) => Ok((canister_id, ValidationStatus::Valid)),
-            Err(err) => Err(ApiError::UnprocessableEntity {
-                details: err.to_string(),
-            }),
+            Err(err) => Err(ApiError::UnprocessableEntity(err.to_string())),
         }
     }
 }
@@ -76,15 +70,9 @@ impl BackendService {
 /// Parses a domain string into a validated FQDN.
 fn parse_domain(domain: &str) -> Result<FQDN, ApiError> {
     if domain.is_empty() {
-        return Err(ApiError::BadRequest {
-            details: "Domain cannot be empty".to_string(),
-        });
+        return Err(ApiError::BadRequest("Domain cannot be empty".to_string()));
     } else if domain.len() > 255 {
-        return Err(ApiError::BadRequest {
-            details: "Domain is too long".to_string(),
-        });
+        return Err(ApiError::BadRequest("Domain is too long".to_string()));
     }
-    FQDN::from_str(domain).map_err(|_| ApiError::BadRequest {
-        details: format!("Invalid domain: {domain}"),
-    })
+    FQDN::from_str(domain).map_err(|_| ApiError::BadRequest("Invalid domain format".to_string()))
 }
