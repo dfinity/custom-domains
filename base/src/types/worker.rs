@@ -334,6 +334,7 @@ impl Worker {
 }
 
 // Indicates that worker was stopped externally and it should stop running.
+#[derive(Debug, PartialEq, Eq)]
 struct WorkerStopped;
 
 impl Worker {
@@ -803,6 +804,7 @@ impl WorkerMetrics {
 
 #[cfg(test)]
 mod tests {
+    use anyhow;
     use async_trait::async_trait;
     use candid::Principal;
     use fqdn::FQDN;
@@ -813,17 +815,20 @@ mod tests {
     use prometheus::Registry;
     use rcgen::{CertificateParams, DnType, KeyPair};
     use std::{str::FromStr, sync::Arc, time::Duration};
-    use tokio::{task, time::sleep};
+    use tokio::{spawn, task, time::sleep};
     use tokio_util::sync::CancellationToken;
 
     use crate::{
         traits::{
-            repository::MockRepository,
+            repository::{MockRepository, RepositoryError},
             validation::{MockValidatesDomains, ValidationError},
         },
         types::{
-            task::{ScheduledTask, TaskFailReason, TaskKind, TaskOutput},
-            worker::{Worker, WorkerConfig},
+            task::{
+                IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput,
+                TaskResult,
+            },
+            worker::{Worker, WorkerConfig, WorkerStopped},
         },
     };
 
@@ -1078,5 +1083,272 @@ mod tests {
             result.failure.unwrap(),
             TaskFailReason::Timeout { duration_secs: 0 }
         );
+    }
+
+    #[tokio::test]
+    async fn test_submit_task_result_success() {
+        // Arrange
+        let mut repository = MockRepository::new();
+        repository
+            .expect_submit_task_result()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let registry = Registry::new();
+        let worker = Worker::new(
+            "test_worker".to_string(),
+            Arc::new(repository),
+            Arc::new(MockValidatesDomains::new()),
+            Arc::new(MockAcmeClient),
+            WorkerConfig::default(),
+            registry.clone(),
+            CancellationToken::new(),
+        );
+
+        let task = ScheduledTask::new(
+            TaskKind::Issue,
+            FQDN::from_str("example.org").unwrap(),
+            123,
+            None,
+        );
+
+        let task_result = TaskResult::success(
+            task.domain.clone(),
+            TaskOutput::Issue(IssueCertificateOutput::new(
+                Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
+                vec![],
+                vec![],
+                123,
+                456,
+            )),
+            task.task_id,
+            task.kind,
+        );
+
+        // Act
+        let result = worker.submit_task_result(&task, task_result).await;
+
+        // Assert
+        assert!(result.is_ok());
+        let metric_families = registry.gather();
+        let submission_metric = metric_families
+            .iter()
+            .find(|family| family.name() == "task_submission_with_retries")
+            .expect("task_submission_with_retries metric should exist");
+        let metric = submission_metric
+            .get_metric()
+            .iter()
+            .find(|m| {
+                let labels = m.get_label();
+                labels
+                    .iter()
+                    .any(|l| l.name() == "worker_name" && l.value() == "test_worker")
+                    && labels
+                        .iter()
+                        .any(|l| l.name() == "task_kind" && l.value() == "issue")
+                    && labels
+                        .iter()
+                        .any(|l| l.name() == "attempts" && l.value() == "1")
+                    && labels
+                        .iter()
+                        .any(|l| l.name() == "status" && l.value() == "success")
+            })
+            .expect("no metric found");
+        assert_eq!(metric.get_counter().value, Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn test_submit_task_result_with_retries_eventual_success() {
+        // Arrange
+        let mut repository = MockRepository::new();
+        repository
+            .expect_submit_task_result()
+            .times(3) // First 2 calls fail, 3rd succeeds
+            .returning({
+                let mut call_count = 0;
+                move |_| {
+                    call_count += 1;
+                    Box::pin(async move {
+                        if call_count < 3 {
+                            Err(RepositoryError::InternalError(anyhow::anyhow!(
+                                "Unexpected failure"
+                            )))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                }
+            });
+
+        let config = WorkerConfig::default()
+            .with_task_submit_timeout(Duration::from_secs(10))
+            .with_task_resubmit_interval(Duration::from_millis(10));
+
+        let registry = Registry::new();
+        let worker = Worker::new(
+            "test_worker".to_string(),
+            Arc::new(repository),
+            Arc::new(MockValidatesDomains::new()),
+            Arc::new(MockAcmeClient),
+            config,
+            registry.clone(),
+            CancellationToken::new(),
+        );
+
+        let task = ScheduledTask::new(
+            TaskKind::Update,
+            FQDN::from_str("example.com").unwrap(),
+            456,
+            None,
+        );
+
+        let task_result = TaskResult::failure(
+            task.domain.clone(),
+            TaskFailReason::ValidationFailed("some error".to_string()),
+            task.task_id,
+            task.kind,
+        );
+
+        // Act
+        let result = worker.submit_task_result(&task, task_result).await;
+
+        // Assert
+        assert!(result.is_ok());
+        let metric_families = registry.gather();
+        let submission_metric = metric_families
+            .iter()
+            .find(|family| family.name() == "task_submission_with_retries")
+            .expect("task_submission_with_retries metric should exist");
+        let metric = submission_metric
+            .get_metric()
+            .iter()
+            .find(|m| {
+                let labels = m.get_label();
+                labels
+                    .iter()
+                    .any(|l| l.name() == "worker_name" && l.value() == "test_worker")
+                    && labels
+                        .iter()
+                        .any(|l| l.name() == "task_kind" && l.value() == "update")
+                    && labels
+                        .iter()
+                        .any(|l| l.name() == "attempts" && l.value() == "3")
+                    && labels
+                        .iter()
+                        .any(|l| l.name() == "status" && l.value() == "success")
+            })
+            .expect("no metric found");
+        assert_eq!(metric.get_counter().value, Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn test_submit_task_result_timeout_after_retries() {
+        // Arrange
+        let mut repository = MockRepository::new();
+        repository
+            .expect_submit_task_result()
+            .times(5..) // Expect multiple calls until timeout
+            .returning(|_| {
+                Box::pin(async {
+                    Err(RepositoryError::InternalError(anyhow::anyhow!(
+                        "Some persistent failure"
+                    )))
+                })
+            });
+
+        let registry = Registry::new();
+        let config = WorkerConfig::default()
+            .with_task_submit_timeout(Duration::from_millis(100)) // Some short timeout
+            .with_task_resubmit_interval(Duration::from_millis(10));
+
+        let worker = Worker::new(
+            "test_worker".to_string(),
+            Arc::new(repository),
+            Arc::new(MockValidatesDomains::new()),
+            Arc::new(MockAcmeClient),
+            config,
+            registry.clone(),
+            CancellationToken::new(),
+        );
+
+        let task = ScheduledTask::new(
+            TaskKind::Issue,
+            FQDN::from_str("example.net").unwrap(),
+            123,
+            None,
+        );
+
+        let task_result = TaskResult::success(
+            task.domain.clone(),
+            TaskOutput::Issue(IssueCertificateOutput::new(
+                Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap(),
+                vec![],
+                vec![],
+                123,
+                456,
+            )),
+            task.task_id,
+            task.kind,
+        );
+
+        // Act
+        let result = worker.submit_task_result(&task, task_result).await;
+
+        // Assert
+        assert!(result.is_ok()); // Function should succeed even if all submissions fails
+        let metric_families = registry.gather();
+        assert!(!metric_families.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_submit_task_result_cancellation_during_retry() {
+        // Arrange
+        let mut repository = MockRepository::new();
+        repository.expect_submit_task_result().returning(|_| {
+            Box::pin(async {
+                // Slow execution that allows cancellation to kick in
+                sleep(Duration::from_millis(2000)).await;
+                Err(RepositoryError::InternalError(anyhow::anyhow!(
+                    "Some unexpected failure"
+                )))
+            })
+        });
+
+        let token = CancellationToken::new();
+        let worker = Worker::new(
+            "test_worker".to_string(),
+            Arc::new(repository),
+            Arc::new(MockValidatesDomains::new()),
+            Arc::new(MockAcmeClient),
+            WorkerConfig::default(),
+            Registry::new(),
+            token.clone(),
+        );
+
+        let task = ScheduledTask::new(
+            TaskKind::Delete,
+            FQDN::from_str("example.org").unwrap(),
+            123,
+            Some(vec![]),
+        );
+
+        let task_result = TaskResult::success(
+            task.domain.clone(),
+            TaskOutput::Delete,
+            task.task_id,
+            task.kind,
+        );
+
+        // Act: spawn submission in the background
+        let handle = spawn(async move { worker.submit_task_result(&task, task_result).await });
+
+        // Cancel worker after a short delay
+        sleep(Duration::from_millis(25)).await;
+        token.cancel();
+
+        let result = handle.await.unwrap();
+
+        // Assert:
+        assert_eq!(result.unwrap_err(), WorkerStopped);
     }
 }
