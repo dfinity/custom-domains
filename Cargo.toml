@@ -29,6 +29,7 @@ edition = "2021"
 [workspace.dependencies]
 arc-swap = { version = "1.7.1" }
 anyhow = "1.0.98"
+async-trait = "0.1.83"
 axum = "0.8.4"
 axum-server = "0.7.2"
 candid = "0.10.16"
@@ -49,6 +50,7 @@ mockall = "0.13.1"
 pem = "3.0.5"
 pretty_assertions = "1.4.1"
 prometheus = "0.14.0"
+rcgen = {version = "0.14"}
 reqwest = { version = "0.12.22" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_cbor = "0.11.2"
@@ -74,6 +76,7 @@ base = { path = "./base" }
 canister-client = { path = "./canister_client" }
 ic-bn-lib = { workspace = true }
 prometheus = { workspace = true }
+rcgen = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-util = { workspace = true }
