@@ -27,7 +27,4 @@ hickory-resolver = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
-trait-async = { workspace = true }
-ic-bn-lib = { workspace = true }
-mockall = { workspace = true }
 rcgen = { workspace = true }
