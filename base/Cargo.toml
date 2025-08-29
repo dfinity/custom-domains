@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 candid = { workspace = true }
 canister-api = { path = "../canister/api" }
 chrono = { workspace = true }
@@ -24,3 +25,6 @@ tracing = { workspace = true }
 trait-async = { workspace = true }
 hickory-resolver = { workspace = true }
 x509-parser = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }
