@@ -82,6 +82,7 @@ pub struct IssueCertificateOutput {
 pub enum TaskFailReason {
     ValidationFailed(String),
     Timeout { duration_secs: Timestamp },
+    RateLimited,
     GenericFailure(String),
 }
 
@@ -94,6 +95,9 @@ impl fmt::Display for TaskFailReason {
             }
             TaskFailReason::Timeout { duration_secs } => {
                 write!(f, "timeout after {duration_secs}s")
+            }
+            TaskFailReason::RateLimited => {
+                write!(f, "rate_limited")
             }
             TaskFailReason::GenericFailure(msg) => {
                 write!(f, "generic_failure: {msg}")

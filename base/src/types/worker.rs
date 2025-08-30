@@ -13,7 +13,7 @@ use fqdn::FQDN;
 use ic_bn_lib::{
     rustls::pki_types::CertificateDer,
     tls::acme::{
-        client::AcmeCertificateClient,
+        client::{AcmeCertificateClient, Error},
         instant_acme::{RevocationReason, RevocationRequest},
     },
 };
@@ -586,12 +586,13 @@ async fn issue_task(
     match validator.validate(&domain).await {
         Ok(canister_id) => match issue_certificate(&domain, canister_id, acme_client).await {
             Ok(output) => TaskResult::success(domain.clone(), output, task_id, task_kind),
-            Err(err) => TaskResult::failure(
-                domain,
-                TaskFailReason::GenericFailure(format_error_chain(&err)),
-                task_id,
-                task_kind,
-            ),
+            Err(err) => {
+                let failure = match err.downcast_ref::<Error>() {
+                    Some(err) if err.rate_limited() => TaskFailReason::RateLimited,
+                    _ => TaskFailReason::GenericFailure(format_error_chain(&err)),
+                };
+                TaskResult::failure(domain, failure, task_id, task_kind)
+            }
         },
         Err(err) => TaskResult::failure(
             domain,

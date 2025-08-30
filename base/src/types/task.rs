@@ -138,6 +138,8 @@ pub enum TaskFailReason {
     ValidationFailed(String),
     /// Task execution exceeded the allowed time limit
     Timeout { duration_secs: u64 },
+    /// Let's Encrypt rate limit exceeded (https://letsencrypt.org/docs/rate-limits/)
+    RateLimited,
     /// Generic failure with error details
     GenericFailure(String),
 }
@@ -243,6 +245,7 @@ impl From<TaskFailReason> for ApiTaskFailReason {
             TaskFailReason::Timeout { duration_secs } => {
                 ApiTaskFailReason::Timeout { duration_secs }
             }
+            TaskFailReason::RateLimited => ApiTaskFailReason::RateLimited,
             TaskFailReason::GenericFailure(reason) => ApiTaskFailReason::GenericFailure(reason),
         }
     }
