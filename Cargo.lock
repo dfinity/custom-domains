@@ -618,6 +618,7 @@ dependencies = [
  "derive-new",
  "serde",
  "strum",
+ "thiserror 2.0.16",
 ]
 
 [[package]]

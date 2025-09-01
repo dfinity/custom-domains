@@ -33,6 +33,8 @@ type TaskFailReason = variant {
   ValidationFailed: text;
   // Task exceeded maximum execution time
   Timeout: record { duration_secs: nat64 };
+  /// Let's Encrypt rate limit exceeded (https://letsencrypt.org/docs/rate-limits/)
+  RateLimited;
   // Generic failure with error message
   GenericFailure: text;
 };
