@@ -4,15 +4,15 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-arc-swap = { workspace = true }
 anyhow = { workspace = true }
+arc-swap = { workspace = true }
 base = { path = "../base" }
 candid = { workspace = true }
 canister-api = { path = "../canister/api" }
 derive-new = { workspace = true }
 fqdn = { workspace = true }
-ic-bn-lib = { workspace = true }
 ic-agent = { workspace = true }
+ic-bn-lib = { workspace = true }
 tracing = { workspace = true }
 trait-async = { workspace = true }
 

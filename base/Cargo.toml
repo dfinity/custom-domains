@@ -11,6 +11,7 @@ canister-api = { path = "../canister/api" }
 chrono = { workspace = true }
 derive-new = { workspace = true }
 fqdn = { workspace = true }
+hickory-resolver = { workspace = true }
 ic-bn-lib = { workspace = true }
 mockall = { workspace = true }
 pem = { workspace = true }
@@ -23,7 +24,6 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 trait-async = { workspace = true }
-hickory-resolver = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]

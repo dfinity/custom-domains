@@ -27,8 +27,8 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-arc-swap = { version = "1.7.1" }
 anyhow = "1.0.98"
+arc-swap = { version = "1.7.1" }
 async-trait = "0.1.83"
 axum = "0.8.4"
 axum-server = "0.7.2"
@@ -36,6 +36,7 @@ candid = "0.10.16"
 chrono = "0.4"
 derive-new = "0.7.0"
 fqdn = "0.4.6"
+hickory-resolver = "0.25"
 ic-agent = "0.41.0"
 ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", features = [
     "acme-dns",
@@ -50,7 +51,7 @@ mockall = "0.13.1"
 pem = "3.0.5"
 pretty_assertions = "1.4.1"
 prometheus = "0.14.0"
-rcgen = {version = "0.14"}
+rcgen = { version = "0.14" }
 reqwest = { version = "0.12.22" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_cbor = "0.11.2"
@@ -63,17 +64,16 @@ tower = "0.5.2"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 trait-async = "0.1.24"
-hickory-resolver = "0.25"
 x509-parser = "0.17.0"
 
 [dev-dependencies]
-ic-agent = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 axum-server = { workspace = true }
 backend = { path = "./backend" }
 base = { path = "./base" }
 canister-client = { path = "./canister_client" }
+ic-agent = { workspace = true }
 ic-bn-lib = { workspace = true }
 prometheus = { workspace = true }
 rcgen = { workspace = true }

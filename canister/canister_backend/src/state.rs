@@ -28,8 +28,8 @@ use crate::{
 /// Timestamp representing seconds in UTC since the UNIX epoch (January 1, 1970).
 pub type UtcTimestamp = u64;
 
-// The certificate renewal task is initiated this far ahead of the expiration
-const CERT_RENEWAL_BEFORE_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+// Certificate renewal should be attempted when this fraction of the validity period has elapsed
+const CERTIFICATE_VALIDITY_FRACTION: f64 = 0.66;
 
 // A domain is considered close to certificate expiration if less than this fraction of its validity period remains
 const CERT_EXPIRATION_ALERT_THRESHOLD: f64 = 0.2;
@@ -56,23 +56,38 @@ const MAX_PAGE_LIMIT: u32 = 400;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DomainEntry {
+    // Current task being processed for the domain, if any
     pub task: Option<TaskKind>,
+    // Timestamp when the task failed last time, if any
     pub last_fail_time: Option<UtcTimestamp>,
+    // Reason for the last failure, if any
     pub last_failure_reason: Option<TaskFailReason>,
+    // Number of consecutive failures for the current task (excluding rate limit failures)
     pub failures_count: u32,
+    // Number of rate limit failures for the current task
+    pub rate_limit_failures_count: u32,
+    // Canister ID associated with the domain
     pub canister_id: Option<Principal>,
+    // Timestamp when the domain entry was created (set once and never updated)
     pub created_at: UtcTimestamp,
+    // Timestamp when the current task was taken by a worker
     pub taken_at: Option<UtcTimestamp>,
+    // PEM-encoded certificate data (encrypted)
     pub certificate: Option<Vec<u8>>,
+    // PEM-encoded private key data (encrypted)
     pub private_key: Option<Vec<u8>>,
+    // Certificate validity period start (as UNIX timestamp)
     pub not_before: Option<UtcTimestamp>,
+    // Certificate validity period end (as UNIX timestamp)
     pub not_after: Option<UtcTimestamp>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskStatus {
+    // Task is pending and has not been taken by any worker yet
     Pending(TaskKind),
+    // Task is currently being processed by a worker
     InProgress(TaskKind),
 }
 
@@ -85,6 +100,7 @@ impl TaskStatus {
     }
 }
 
+// Simplified registration status labels for metrics and stats
 #[derive(Debug, Clone, Eq, PartialEq, Hash, EnumIter, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum RegistrationStatusLabel {
@@ -105,9 +121,13 @@ impl From<RegistrationStatus> for RegistrationStatusLabel {
     }
 }
 
+/// Statistics about the domains and tasks
 pub struct Stats {
+    /// Registration statuses and their counts
     pub registrations: HashMap<RegistrationStatusLabel, u32>,
+    /// Task statuses and their counts
     pub tasks: HashMap<TaskStatus, u32>,
+    /// Number of domains with certificates nearing expiration
     pub domains_nearing_expiration: u32,
 }
 
@@ -179,7 +199,7 @@ impl CanisterState {
         let has_task = self
             .domains
             .values()
-            .any(|entry| get_pending_task(&entry, now).is_some());
+            .any(|entry| next_pending_task(&entry, now).is_some());
 
         Ok(has_task)
     }
@@ -213,7 +233,7 @@ impl CanisterState {
             let mut domain_entry = entry.value();
 
             // Schedule only the first available pending task
-            if let Some(task_kind) = get_pending_task(&domain_entry, now) {
+            if let Some(task_kind) = next_pending_task(&domain_entry, now) {
                 domain_entry.taken_at = Some(now);
                 domain_entry.task = Some(task_kind);
                 let scheduled_task = Some(ScheduledTask::new(
@@ -365,9 +385,11 @@ impl CanisterState {
 
                 // Set the task field
                 entry.task = Some(task.kind);
-                // Reset failure count on task to make sure it gets retried if it was failing before
+                // Reset failure counts on task to make sure it gets retried if it was failing before
+                entry.last_fail_time = None;
                 entry.failures_count = 0;
                 entry.last_failure_reason = None;
+                entry.rate_limit_failures_count = 0;
 
                 entry
             }
@@ -448,6 +470,7 @@ impl CanisterState {
             entry.last_failure_reason = None;
             entry.failures_count = 0;
             entry.last_fail_time = None;
+            entry.rate_limit_failures_count = 0;
             self.last_change.set(now);
 
             match output {
@@ -467,7 +490,13 @@ impl CanisterState {
                 }
             }
         } else if let Some(failure) = task_result.failure {
-            entry.failures_count += 1;
+            // Note: rate-limited failures do not impact the retry limit, they are just counted
+            if failure == TaskFailReason::RateLimited {
+                entry.rate_limit_failures_count += 1;
+            } else {
+                entry.failures_count += 1;
+            }
+
             entry.last_failure_reason = Some(failure);
             entry.taken_at = None;
             entry.last_fail_time = Some(now);
@@ -612,33 +641,79 @@ fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> 
     now >= expiry_time
 }
 
-fn get_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
-    if let Some(task) = entry.task {
-        if let Some(taken_at) = entry.taken_at {
-            // Reclaim task if it has been running longer than timeout
-            let expiry_time = taken_at.saturating_add(TASK_TIMEOUT.as_secs());
-            if now >= expiry_time {
-                return Some(task);
-            }
-        } else if let Some(last_fail_time) = entry.last_fail_time {
-            // Retry a previously failed task after delay has elapsed
-            let next_allowed = last_fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
-            if now >= next_allowed {
-                return Some(task);
-            }
-        } else {
-            // Task is new and has not been taken or failed, schedule it
-            return Some(task);
-        }
-    } else if let Some(not_after) = entry.not_after {
-        // Schedule certificate renewal if time has come
-        let renewal_time = not_after.saturating_sub(CERT_RENEWAL_BEFORE_EXPIRY.as_secs());
-        if now >= renewal_time {
-            return Some(TaskKind::Renew);
-        }
+/// Determines the next pending task for a domain entry based on current state and time.
+fn next_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
+    // Normal tasks (Issue, Update, Delete) are always prioritized over renewals
+    let normal_task = entry
+        .task
+        .and_then(|task| handle_existing_task(entry, task, now));
+
+    if let Some(task) = normal_task {
+        return Some(task);
     }
 
-    None
+    // Check if a renewal task should be scheduled
+    match (
+        entry.certificate.as_ref(),
+        entry.not_before,
+        entry.not_after,
+    ) {
+        (Some(_), Some(not_before), Some(not_after))
+            if renewal_needed(not_before, not_after, now) =>
+        {
+            Some(TaskKind::Renew)
+        }
+        _ => None,
+    }
+}
+
+fn handle_existing_task(
+    entry: &DomainEntry,
+    task: TaskKind,
+    now: UtcTimestamp,
+) -> Option<TaskKind> {
+    // Case 1: Task is currently being executed by a worker
+    if let Some(taken_at) = entry.taken_at {
+        // Reclaim task if it has been running longer than timeout
+        let expiry_time = taken_at.saturating_add(TASK_TIMEOUT.as_secs());
+        if now >= expiry_time {
+            return Some(task);
+        }
+        // Task is still being processed and hasn't timed out
+        return None;
+    }
+
+    // Case 2: Task has previously failed and probably needs to be retried
+    if let Some(last_fail_time) = entry.last_fail_time {
+        let next_allowed = last_fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
+        if entry.failures_count < MAX_TASK_FAILURES && now >= next_allowed {
+            return Some(task);
+        }
+        return None;
+    }
+
+    // Case 3: Task is new and has never been taken or failed
+    Some(task)
+}
+
+fn renewal_needed(not_before: UtcTimestamp, not_after: UtcTimestamp, now: UtcTimestamp) -> bool {
+    // Always renew if certificate has expired
+    if now >= not_after {
+        return true;
+    }
+
+    let total_validity = not_after.saturating_sub(not_before);
+
+    // If validity period is zero or negative, renew immediately (shouldn't normally happen)
+    if total_validity == 0 {
+        return true;
+    }
+
+    let elapsed_time = now.saturating_sub(not_before);
+    let elapsed_validity_fraction = elapsed_time as f64 / total_validity as f64;
+
+    // Schedule renewal if renewal threshold passed
+    elapsed_validity_fraction >= CERTIFICATE_VALIDITY_FRACTION
 }
 
 pub fn with_state<R>(f: impl FnOnce(&CanisterState) -> R) -> R {
@@ -653,10 +728,25 @@ pub fn with_state_mut<R>(f: impl FnOnce(&mut CanisterState) -> R) -> R {
 mod tests {
     use super::*;
     use candid::Principal;
+    use canister_api::IssueCertificateOutput;
     use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 
+    fn create_test_empty_state() -> CanisterState {
+        let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
+        let domains_memory = memory_manager.get(MemoryId::new(0));
+        let last_change_memory = memory_manager.get(MemoryId::new(1));
+
+        let domains = StableBTreeMap::init(domains_memory);
+        let last_change = StableCell::init(last_change_memory, 0);
+
+        CanisterState {
+            domains,
+            last_change,
+        }
+    }
+
     /// Create a test CanisterState with sample data
-    fn create_test_state() -> CanisterState {
+    fn create_test_populated_state() -> CanisterState {
         let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
         let domains_memory = memory_manager.get(MemoryId::new(0));
         let last_change_memory = memory_manager.get(MemoryId::new(1));
@@ -724,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_list_certificates_page_basic_functionality() {
-        let state = create_test_state();
+        let state = create_test_populated_state();
 
         let input = ListCertificatesPageInput {
             start_key: None,
@@ -754,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_list_certificates_page_with_limit() {
-        let state = create_test_state();
+        let state = create_test_populated_state();
 
         let input = ListCertificatesPageInput {
             start_key: None,
@@ -773,7 +863,7 @@ mod tests {
 
     #[test]
     fn test_list_certificates_page_pagination_with_start_key() {
-        let state = create_test_state();
+        let state = create_test_populated_state();
 
         let input = ListCertificatesPageInput {
             start_key: Some("test.org".to_string()),
@@ -791,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_list_certificates_page_pagination_continuation() {
-        let state = create_test_state();
+        let state = create_test_populated_state();
 
         // First page with limit 1
         let input1 = ListCertificatesPageInput {
@@ -830,7 +920,7 @@ mod tests {
 
     #[test]
     fn test_list_certificates_page_nonexistent_start_key() {
-        let state = create_test_state();
+        let state = create_test_populated_state();
 
         // Use a start_key that doesn't exist but is lexicographically between domains
         let input = ListCertificatesPageInput {
@@ -871,7 +961,7 @@ mod tests {
 
     #[test]
     fn test_list_certificates_page_start_key_at_end() {
-        let state = create_test_state();
+        let state = create_test_populated_state();
 
         // Use the last domain as start_key
         let input = ListCertificatesPageInput {
@@ -884,5 +974,755 @@ mod tests {
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.next_key, None);
         assert_eq!(result.items[0].domain, "website.io");
+    }
+
+    #[test]
+    fn text_next_pending_task() {
+        let created_at = 1000;
+        let domain = DomainEntry::new(None, created_at);
+
+        assert!(next_pending_task(&domain, created_at).is_none());
+
+        // Test all task kinds (Renew is handled separately)
+        let task_kinds = [TaskKind::Issue, TaskKind::Update, TaskKind::Delete];
+
+        for task_kind in task_kinds {
+            // New task which has not been taken or failed yet
+            {
+                let domain = DomainEntry::new(Some(task_kind), created_at);
+                let now = created_at;
+                assert_eq!(next_pending_task(&domain, now), Some(task_kind));
+            }
+
+            // Task was taken but execution has not timed out yet (on the edge of timeout)
+            {
+                let mut domain = DomainEntry::new(Some(task_kind), created_at);
+                let now = created_at.saturating_add(TASK_TIMEOUT.as_secs() - 1); // 1 sec before timeout
+                domain.taken_at = Some(created_at);
+                assert!(next_pending_task(&domain, now).is_none());
+            }
+
+            // Task was taken and execution has timed out
+            {
+                let mut domain = DomainEntry::new(Some(task_kind), created_at);
+                domain.failures_count = MAX_TASK_FAILURES + 1; // Should not affect timeout logic
+                domain.taken_at = Some(created_at);
+                let now = created_at.saturating_add(TASK_TIMEOUT.as_secs());
+                assert_eq!(next_pending_task(&domain, now), Some(task_kind));
+            }
+
+            // Task previously failed, but retry delay has not elapsed yet (on the edge of delay)
+            {
+                let mut domain = DomainEntry::new(Some(task_kind), created_at);
+                let fail_time = created_at + 200;
+                domain.last_fail_time = Some(fail_time);
+                let now = fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs() - 1);
+                assert!(next_pending_task(&domain, now).is_none());
+            }
+
+            // Task previously failed, and retry delay has elapsed
+            {
+                let mut domain = DomainEntry::new(Some(task_kind), created_at);
+                let fail_time = created_at + 200;
+                domain.last_fail_time = Some(fail_time);
+                domain.failures_count = MAX_TASK_FAILURES - 1; // One attempt is still allowed
+                let now = fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
+                assert_eq!(next_pending_task(&domain, now), Some(task_kind));
+            }
+
+            // Task previously failed, retry delay has elapsed, but number of max retries reached
+            {
+                let mut domain = DomainEntry::new(Some(task_kind), created_at);
+                let fail_time = created_at + 200;
+                domain.last_fail_time = Some(fail_time);
+                domain.failures_count = MAX_TASK_FAILURES;
+                let now = fail_time.saturating_add(MIN_TASK_RETRY_DELAY.as_secs());
+                assert!(next_pending_task(&domain, now).is_none());
+            }
+        }
+
+        // Certificate renewal check. 65% of the validity period has elapsed => no renewal task yet
+        {
+            let mut domain = DomainEntry::new(None, created_at);
+            domain.certificate = Some(b"cert_data".to_vec());
+            let not_before = 500;
+            let not_after = 2500;
+            domain.not_before = Some(not_before);
+            domain.not_after = Some(not_after);
+            let now = not_before + 1300; // 1300 = 0.65*(2500 - 500)
+            assert!(next_pending_task(&domain, now).is_none());
+        }
+
+        // Certificate renewal check. 67% of the validity period has elapsed => renewal task
+        {
+            let mut domain = DomainEntry::new(None, created_at);
+            domain.certificate = Some(b"cert_data".to_vec());
+            let not_before = 500;
+            let not_after = 2500;
+            domain.not_before = Some(not_before);
+            domain.not_after = Some(not_after);
+            let now = not_before + 1340; // 1340 = 0.67*(2500 - 500)
+            assert_eq!(next_pending_task(&domain, now), Some(TaskKind::Renew));
+        }
+    }
+
+    #[test]
+    fn test_should_remove_unregistered_domain() {
+        let created_at = 1000;
+        let expiration_time = UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs();
+
+        // Domain with expired certificate should not be removed
+        {
+            let mut domain = DomainEntry::new(None, created_at);
+            domain.certificate = Some(b"cert_data".to_vec());
+            let now = created_at + expiration_time + 1000; // past expiration
+            assert!(!should_remove_unregistered_domain(&domain, now));
+        }
+
+        // Domain with pending task should not be removed
+        {
+            let domain = DomainEntry::new(Some(TaskKind::Issue), created_at);
+            let now = created_at + expiration_time + 1000; // past expiration
+            assert!(!should_remove_unregistered_domain(&domain, now));
+        }
+
+        // Domain with both certificate and task should not be removed
+        {
+            let mut domain = DomainEntry::new(Some(TaskKind::Update), created_at);
+            domain.certificate = Some(b"cert_data".to_vec());
+            let now = created_at + expiration_time + 1000; // past expiration
+            assert!(!should_remove_unregistered_domain(&domain, now));
+        }
+
+        // Unregistered domain before expiration should not be removed
+        {
+            let domain = DomainEntry::new(None, created_at);
+            let now = created_at + expiration_time - 1; // 1 second before expiration
+            assert!(!should_remove_unregistered_domain(&domain, now));
+        }
+
+        // Unregistered domain exactly at expiration should be removed
+        {
+            let domain = DomainEntry::new(None, created_at);
+            let now = created_at + expiration_time;
+            assert!(should_remove_unregistered_domain(&domain, now));
+        }
+    }
+
+    #[test]
+    fn test_try_add_task_new_domain() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+
+        // Test Issue task can create new domain
+        let domain_name = "test.example.com".to_string();
+        {
+            let task = InputTask {
+                domain: domain_name.clone(),
+                kind: TaskKind::Issue,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&domain_name).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Issue));
+            assert_eq!(entry.created_at, now);
+            assert_eq!(entry.failures_count, 0);
+            assert_eq!(entry.rate_limit_failures_count, 0);
+            assert!(entry.last_fail_time.is_none());
+            assert!(entry.last_failure_reason.is_none());
+        }
+
+        // Test e.g. Update task cannot create new domain entry
+        {
+            let task = InputTask {
+                domain: "new.example.com".to_string(),
+                kind: TaskKind::Update,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(matches!(result, Err(TryAddTaskError::DomainNotFound(_))));
+        }
+    }
+
+    #[test]
+    fn test_try_add_task_concurrent_tasks_prevention() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+
+        // Add a domain with an existing pending task
+        let domain_with_task = DomainEntry::new(Some(TaskKind::Issue), now);
+        let domain = "pending-domain.com".to_string();
+        state.domains.insert(domain.clone(), domain_with_task);
+
+        // Test that adding another task fails
+        {
+            let task = InputTask {
+                domain: domain.clone(),
+                kind: TaskKind::Update,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(matches!(
+                result,
+                Err(TryAddTaskError::AnotherTaskInProgress(domain)) if domain == "pending-domain.com"
+            ));
+        }
+
+        // Test different task types all fail
+        for task_kind in [
+            TaskKind::Issue,
+            TaskKind::Update,
+            TaskKind::Delete,
+            TaskKind::Renew,
+        ] {
+            let task = InputTask {
+                domain: domain.clone(),
+                kind: task_kind,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(matches!(
+                result,
+                Err(TryAddTaskError::AnotherTaskInProgress(domain))  if domain == "pending-domain.com"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_try_add_task_failure_state_reset() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Add a domain with previous failures
+        let domain = "example.com".to_string();
+        let mut domain_with_failures = DomainEntry::new(None, now);
+        domain_with_failures.certificate = Some(b"cert_data".to_vec());
+        domain_with_failures.canister_id = Some(canister_id);
+        domain_with_failures.failures_count = 5;
+        domain_with_failures.rate_limit_failures_count = 3;
+        domain_with_failures.last_fail_time = Some(now - 100);
+        domain_with_failures.last_failure_reason =
+            Some(TaskFailReason::GenericFailure("Internal error".to_string()));
+        state.domains.insert(domain.clone(), domain_with_failures);
+
+        // Add a task and verify all failure state is reset
+        {
+            let task = InputTask {
+                domain: domain.clone(),
+                kind: TaskKind::Update,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&domain).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Update));
+            assert_eq!(entry.failures_count, 0);
+            assert_eq!(entry.rate_limit_failures_count, 0);
+            assert!(entry.last_fail_time.is_none());
+            assert!(entry.last_failure_reason.is_none());
+        }
+    }
+
+    #[test]
+    fn test_try_add_task_all_task_types() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Test Issue task on new domain
+        {
+            let task = InputTask {
+                domain: "issue.com".to_string(),
+                kind: TaskKind::Issue,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&"issue.com".to_string()).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Issue));
+        }
+
+        // Test Update task on domain with certificate
+        {
+            let mut domain_for_update = DomainEntry::new(None, now);
+            domain_for_update.certificate = Some(b"cert_data".to_vec());
+            domain_for_update.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("update.com".to_string(), domain_for_update);
+
+            let task = InputTask {
+                domain: "update.com".to_string(),
+                kind: TaskKind::Update,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&"update.com".to_string()).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Update));
+        }
+
+        // Test Delete task on domain with certificate
+        {
+            let mut domain_for_delete = DomainEntry::new(None, now);
+            domain_for_delete.certificate = Some(b"cert_data".to_vec());
+            domain_for_delete.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("delete.com".to_string(), domain_for_delete);
+
+            let task = InputTask {
+                domain: "delete.com".to_string(),
+                kind: TaskKind::Delete,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&"delete.com".to_string()).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Delete));
+        }
+
+        // Test Renew task on domain with certificate
+        {
+            let mut domain_for_renew = DomainEntry::new(None, now);
+            domain_for_renew.certificate = Some(b"cert_data".to_vec());
+            domain_for_renew.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("renew.com".to_string(), domain_for_renew);
+
+            let task = InputTask {
+                domain: "renew.com".to_string(),
+                kind: TaskKind::Renew,
+            };
+            let result = state.try_add_task(task, now);
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&"renew.com".to_string()).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Renew));
+        }
+    }
+
+    #[test]
+    fn test_try_add_task_edge_cases() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Test Update task on domain with only canister_id (no certificate)
+        {
+            let mut domain_with_canister_only = DomainEntry::new(None, now);
+            domain_with_canister_only.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("update.com".to_string(), domain_with_canister_only);
+
+            let task = InputTask {
+                domain: "update.com".to_string(),
+                kind: TaskKind::Update,
+            };
+            let result = state.try_add_task(task, now);
+            // Should fail because certificate is required for Update
+            assert!(matches!(
+                result,
+                Err(TryAddTaskError::MissingCertificateForUpdate(domain)) if domain == "update.com"
+            ));
+        }
+
+        // Test Delete task on domain with only canister_id (no certificate)
+        {
+            let mut domain_with_canister_only = DomainEntry::new(None, now);
+            domain_with_canister_only.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("delete.com".to_string(), domain_with_canister_only);
+
+            let task = InputTask {
+                domain: "delete.com".to_string(),
+                kind: TaskKind::Delete,
+            };
+            let result = state.try_add_task(task, now);
+            // Should succeed as Delete can work with just canister_id
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&"delete.com".to_string()).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Delete));
+        }
+    }
+
+    #[test]
+    fn test_cleanup_stale_domains() {
+        let mut state = create_test_empty_state();
+        let now = 100_000;
+        let expiration_time = UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs();
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Scenario 1: Domain with certificate should NOT be removed (even if expired)
+        {
+            let mut domain_with_cert = DomainEntry::new(None, now - expiration_time - 3600);
+            domain_with_cert.certificate = Some(b"cert_data".to_vec());
+            domain_with_cert.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("has-cert.com".to_string(), domain_with_cert);
+        }
+
+        // Scenario 2: Domain with pending task should NOT be removed (even if old)
+        {
+            let domain_with_task =
+                DomainEntry::new(Some(TaskKind::Issue), now - expiration_time - 3600);
+            state
+                .domains
+                .insert("has-task.com".to_string(), domain_with_task);
+        }
+
+        // Scenario 3: Fresh unregistered domain should NOT be removed
+        {
+            let fresh_domain = DomainEntry::new(None, now - 3600); // Created 3600 seconds ago
+            state.domains.insert("fresh.com".to_string(), fresh_domain);
+        }
+
+        // Scenario 4: Old unregistered domain should be removed
+        {
+            let mut old_domain = DomainEntry::new(None, now - expiration_time - 3600); // Expired 1 hour ago
+            old_domain.failures_count = 2; // Some failures, but no cert or task
+            old_domain.last_fail_time = Some(now - 2000);
+            old_domain.last_failure_reason =
+                Some(TaskFailReason::GenericFailure("Some error".to_string()));
+            state.domains.insert("old.com".to_string(), old_domain);
+        }
+
+        // Scenario 5: Domain exactly at expiration threshold should be removed
+        {
+            let expired_domain = DomainEntry::new(None, now - expiration_time);
+            state
+                .domains
+                .insert("just-expired.com".to_string(), expired_domain);
+        }
+
+        // Verify state
+        assert_eq!(state.domains.len(), 5);
+
+        // Run cleanup
+        state.cleanup_stale_domains(now);
+
+        // Verify results - only 3 domains remain
+        assert_eq!(state.domains.len(), 3);
+
+        // Remaining domains
+        assert!(state.domains.get(&"has-cert.com".to_string()).is_some());
+        assert!(state.domains.get(&"has-task.com".to_string()).is_some());
+        assert!(state.domains.get(&"fresh.com".to_string()).is_some());
+
+        // Removed domains
+        assert!(state.domains.get(&"old.com".to_string()).is_none());
+        assert!(state.domains.get(&"just-expired.com".to_string()).is_none());
+    }
+
+    #[test]
+    fn test_submit_task_result_domain_not_found() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let task_id = 1;
+
+        let task_result = TaskResult {
+            domain: "nonexistent.com".to_string(),
+            task_id,
+            task_kind: TaskKind::Issue,
+            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+                canister_id: Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
+                certificate: b"certificate_data".to_vec(),
+                private_key: b"private_key_data".to_vec(),
+                not_before: 1000,
+                not_after: 2000,
+            })),
+            failure: None,
+            duration_secs: 30,
+        };
+
+        let result = state.submit_task_result(task_result, now);
+        assert!(matches!(
+            result,
+            Err(SubmitTaskError::DomainNotFound(domain)) if domain == "nonexistent.com"
+        ));
+    }
+
+    #[test]
+    fn test_submit_task_result_invalid_task_id() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let wrong_task_id = 1;
+        let correct_task_id = 2;
+
+        // Create a domain with a taken task
+        let mut domain = DomainEntry::new(Some(TaskKind::Issue), now);
+        domain.taken_at = Some(correct_task_id);
+        state.domains.insert("test.com".to_string(), domain);
+
+        let task_result = TaskResult {
+            domain: "test.com".to_string(),
+            task_id: wrong_task_id,
+            task_kind: TaskKind::Issue,
+            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+                canister_id: Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
+                certificate: b"certificate_data".to_vec(),
+                private_key: b"private_key_data".to_vec(),
+                not_before: 1000,
+                not_after: 2000,
+            })),
+            failure: None,
+            duration_secs: 30,
+        };
+
+        let result = state.submit_task_result(task_result, now);
+        assert!(matches!(
+            result,
+            Err(SubmitTaskError::NonExistingTaskSubmitted(task_id)) if task_id == wrong_task_id
+        ));
+
+        // Verify domain state unchanged
+        let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
+        assert_eq!(domain_entry.taken_at, Some(correct_task_id));
+        assert_eq!(domain_entry.task, Some(TaskKind::Issue));
+    }
+
+    #[test]
+    fn test_submit_task_result_success_issue_new_certificate() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let task_id = 2u64;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Create a domain with an Issue task
+        let mut domain = DomainEntry::new(Some(TaskKind::Issue), now);
+        domain.taken_at = Some(task_id);
+        domain.canister_id = Some(canister_id);
+        state.domains.insert("test.com".to_string(), domain);
+
+        let certificate_data = b"certificate_data".to_vec();
+        let private_key_data = b"private_key_data".to_vec();
+        let not_before = 1000u64;
+        let not_after = 2000u64;
+        let task_result = TaskResult {
+            domain: "test.com".to_string(),
+            task_id,
+            task_kind: TaskKind::Issue,
+            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+                canister_id,
+                certificate: certificate_data.clone(),
+                private_key: private_key_data.clone(),
+                not_before,
+                not_after,
+            })),
+            failure: None,
+            duration_secs: 30,
+        };
+
+        let result = state.submit_task_result(task_result, now);
+        assert!(result.is_ok());
+
+        // Verify domain state updated correctly
+        let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
+        assert_eq!(domain_entry.certificate, Some(certificate_data));
+        assert_eq!(domain_entry.private_key, Some(private_key_data));
+        assert_eq!(domain_entry.not_before, Some(not_before));
+        assert_eq!(domain_entry.not_after, Some(not_after));
+        assert_eq!(domain_entry.canister_id, Some(canister_id));
+        assert_eq!(domain_entry.task, None);
+        assert_eq!(domain_entry.taken_at, None);
+        assert_eq!(domain_entry.failures_count, 0);
+        assert_eq!(domain_entry.rate_limit_failures_count, 0);
+        assert_eq!(domain_entry.last_fail_time, None);
+        assert_eq!(domain_entry.last_failure_reason, None);
+
+        // Verify last_change timestamp updated
+        assert_eq!(*state.last_change.get(), now);
+    }
+
+    #[test]
+    fn test_submit_task_result_success_update_certificate() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let task_id = 2u64;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+        let new_canister_id = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+
+        // Create a domain with an Update task and existing certificate
+        let mut domain = DomainEntry::new(Some(TaskKind::Update), now);
+        domain.taken_at = Some(task_id);
+        domain.canister_id = Some(canister_id);
+        domain.certificate = Some(b"old_certificate".to_vec());
+        domain.private_key = Some(b"old_private_key".to_vec());
+        state.domains.insert("test.com".to_string(), domain);
+
+        let task_result = TaskResult {
+            domain: "test.com".to_string(),
+            task_id,
+            task_kind: TaskKind::Update,
+            output: Some(TaskOutput::Update(new_canister_id)),
+            failure: None,
+            duration_secs: 30,
+        };
+
+        let result = state.submit_task_result(task_result, now);
+        assert!(result.is_ok());
+
+        // Verify domain state updated correctly
+        let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
+        assert_eq!(domain_entry.canister_id, Some(new_canister_id));
+        assert_eq!(domain_entry.task, None);
+        assert_eq!(domain_entry.taken_at, None);
+        assert_eq!(domain_entry.failures_count, 0);
+        assert_eq!(domain_entry.rate_limit_failures_count, 0);
+        assert_eq!(domain_entry.last_fail_time, None);
+        assert_eq!(domain_entry.last_failure_reason, None);
+        // Certificate and private key should remain unchanged
+        assert_eq!(domain_entry.certificate, Some(b"old_certificate".to_vec()));
+        assert_eq!(domain_entry.private_key, Some(b"old_private_key".to_vec()));
+
+        // Verify last_change timestamp updated
+        assert_eq!(*state.last_change.get(), now);
+    }
+
+    #[test]
+    fn test_submit_task_result_success_delete_domain() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let task_id = 2u64;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Create a domain with a Delete task
+        let mut domain = DomainEntry::new(Some(TaskKind::Delete), now);
+        domain.taken_at = Some(task_id);
+        domain.canister_id = Some(canister_id);
+        domain.certificate = Some(b"certificate_data".to_vec());
+        domain.private_key = Some(b"private_key_data".to_vec());
+        state.domains.insert("test.com".to_string(), domain);
+
+        let task_result = TaskResult {
+            domain: "test.com".to_string(),
+            task_id,
+            task_kind: TaskKind::Delete,
+            output: Some(TaskOutput::Delete),
+            failure: None,
+            duration_secs: 30,
+        };
+
+        let result = state.submit_task_result(task_result, now);
+        assert!(result.is_ok());
+
+        // Verify domain was completely removed
+        assert!(state.domains.get(&"test.com".to_string()).is_none());
+
+        // Verify last_change timestamp updated
+        assert_eq!(*state.last_change.get(), now);
+    }
+
+    #[test]
+    fn test_submit_task_result_success_renew_certificate() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let task_id = 42u64;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Create a domain with a Renew task
+        let mut domain = DomainEntry::new(Some(TaskKind::Renew), now);
+        domain.taken_at = Some(task_id);
+        domain.canister_id = Some(canister_id);
+        domain.certificate = Some(b"old_certificate".to_vec());
+        domain.private_key = Some(b"old_private_key".to_vec());
+        domain.not_before = Some(500);
+        domain.not_after = Some(1500);
+        state.domains.insert("test.com".to_string(), domain);
+
+        let new_certificate_data = b"new_certificate_data".to_vec();
+        let new_private_key_data = b"new_private_key_data".to_vec();
+        let new_not_before = 1000u64;
+        let new_not_after = 2500u64;
+        let task_result = TaskResult {
+            domain: "test.com".to_string(),
+            task_id,
+            task_kind: TaskKind::Renew,
+            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+                canister_id,
+                certificate: new_certificate_data.clone(),
+                private_key: new_private_key_data.clone(),
+                not_before: new_not_before,
+                not_after: new_not_after,
+            })),
+            failure: None,
+            duration_secs: 45,
+        };
+
+        let result = state.submit_task_result(task_result, now);
+        assert!(result.is_ok());
+
+        // Verify domain state updated correctly
+        let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
+        assert_eq!(domain_entry.certificate, Some(new_certificate_data));
+        assert_eq!(domain_entry.private_key, Some(new_private_key_data));
+        assert_eq!(domain_entry.not_before, Some(new_not_before));
+        assert_eq!(domain_entry.not_after, Some(new_not_after));
+        assert_eq!(domain_entry.task, None);
+        assert_eq!(domain_entry.taken_at, None);
+        assert_eq!(domain_entry.failures_count, 0);
+        assert_eq!(domain_entry.rate_limit_failures_count, 0);
+        assert_eq!(domain_entry.last_fail_time, None);
+        assert_eq!(domain_entry.last_failure_reason, None);
+
+        // Verify last_change timestamp updated
+        assert_eq!(*state.last_change.get(), now);
+    }
+
+    #[test]
+    fn test_submit_task_result_clears_previous_failure_state() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+        let task_id = 42u64;
+        let canister_id = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+
+        // Create a domain with previous failures and a new task
+        let mut domain = DomainEntry::new(Some(TaskKind::Issue), now);
+        domain.taken_at = Some(task_id);
+        domain.canister_id = Some(canister_id);
+        domain.failures_count = 5;
+        domain.rate_limit_failures_count = 3;
+        domain.last_fail_time = Some(now - 100);
+        domain.last_failure_reason =
+            Some(TaskFailReason::GenericFailure("Previous error".to_string()));
+        state.domains.insert("test.com".to_string(), domain);
+
+        let certificate_data = b"certificate_data".to_vec();
+        let private_key_data = b"private_key_data".to_vec();
+        let task_result = TaskResult {
+            domain: "test.com".to_string(),
+            task_id,
+            task_kind: TaskKind::Issue,
+            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+                canister_id,
+                certificate: certificate_data.clone(),
+                private_key: private_key_data.clone(),
+                not_before: 1000,
+                not_after: 2000,
+            })),
+            failure: None,
+            duration_secs: 40,
+        };
+
+        let result = state.submit_task_result(task_result, now);
+        assert!(result.is_ok());
+
+        // Verify all failure state was cleared on success
+        let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
+        assert_eq!(domain_entry.certificate, Some(certificate_data));
+        assert_eq!(domain_entry.private_key, Some(private_key_data));
+        assert_eq!(domain_entry.task, None);
+        assert_eq!(domain_entry.taken_at, None);
+        assert_eq!(domain_entry.failures_count, 0);
+        assert_eq!(domain_entry.rate_limit_failures_count, 0);
+        assert_eq!(domain_entry.last_fail_time, None);
+        assert_eq!(domain_entry.last_failure_reason, None);
+
+        // Verify last_change timestamp updated
+        assert_eq!(*state.last_change.get(), now);
     }
 }
