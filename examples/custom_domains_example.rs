@@ -14,7 +14,7 @@ use tokio::spawn;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-// This example demonstrates how to run a custom domains with worker, server and canister.
+// This example demonstrates how to run custom domains service with the backend server, worker and canister.
 // 1. Deploy the canister with `dfx deploy` and set the environment variable `CANISTER_ID` to the canister ID.
 // 2. Set the CLOUDFLARE_API_TOKEN environment variable
 // 3. Run the example with `cargo run --example custom_domains_example`

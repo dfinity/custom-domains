@@ -36,6 +36,7 @@ candid = "0.10.16"
 chrono = "0.4"
 derive-new = "0.7.0"
 fqdn = "0.4.6"
+hex = "0.4.3 "
 hickory-resolver = "0.25"
 ic-agent = "0.41.0"
 ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", features = [
@@ -49,6 +50,7 @@ ic-http-types = "0.1.0"
 ic-stable-structures = "0.7.0"
 mockall = "0.13.1"
 pem = "3.0.5"
+pocket-ic = "=9.0.2"
 pretty_assertions = "1.4.1"
 prometheus = "0.14.0"
 rcgen = { version = "0.14" }
@@ -72,9 +74,13 @@ axum = { workspace = true }
 axum-server = { workspace = true }
 backend = { path = "./backend" }
 base = { path = "./base" }
+candid = { workspace = true }
+canister-api = { path = "./canister/api" }
 canister-client = { path = "./canister_client" }
+hex = { workspace = true }
 ic-agent = { workspace = true }
 ic-bn-lib = { workspace = true }
+pocket-ic = { workspace = true }
 prometheus = { workspace = true }
 rcgen = { workspace = true }
 serde_json = { workspace = true }

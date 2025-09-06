@@ -4,7 +4,9 @@ use canister_api::{
     GetLastChangeTimeResult, HasNextTaskResult, InputTask, ListCertificatesPageInput,
     ListCertificatesPageResult, RegisteredDomain, RegistrationStatus, ScheduledTask,
     SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutput, TaskResult,
-    TryAddTaskError, TryAddTaskResult,
+    TryAddTaskError, TryAddTaskResult, CERTIFICATE_VALIDITY_FRACTION,
+    CERT_EXPIRATION_ALERT_THRESHOLD, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MAX_TASK_FAILURES,
+    MIN_TASK_RETRY_DELAY, TASK_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
 };
 use ic_stable_structures::{
     memory_manager::VirtualMemory, storable::Bound, DefaultMemoryImpl, StableBTreeMap, StableCell,
@@ -13,7 +15,7 @@ use ic_stable_structures::{
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::hash::Hash;
-use std::{borrow::Cow, collections::HashMap, ops::Bound as RangeBound, time::Duration};
+use std::{borrow::Cow, collections::HashMap, ops::Bound as RangeBound};
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 
 use crate::{
@@ -27,32 +29,6 @@ use crate::{
 
 /// Timestamp representing seconds in UTC since the UNIX epoch (January 1, 1970).
 pub type UtcTimestamp = u64;
-
-// Certificate renewal should be attempted when this fraction of the validity period has elapsed
-const CERTIFICATE_VALIDITY_FRACTION: f64 = 0.66;
-
-// A domain is considered close to certificate expiration if less than this fraction of its validity period remains
-const CERT_EXPIRATION_ALERT_THRESHOLD: f64 = 0.2;
-
-// Task is considered timed out, if its result isn't submitted within this time window.
-// This allows the task to be rescheduled if a worker fails.
-// Submitting results for timed out tasks results in a NonExistingTaskSubmitted error.
-const TASK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
-// If no certificate has been issued, the domain entry is removed after this duration.
-const UNREGISTERED_DOMAIN_EXPIRATION_TIME: Duration = Duration::from_secs(24 * 60 * 60);
-
-// If a task fails this many times with a recoverable error, it is no longer rescheduled.
-// User is expected to resubmit the task.
-const MAX_TASK_FAILURES: u32 = 20;
-
-// If a task fails, it will not be rescheduled earlier than this interval.
-const MIN_TASK_RETRY_DELAY: Duration = Duration::from_secs(30);
-
-// Default number of domains returned per page when no limit is specified or limit is zero
-const DEFAULT_PAGE_LIMIT: u32 = 100;
-// Maximum number of domains that can be returned in a single page to safely stay lower than 2MB response
-const MAX_PAGE_LIMIT: u32 = 400;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DomainEntry {
@@ -141,14 +117,12 @@ impl DomainEntry {
     }
 
     pub fn registration_status(&self, now: UtcTimestamp) -> RegistrationStatus {
-        if self.task.is_none() && self.certificate.is_some() {
-            if let Some(not_after) = self.not_after {
-                if now <= not_after {
-                    return RegistrationStatus::Registered;
-                }
+        if let (Some(_cert), Some(not_after)) = (&self.certificate, self.not_after) {
+            if now < not_after {
+                return RegistrationStatus::Registered;
             }
             RegistrationStatus::Expired
-        } else if self.task.is_some() {
+        } else if self.task == Some(TaskKind::Issue) {
             RegistrationStatus::Registering
         } else {
             RegistrationStatus::Failed(
@@ -643,7 +617,7 @@ fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> 
 
 /// Determines the next pending task for a domain entry based on current state and time.
 fn next_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind> {
-    // Normal tasks (Issue, Update, Delete) are always prioritized over renewals
+    // Normal existing tasks are always prioritized over scheduling renewals
     let normal_task = entry
         .task
         .and_then(|task| handle_existing_task(entry, task, now));
@@ -653,18 +627,18 @@ fn next_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind>
     }
 
     // Check if a renewal task should be scheduled
-    match (
+    if let (None, Some(_cert), Some(not_before), Some(not_after)) = (
+        entry.task,
         entry.certificate.as_ref(),
         entry.not_before,
         entry.not_after,
     ) {
-        (Some(_), Some(not_before), Some(not_after))
-            if renewal_needed(not_before, not_after, now) =>
-        {
-            Some(TaskKind::Renew)
+        if renewal_needed(not_before, not_after, now) {
+            return Some(TaskKind::Renew);
         }
-        _ => None,
     }
+
+    None
 }
 
 fn handle_existing_task(

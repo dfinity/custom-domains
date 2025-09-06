@@ -3,13 +3,45 @@
 //! This module defines the public API types and interfaces for the custom domains management canister.
 //! All types implement [`CandidType`] for integration with candid interface.
 
+use std::time::Duration;
+
 use candid::{CandidType, Principal};
 use derive_new::new;
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, IntoStaticStr};
+use thiserror::Error;
 
 type TaskId = u64;
 type Timestamp = u64;
+
+// Declare constants related to the canister here, enabling usage in other modules and tests.
+
+// Certificate renewal should be attempted when this fraction of the validity period has elapsed
+pub const CERTIFICATE_VALIDITY_FRACTION: f64 = 0.66;
+
+// A domain is considered close to certificate expiration if less than this fraction of its validity period remains
+pub const CERT_EXPIRATION_ALERT_THRESHOLD: f64 = 0.2;
+
+// Task is considered timed out, if its result isn't submitted within this time window.
+// This allows the task to be rescheduled if a worker fails.
+// Submitting results for timed out tasks results in a NonExistingTaskSubmitted error.
+pub const TASK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+// If no certificate has been issued, the domain entry is removed after this duration.
+pub const UNREGISTERED_DOMAIN_EXPIRATION_TIME: Duration = Duration::from_secs(24 * 60 * 60);
+
+// If a task fails this many times with a recoverable error, it is no longer rescheduled.
+// User is expected to resubmit the task.
+pub const MAX_TASK_FAILURES: u32 = 20;
+
+// If a task fails, it will not be rescheduled earlier than this interval.
+pub const MIN_TASK_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+// Default number of domains returned per page when no limit is specified or limit is zero
+pub const DEFAULT_PAGE_LIMIT: u32 = 100;
+
+// Maximum number of domains that can be returned in a single page to safely stay lower than 2MB response
+pub const MAX_PAGE_LIMIT: u32 = 400;
 
 pub type FetchTaskResult = Result<Option<ScheduledTask>, FetchTaskError>;
 pub type SubmitTaskResult = Result<(), SubmitTaskError>;
@@ -75,9 +107,7 @@ pub struct IssueCertificateOutput {
     pub not_after: Timestamp,
 }
 
-#[derive(
-    CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, thiserror::Error, IntoStaticStr,
-)]
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, Error, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskFailReason {
     #[error("validation_failed: {0}")]
@@ -90,14 +120,16 @@ pub enum TaskFailReason {
     GenericFailure(String),
 }
 
-#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct DomainStatus {
     pub domain: String,
     pub canister_id: Option<Principal>,
     pub status: RegistrationStatus,
 }
 
-#[derive(CandidType, Clone, Deserialize, Serialize, Debug, EnumIter, IntoStaticStr)]
+#[derive(
+    CandidType, Clone, Deserialize, Serialize, Debug, EnumIter, IntoStaticStr, PartialEq, Eq,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum RegistrationStatus {
     /// The registration is currently being processed
@@ -159,16 +191,20 @@ pub enum GetLastChangeTimeError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr, Error)]
 #[strum(serialize_all = "snake_case")]
 pub enum FetchTaskError {
+    #[error("Unauthorized")]
     Unauthorized,
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Error)]
 pub enum GetDomainStatusError {
+    #[error("Unauthorized")]
     Unauthorized,
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
@@ -178,28 +214,40 @@ pub enum ListCertificatesPageError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr, Error, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
 pub enum SubmitTaskError {
+    #[error("Unauthorized")]
     Unauthorized,
+    #[error("Domain not found: {0}")]
     DomainNotFound(String),
+    #[error("A non-existing task was submitted: {0}")]
     NonExistingTaskSubmitted(TaskId),
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Error)]
 pub enum HasNextTaskError {
+    #[error("Unauthorized")]
     Unauthorized,
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, IntoStaticStr, Error)]
 #[strum(serialize_all = "snake_case")]
 pub enum TryAddTaskError {
+    #[error("Unauthorized")]
     Unauthorized,
+    #[error("Domain not found: {0}")]
     DomainNotFound(String),
+    #[error("Another task is already in progress for domain: {0}")]
     AnotherTaskInProgress(String),
+    #[error("Certificate already issued for domain: {0}")]
     CertificateAlreadyIssued(String),
+    #[error("Update requires an exisiting certificate: {0}")]
     MissingCertificateForUpdate(String),
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
