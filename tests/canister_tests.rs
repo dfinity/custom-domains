@@ -25,10 +25,10 @@ async fn test_canister_authorization() -> anyhow::Result<()> {
     let env = TestEnv::new().await?;
 
     info!("Step 1: Test successful call by authorized principal");
-    verify_authorized_principal_access(&env, "has_next_task").await?;
+    verify_authorized_principal_access(&env).await?;
 
     info!("Step 2: Test call rejection by unauthorized principal");
-    verify_unauthorized_principal_rejection(&env, "has_next_task").await?;
+    verify_unauthorized_principal_rejection(&env).await?;
 
     Ok(())
 }
@@ -55,7 +55,8 @@ async fn test_unregistered_domain_deletion() -> anyhow::Result<()> {
 
     info!("Step 3: Simulate repeated registration failures until max retry limit is reached");
     let error_msg = "Some persistent failure".to_string();
-    simulate_retries_after_generic_failures(&env, error_msg.clone(), task, MAX_TASK_FAILURES).await?;
+    simulate_retries_after_generic_failures(&env, error_msg.clone(), task, MAX_TASK_FAILURES)
+        .await?;
 
     info!("Step 4: Verify domain {domain} status is now marked as Failed");
     verify_domain_status(
@@ -86,7 +87,9 @@ async fn test_unregistered_domain_deletion() -> anyhow::Result<()> {
     )
     .await?;
 
-    info!("Step 6: Advance time past cleanup interval and verify domain '{domain}' has been deleted");
+    info!(
+        "Step 6: Advance time past cleanup interval and verify domain '{domain}' has been deleted"
+    );
     advance_time_and_tick(
         &env,
         STALE_DOMAINS_CLEANUP_INTERVAL.saturating_add(Duration::from_secs(time_delta_sec)),
@@ -288,33 +291,35 @@ async fn verify_domain_status(
     Ok(())
 }
 
-async fn verify_authorized_principal_access(env: &TestEnv, method: &str) -> anyhow::Result<()> {
+async fn verify_authorized_principal_access(env: &TestEnv) -> anyhow::Result<()> {
     let arg = Encode!(&()).map_err(|err| anyhow!("Failed to encode arguments: {:?}", err))?;
 
     let result = env
         .pic
-        .query_call(env.canister_id, env.authorized_principal, method, arg)
+        .query_call(
+            env.canister_id,
+            env.authorized_principal,
+            "has_next_task",
+            arg,
+        )
         .await
         .map_err(|err| anyhow!("Query call from authorized principal rejected: {:?}", err))?;
 
     let has_next_task = Decode!(&result, HasNextTaskResult)
         .map_err(|err| anyhow!("Failed to decode response: {:?}", err))?
-        .map_err(|err| anyhow!("{method} call failed: {:?}", err))?;
+        .map_err(|err| anyhow!("has_next_task call failed: {:?}", err))?;
 
     assert!(!has_next_task, "Expected no tasks initially in canister");
 
     Ok(())
 }
 
-async fn verify_unauthorized_principal_rejection(
-    env: &TestEnv,
-    method: &str,
-) -> anyhow::Result<()> {
+async fn verify_unauthorized_principal_rejection(env: &TestEnv) -> anyhow::Result<()> {
     let arg = Encode!(&()).map_err(|err| anyhow!("Failed to encode arguments: {:?}", err))?;
 
     let result = env
         .pic
-        .query_call(env.canister_id, env.controller, method, arg)
+        .query_call(env.canister_id, env.controller, "has_next_task", arg)
         .await
         .map_err(|err| anyhow!("Query call from unauthorized principal rejected: {:?}", err))?;
 
