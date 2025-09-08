@@ -43,6 +43,9 @@ pub const DEFAULT_PAGE_LIMIT: u32 = 100;
 // Maximum number of domains that can be returned in a single page to safely stay lower than 2MB response
 pub const MAX_PAGE_LIMIT: u32 = 400;
 
+// Interval for purging stale, unregistered domains
+pub const STALE_DOMAINS_CLEANUP_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
+
 pub type FetchTaskResult = Result<Option<ScheduledTask>, FetchTaskError>;
 pub type SubmitTaskResult = Result<(), SubmitTaskError>;
 pub type TryAddTaskResult = Result<(), TryAddTaskError>;

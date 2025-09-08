@@ -3,7 +3,8 @@ use candid::{Decode, Encode, Principal};
 use canister_api::{
     DomainStatus, HasNextTaskError, HasNextTaskResult, IssueCertificateOutput, RegistrationStatus,
     ScheduledTask, SubmitTaskError, TaskFailReason, TaskKind, TaskOutput, TaskResult,
-    CERTIFICATE_VALIDITY_FRACTION, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY, TASK_TIMEOUT,
+    CERTIFICATE_VALIDITY_FRACTION, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
+    STALE_DOMAINS_CLEANUP_INTERVAL, TASK_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
 };
 use pocket_ic::nonblocking::PocketIc;
 use std::time::Duration;
@@ -32,8 +33,77 @@ async fn test_canister_authorization() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test that domains with failed registrations are eventually removed after the expiration time
 #[tokio::test]
-async fn test_comprehensive_scenario() -> anyhow::Result<()> {
+async fn test_unregistered_domain_deletion() -> anyhow::Result<()> {
+    init_logging();
+
+    let env = TestEnv::new().await?;
+
+    let domain = "example.com";
+
+    info!("Step 1: Submit certificate issuance task for domain {domain}");
+    add_task(&env, domain, TaskKind::Issue).await?;
+    let now = get_current_timestamp(&env.pic).await;
+    let expected_expiration_time_secs =
+        now.saturating_add(UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs());
+
+    info!("Step 2: Retrieve the pending issuance task and verify no other tasks remain");
+    assert_has_next_task(&env).await?;
+    let task = fetch_next_task(&env).await?;
+    assert_has_no_next_task(&env).await?;
+
+    info!("Step 3: Simulate repeated registration failures until max retry limit is reached");
+    let error_msg = "Some persistent failure".to_string();
+    simulate_retries_after_generic_failures(&env, error_msg.clone(), task, MAX_TASK_FAILURES).await?;
+
+    info!("Step 4: Verify domain {domain} status is now marked as Failed");
+    verify_domain_status(
+        &env,
+        domain,
+        None,
+        RegistrationStatus::Failed(format!("generic_failure: {error_msg}")),
+    )
+    .await?;
+    assert_has_no_next_task(&env).await?;
+
+    info!("Step 5: Advance time to just before expiration and verify domain {domain} still exists");
+    let time_delta_sec = 1;
+    let advance_time = expected_expiration_time_secs
+        .saturating_sub(get_current_timestamp(&env.pic).await)
+        .saturating_sub(time_delta_sec);
+    advance_time_and_tick(
+        &env,
+        Duration::from_secs(advance_time),
+        TICKS_AFTER_TIME_ADVANCE,
+    )
+    .await;
+    verify_domain_status(
+        &env,
+        domain,
+        None,
+        RegistrationStatus::Failed(format!("generic_failure: {error_msg}")),
+    )
+    .await?;
+
+    info!("Step 6: Advance time past cleanup interval and verify domain '{domain}' has been deleted");
+    advance_time_and_tick(
+        &env,
+        STALE_DOMAINS_CLEANUP_INTERVAL.saturating_add(Duration::from_secs(time_delta_sec)),
+        TICKS_AFTER_TIME_ADVANCE,
+    )
+    .await;
+    let status = env
+        .get_domain_status(domain)
+        .await?
+        .map_err(|err| anyhow!("Failed to get status for {}: {:?}", domain, err))?;
+    assert!(status.is_none(), "Domain {domain} should have been deleted");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_comprehensive_registration_scenario() -> anyhow::Result<()> {
     init_logging();
 
     let env = TestEnv::new().await?;
@@ -87,13 +157,15 @@ async fn test_comprehensive_scenario() -> anyhow::Result<()> {
     let task2 = simulate_task_timeout_and_rescheduling(&env, &task2, canister_id2).await?;
 
     info!("Step 7: Test rate-limited failure handling with unlimited retries for {domain_with_failure}");
-    let task2 = simulate_retries_after_rate_limited_errors(&env, task2, RATE_LIMIT_MAX_ATTEMPTS).await?;
+    let task2 =
+        simulate_retries_after_rate_limited_errors(&env, task2, RATE_LIMIT_MAX_ATTEMPTS).await?;
 
     info!(
         "Step 8: Test generic failure handling with maximum retry limit for {domain_with_failure}"
     );
     let error_msg = "Some persistent failure".to_string();
-    simulate_retries_after_generic_failures(&env, error_msg.clone(), task2, MAX_TASK_FAILURES).await?;
+    simulate_retries_after_generic_failures(&env, error_msg.clone(), task2, MAX_TASK_FAILURES)
+        .await?;
 
     info!("Step 9: Verify {domain_with_failure} is marked as Failed with no pending tasks");
     verify_domain_status(
@@ -308,7 +380,7 @@ async fn submit_successful_task_result(
     canister_id: Principal,
 ) -> anyhow::Result<()> {
     let now = get_current_timestamp(&env.pic).await;
-    
+
     let task_result = create_successful_task_result(task, canister_id, now);
 
     env.submit_task_result(task_result)
