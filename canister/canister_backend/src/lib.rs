@@ -1,10 +1,9 @@
-use std::time::Duration;
-
 use canister_api::{
     FetchTaskError, FetchTaskResult, GetDomainStatusError, GetDomainStatusResult,
     GetLastChangeTimeError, GetLastChangeTimeResult, HasNextTaskError, HasNextTaskResult, InitArg,
     InputTask, ListCertificatesPageError, ListCertificatesPageInput, ListCertificatesPageResult,
     SubmitTaskError, SubmitTaskResult, TaskResult, TryAddTaskError, TryAddTaskResult,
+    STALE_DOMAINS_CLEANUP_INTERVAL,
 };
 use ic_cdk::{
     api::{call::accept_message, time},
@@ -22,9 +21,6 @@ use crate::{
 pub mod metrics;
 pub mod state;
 pub mod storage;
-
-// Interval for purging stale, unregistered domains
-const STALE_DOMAINS_CLEANUP_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 
 // Inspect ingress messages in the pre-consensus phase and reject early, if the caller is unauthorized
 #[inspect_message]

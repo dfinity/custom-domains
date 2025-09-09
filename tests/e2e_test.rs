@@ -24,7 +24,8 @@ use tokio::spawn;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+
+mod helpers;
 
 const LIMIT: usize = 20000;
 const AWAIT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -116,14 +117,6 @@ async fn await_registration_deletion(router: Router, domain: &str) {
     .unwrap();
 }
 
-fn setup_tracing() {
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(tracing::Level::DEBUG)
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
-}
-
 #[tokio::test]
 #[ignore]
 async fn basic_registration_scenario() -> anyhow::Result<()> {
@@ -132,7 +125,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     // API cloudflare token is required to perform an acme dns-01 challenge
     let cloudflare_api_token =
         env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
-    setup_tracing();
+    helpers::init_logging();
     // Initialize router
     let mock_time = Arc::new(MockTime::new(1));
     let cipher = Arc::new(CertificateCipher::new());
