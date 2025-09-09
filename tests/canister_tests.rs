@@ -367,8 +367,8 @@ fn create_successful_task_result(
         domain: task.domain.clone(),
         output: Some(TaskOutput::Issue(IssueCertificateOutput {
             canister_id,
-            certificate: b"certificate_data".to_vec(),
-            private_key: b"private_key_data".to_vec(),
+            enc_cert: b"certificate_data".to_vec(),
+            enc_priv_key: b"private_key_data".to_vec(),
             not_before: now,
             not_after: now + CERTIFICATE_VALIDITY_DURATION_SECS,
         })),
@@ -413,8 +413,8 @@ async fn simulate_task_timeout_and_rescheduling(
         domain: task.domain.clone(),
         output: Some(TaskOutput::Issue(IssueCertificateOutput {
             canister_id,
-            certificate: b"certificate_data".to_vec(),
-            private_key: b"private_key_data".to_vec(),
+            enc_cert: b"certificate_data".to_vec(),
+            enc_priv_key: b"private_key_data".to_vec(),
             not_before: now,
             not_after: now + CERTIFICATE_VALIDITY_DURATION_SECS,
         })),

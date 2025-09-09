@@ -8,12 +8,16 @@ use crate::traits::cipher::{CipherError, CiphersCertificates};
 /// The length of the XChaCha20Poly1305 nonce in bytes.
 const NONCE_LEN: usize = 24;
 
-/// Minimum expected length for encrypted data: nonce + least some data.
-const MIN_ENCRYPTED_DATA_LEN: usize = NONCE_LEN + 16;
+/// The length of the Poly1305 authentication tag in bytes.
+const AUTH_TAG_LEN: usize = 16;
+
+/// Minimum encrypted data length: nonce + auth tag + at least 1 byte of data.
+const MIN_ENCRYPTED_DATA_LEN: usize = NONCE_LEN + AUTH_TAG_LEN + 1;
 
 /// A cryptographic cipher for encrypting and decrypting certificate data.
 pub struct CertificateCipher(pub XChaCha20Poly1305);
 
+// Custom Debug implementation to avoiding exposing any sensitive data.
 impl std::fmt::Debug for CertificateCipher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CertificateCipher")
@@ -26,13 +30,13 @@ impl CertificateCipher {
         Self(cipher)
     }
 
-    /// Creates a new instance with a randomly generated key.
+    /// Creates a new CertificateCipher with a randomly generated key.
     pub fn new_with_random_key() -> Self {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
         Self::new(XChaCha20Poly1305::new(&key))
     }
 
-    /// Validates that the input data has the minimum required length.
+    /// Validate the input data for minimum required length.
     fn validate_encrypted_data_length(data: &[u8]) -> Result<(), CipherError> {
         if data.len() < MIN_ENCRYPTED_DATA_LEN {
             return Err(CipherError::InvalidInput(format!(
@@ -64,7 +68,7 @@ impl CiphersCertificates for CertificateCipher {
             .map_err(|e| CipherError::EncryptionFailed(format!("Encryption failed: {e}")))?;
 
         let mut result = Vec::with_capacity(NONCE_LEN + encrypted_data.len());
-        result.extend_from_slice(nonce_bytes.as_slice());
+        result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&encrypted_data);
 
         Ok(result)
@@ -74,6 +78,7 @@ impl CiphersCertificates for CertificateCipher {
     fn decrypt(&self, encrypted_data: &[u8]) -> Result<Vec<u8>, CipherError> {
         Self::validate_encrypted_data_length(encrypted_data)?;
 
+        // Check above ensures this split won't panic
         let (nonce_bytes, ciphertext) = encrypted_data.split_at(NONCE_LEN);
         let nonce = XNonce::from_slice(nonce_bytes);
 
@@ -117,7 +122,6 @@ Q9d6F7p8G4i2k5A8v7J6T4m9c1Y5p3O8q7D2F6H9n4m7b5Q6t8L2p9K6S7g4U
     const SAMPLE_PRIVATE_KEY_PEM: &str = r#"-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC5b0f/gCLD7t4R
 dgRorYITGPPGkpNDgU2XPWTpU1nw8pHoTpWUUZFYE/uTWw3xSPTLom8Jf9czMefjM6oI3nPVzYrZBeAJDuVHwE2XmwpnXLthgp1X3L/gj7PubY8rZDlH1HZw5Dm8Hm84razl1Dy/qsrWg/aXcVpDczVDmzdPwvortDlhDyj0nmBdDuUX2TinVjm8ztDZzkjw/qXYLuwbWb23krUHarYXlzy7UXiz0rpzaXtPoXqrubm87h3uL2PYDUL4wvijEzlDu9HaoXx/dz2bi7trpja83XDc/m30baT2XqrtjgHWrdn2vw1rks4X6TtjgI/xzmbU3ar0zxPjAgMBAAECggEAOCqbLhF2C2Q5o6b5z9L1q3K8vF5a7m9Q8P9h6K2o5n3v8F6u7t4K8q1v9Q5t7G6f2d8A3j9M2o6n1R4u7s5H8K2l7mQ9d6F7p8G4i2k5A8v7J6T4m9c1Y5p3O8q7D2F6H9n4m7b5Q6t8L2p9K6S7g4U1q5K7O2f8d5A9c7h6t4B2m9K5o8v3l7Q4p6F1u9Y2s7d4c8m6n7o5p2f9A3c8v6b1Q4t7G2o9K5m8d6F7u4Y1s9P6t2K8o3v5c7m1Q4
-...existing private key data...
 -----END PRIVATE KEY-----"#;
 
     #[test]

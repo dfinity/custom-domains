@@ -53,10 +53,10 @@ type TaskOutput = variant {
 type IssueCertificateOutput = record {
   // ID of the canister that custom domains points to
   canister_id: principal;
-  // Encoded certificate
-  certificate: blob;
-  // Encoded private key
-  private_key: blob;
+  // Encrypted certificate
+  enc_cert: blob;
+  // Encrypted private key
+  enc_priv_key: blob;
   // Certificate validity start time (Unix timestamp)
   not_before: Timestamp;
   // Certificate validity end time (Unix timestamp)
@@ -86,7 +86,7 @@ type ScheduledTask = record {
   // Unique task identifier
   id: TaskId;
   // Existing certificate (only for delete operation)
-  certificate: opt blob;
+  enc_cert: opt blob;
 };
 
 // Status of a domain
@@ -229,7 +229,7 @@ type RegisteredDomain = record {
     // Principal ID of the canister this domain points to
     canister_id: principal;
     // Encrypted certificate data
-    cert_encrypted: blob;
+    enc_cert: blob;
     // Encrypted private key data
     priv_key_encrypted: blob;
 };

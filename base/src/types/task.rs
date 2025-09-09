@@ -45,7 +45,7 @@ pub struct ScheduledTask {
     /// Unique task identifier (timestamp)
     pub task_id: UtcTimestamp,
     /// Existing certificate data (for renewal/deletion tasks)
-    pub certificate: Option<Vec<u8>>,
+    pub cert: Option<Vec<u8>>,
 }
 
 /// Represents the result of a task execution submitted by a worker to the repository.
@@ -150,9 +150,9 @@ pub struct IssueCertificateOutput {
     /// The canister ID this certificate is issued for
     pub canister_id: Principal,
     /// The PEM-encoded certificate chain
-    pub certificate: Vec<u8>,
+    pub cert: Vec<u8>,
     /// The PEM-encoded private key
-    pub private_key: Vec<u8>,
+    pub priv_key: Vec<u8>,
     /// Certificate validity start time (Unix timestamp)
     pub not_before: UtcTimestamp,
     /// Certificate validity end time (Unix timestamp)
@@ -204,8 +204,8 @@ impl From<IssueCertificateOutput> for ApiIssueCertificateOutput {
     fn from(output: IssueCertificateOutput) -> Self {
         ApiIssueCertificateOutput {
             canister_id: output.canister_id,
-            certificate: output.certificate,
-            private_key: output.private_key,
+            enc_cert: output.cert,
+            enc_priv_key: output.priv_key,
             not_before: output.not_before,
             not_after: output.not_after,
         }

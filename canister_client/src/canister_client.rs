@@ -62,10 +62,7 @@ impl CanisterClient {
             let mut domains = Vec::with_capacity(registered_domains.len());
 
             for domain in registered_domains {
-                let certificate = self.decrypt_field(&domain.cert_encrypted)?;
-                let private_key = self.decrypt_field(&domain.priv_key_encrypted)?;
-
-                pems.push(Pem([certificate, private_key].concat()));
+                pems.push(Pem([domain.cert, domain.priv_key].concat()));
 
                 domains.push(IcBnCustomDomain {
                     name: domain.domain,
@@ -222,14 +219,14 @@ impl Repository for CanisterClient {
             Some(api_task) => {
                 // Decrypt certificate if present
                 let certificate = api_task
-                    .cert_encrypted
+                    .enc_cert
                     .map(|encrypted_cert| self.decrypt_field(encrypted_cert.as_slice()))
                     .transpose()?;
 
                 let domain = FQDN::from_str(&api_task.domain).map_err(|err| {
                     RepositoryError::InternalError(anyhow!("Invalid domain from canister: {err}"))
                 })?;
-                
+
                 let task =
                     ScheduledTask::new(api_task.kind.into(), domain, api_task.id, certificate);
                 Ok(Some(task))
@@ -240,11 +237,11 @@ impl Repository for CanisterClient {
     async fn submit_task_result(&self, mut task_result: TaskResult) -> Result<(), RepositoryError> {
         // We encrypt certificate and private_key and pass the result further to the canister.
         if let Some(TaskOutput::Issue(issued_certificate)) = &mut task_result.output {
-            issued_certificate.certificate =
-                self.encrypt_field("certificate", &issued_certificate.certificate)?;
+            issued_certificate.cert =
+                self.encrypt_field("certificate", &issued_certificate.cert)?;
 
-            issued_certificate.private_key =
-                self.encrypt_field("private key", &issued_certificate.private_key)?;
+            issued_certificate.priv_key =
+                self.encrypt_field("private key", &issued_certificate.priv_key)?;
         }
 
         self.update::<canister_api::TaskResult, (), canister_api::SubmitTaskError>(
@@ -298,7 +295,9 @@ impl Repository for CanisterClient {
             let registrations = response
                 .items
                 .into_iter()
-                .map(|reg| {
+                .map(|mut reg| {
+                    reg.enc_cert = self.decrypt_field(&reg.enc_cert)?;
+                    reg.enc_priv_key = self.decrypt_field(&reg.enc_priv_key)?;
                     RegisteredDomain::try_from(reg).map_err(|err| {
                         RepositoryError::InternalError(anyhow!(
                             "Failed to convert RegisteredDomain: {err}"

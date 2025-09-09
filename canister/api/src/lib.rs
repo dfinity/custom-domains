@@ -81,7 +81,7 @@ pub struct ScheduledTask {
     pub kind: TaskKind,
     pub domain: String,
     pub id: TaskId,
-    pub cert_encrypted: Option<Vec<u8>>,
+    pub enc_cert: Option<Vec<u8>>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
@@ -104,8 +104,8 @@ pub enum TaskOutput {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct IssueCertificateOutput {
     pub canister_id: Principal,
-    pub certificate: Vec<u8>,
-    pub private_key: Vec<u8>,
+    pub enc_cert: Vec<u8>,
+    pub enc_priv_key: Vec<u8>,
     pub not_before: Timestamp,
     pub not_after: Timestamp,
 }
@@ -184,8 +184,8 @@ impl Default for ListCertificatesPageInput {
 pub struct RegisteredDomain {
     pub domain: String,
     pub canister_id: Principal,
-    pub cert_encrypted: Vec<u8>,
-    pub priv_key_encrypted: Vec<u8>,
+    pub enc_cert: Vec<u8>,
+    pub enc_priv_key: Vec<u8>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone)]

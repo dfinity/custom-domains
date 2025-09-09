@@ -49,9 +49,9 @@ pub struct DomainEntry {
     // Timestamp when the current task was taken by a worker
     pub taken_at: Option<UtcTimestamp>,
     // PEM-encoded certificate data (encrypted)
-    pub certificate: Option<Vec<u8>>,
+    pub enc_cert: Option<Vec<u8>>,
     // PEM-encoded private key data (encrypted)
-    pub private_key: Option<Vec<u8>>,
+    pub enc_priv_key: Option<Vec<u8>>,
     // Certificate validity period start (as UNIX timestamp)
     pub not_before: Option<UtcTimestamp>,
     // Certificate validity period end (as UNIX timestamp)
@@ -117,7 +117,7 @@ impl DomainEntry {
     }
 
     pub fn registration_status(&self, now: UtcTimestamp) -> RegistrationStatus {
-        if let (Some(_cert), Some(not_after)) = (&self.certificate, self.not_after) {
+        if let (Some(_cert), Some(not_after)) = (&self.enc_cert, self.not_after) {
             if now < not_after {
                 return RegistrationStatus::Registered;
             }
@@ -214,7 +214,7 @@ impl CanisterState {
                     task_kind,
                     domain.clone(),
                     now,
-                    domain_entry.certificate.clone(),
+                    domain_entry.enc_cert.clone(),
                 ));
                 // Update the domain entry
                 self.domains.insert(domain, domain_entry);
@@ -348,12 +348,12 @@ impl CanisterState {
 
                 // Prevent explicit certificate re-issuance
                 // TODO: maybe useful functionality for the admin?
-                if task.kind == TaskKind::Issue && entry.certificate.is_some() {
+                if task.kind == TaskKind::Issue && entry.enc_cert.is_some() {
                     return Err(TryAddTaskError::CertificateAlreadyIssued(domain));
                 }
 
                 // Require an existing certificate for `Update` task
-                if task.kind == TaskKind::Update && entry.certificate.is_none() {
+                if task.kind == TaskKind::Update && entry.enc_cert.is_none() {
                     return Err(TryAddTaskError::MissingCertificateForUpdate(domain));
                 }
 
@@ -450,8 +450,8 @@ impl CanisterState {
             match output {
                 TaskOutput::Issue(output) => {
                     entry.canister_id = Some(output.canister_id);
-                    entry.certificate = Some(output.certificate);
-                    entry.private_key = Some(output.private_key);
+                    entry.enc_cert = Some(output.enc_cert);
+                    entry.enc_priv_key = Some(output.enc_priv_key);
                     entry.not_before = Some(output.not_before);
                     entry.not_after = Some(output.not_after);
                 }
@@ -519,8 +519,8 @@ impl CanisterState {
 
             // Only include domains with issued certificates and existing canister_id
             if let (Some(cert), Some(private_key), Some(canister_id)) = (
-                &domain_entry.certificate,
-                &domain_entry.private_key,
+                &domain_entry.enc_cert,
+                &domain_entry.enc_priv_key,
                 &domain_entry.canister_id,
             ) {
                 if count >= limit {
@@ -531,8 +531,8 @@ impl CanisterState {
                 registered_domains.push(RegisteredDomain {
                     domain: domain.clone(),
                     canister_id: *canister_id,
-                    cert_encrypted: cert.clone(),
-                    priv_key_encrypted: private_key.clone(),
+                    enc_cert: cert.clone(),
+                    enc_priv_key: private_key.clone(),
                 });
 
                 count += 1;
@@ -589,8 +589,8 @@ impl CanisterState {
             let key_data = format!("key_data_{}", i + 1);
 
             let now = get_time_secs();
-            domain_entry.certificate = Some(cert_data.into_bytes());
-            domain_entry.private_key = Some(key_data.into_bytes());
+            domain_entry.enc_cert = Some(cert_data.into_bytes());
+            domain_entry.enc_priv_key = Some(key_data.into_bytes());
             domain_entry.not_before = Some(now);
             domain_entry.not_after = Some(now + 30 * 24 * 60 * 60);
 
@@ -604,7 +604,7 @@ impl CanisterState {
 /// Check if the domain has remained unregistered too long since creation
 fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> bool {
     // If the domain has a certificate or a pending task, it should not be removed
-    if entry.certificate.is_some() || entry.task.is_some() {
+    if entry.enc_cert.is_some() || entry.task.is_some() {
         return false;
     }
 
@@ -629,7 +629,7 @@ fn next_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind>
     // Check if a renewal task should be scheduled
     if let (None, Some(_cert), Some(not_before), Some(not_after)) = (
         entry.task,
-        entry.certificate.as_ref(),
+        entry.enc_cert.as_ref(),
         entry.not_before,
         entry.not_after,
     ) {
@@ -740,8 +740,8 @@ mod tests {
         // Domain with certificate
         let mut domain1 = DomainEntry::new(None, 1000);
         domain1.canister_id = Some(canister_id_1);
-        domain1.certificate = Some(b"cert1_data".to_vec());
-        domain1.private_key = Some(b"key1_data".to_vec());
+        domain1.enc_cert = Some(b"cert1_data".to_vec());
+        domain1.enc_priv_key = Some(b"key1_data".to_vec());
         domain1.not_before = Some(1500);
         domain1.not_after = Some(2500);
         state.domains.insert("example.com".to_string(), domain1);
@@ -749,8 +749,8 @@ mod tests {
         // Another domain with certificate
         let mut domain2 = DomainEntry::new(None, 1100);
         domain2.canister_id = Some(canister_id_2);
-        domain2.certificate = Some(b"cert2_data".to_vec());
-        domain2.private_key = Some(b"key2_data".to_vec());
+        domain2.enc_cert = Some(b"cert2_data".to_vec());
+        domain2.enc_priv_key = Some(b"key2_data".to_vec());
         domain2.not_before = Some(1600);
         domain2.not_after = Some(2600);
         state.domains.insert("test.org".to_string(), domain2);
@@ -762,8 +762,8 @@ mod tests {
         // Another domain with certificate
         let mut domain4 = DomainEntry::new(None, 1300);
         domain4.canister_id = Some(canister_id_3);
-        domain4.certificate = Some(b"cert3_data".to_vec());
-        domain4.private_key = Some(b"key3_data".to_vec());
+        domain4.enc_cert = Some(b"cert3_data".to_vec());
+        domain4.enc_priv_key = Some(b"key3_data".to_vec());
         domain4.not_before = Some(1700);
         domain4.not_after = Some(2700);
         state.domains.insert("website.io".to_string(), domain4);
@@ -771,14 +771,14 @@ mod tests {
         // Domain without certificate (should be excluded)
         let mut domain5 = DomainEntry::new(None, 1400);
         domain5.canister_id = Some(canister_id_1);
-        domain5.certificate = None;
+        domain5.enc_cert = None;
         state.domains.insert("incomplete.dev".to_string(), domain5);
 
         // Another domain with certificate
         let mut domain6 = DomainEntry::new(None, 1300);
         domain6.canister_id = Some(canister_id_2);
-        domain6.certificate = Some(b"cert6_data".to_vec());
-        domain6.private_key = Some(b"key6_data".to_vec());
+        domain6.enc_cert = Some(b"cert6_data".to_vec());
+        domain6.enc_priv_key = Some(b"key6_data".to_vec());
         domain6.not_before = Some(1700);
         domain6.not_after = Some(2700);
         state.domains.insert("dfinity.org".to_string(), domain6);
@@ -808,8 +808,8 @@ mod tests {
 
         let first_domain = &result.items[1];
         assert_eq!(first_domain.domain, "example.com");
-        assert_eq!(first_domain.cert_encrypted, b"cert1_data");
-        assert_eq!(first_domain.priv_key_encrypted, b"key1_data");
+        assert_eq!(first_domain.enc_cert, b"cert1_data");
+        assert_eq!(first_domain.enc_priv_key, b"key1_data");
         assert_eq!(
             first_domain.canister_id,
             Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap()
@@ -1018,7 +1018,7 @@ mod tests {
         // Certificate renewal check. 65% of the validity period has elapsed => no renewal task yet
         {
             let mut domain = DomainEntry::new(None, created_at);
-            domain.certificate = Some(b"cert_data".to_vec());
+            domain.enc_cert = Some(b"cert_data".to_vec());
             let not_before = 500;
             let not_after = 2500;
             domain.not_before = Some(not_before);
@@ -1030,7 +1030,7 @@ mod tests {
         // Certificate renewal check. 67% of the validity period has elapsed => renewal task
         {
             let mut domain = DomainEntry::new(None, created_at);
-            domain.certificate = Some(b"cert_data".to_vec());
+            domain.enc_cert = Some(b"cert_data".to_vec());
             let not_before = 500;
             let not_after = 2500;
             domain.not_before = Some(not_before);
@@ -1048,7 +1048,7 @@ mod tests {
         // Domain with expired certificate should not be removed
         {
             let mut domain = DomainEntry::new(None, created_at);
-            domain.certificate = Some(b"cert_data".to_vec());
+            domain.enc_cert = Some(b"cert_data".to_vec());
             let now = created_at + expiration_time + 1000; // past expiration
             assert!(!should_remove_unregistered_domain(&domain, now));
         }
@@ -1063,7 +1063,7 @@ mod tests {
         // Domain with both certificate and task should not be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Update), created_at);
-            domain.certificate = Some(b"cert_data".to_vec());
+            domain.enc_cert = Some(b"cert_data".to_vec());
             let now = created_at + expiration_time + 1000; // past expiration
             assert!(!should_remove_unregistered_domain(&domain, now));
         }
@@ -1169,7 +1169,7 @@ mod tests {
         // Add a domain with previous failures
         let domain = "example.com".to_string();
         let mut domain_with_failures = DomainEntry::new(None, now);
-        domain_with_failures.certificate = Some(b"cert_data".to_vec());
+        domain_with_failures.enc_cert = Some(b"cert_data".to_vec());
         domain_with_failures.canister_id = Some(canister_id);
         domain_with_failures.failures_count = 5;
         domain_with_failures.rate_limit_failures_count = 3;
@@ -1218,7 +1218,7 @@ mod tests {
         // Test Update task on domain with certificate
         {
             let mut domain_for_update = DomainEntry::new(None, now);
-            domain_for_update.certificate = Some(b"cert_data".to_vec());
+            domain_for_update.enc_cert = Some(b"cert_data".to_vec());
             domain_for_update.canister_id = Some(canister_id);
             state
                 .domains
@@ -1238,7 +1238,7 @@ mod tests {
         // Test Delete task on domain with certificate
         {
             let mut domain_for_delete = DomainEntry::new(None, now);
-            domain_for_delete.certificate = Some(b"cert_data".to_vec());
+            domain_for_delete.enc_cert = Some(b"cert_data".to_vec());
             domain_for_delete.canister_id = Some(canister_id);
             state
                 .domains
@@ -1258,7 +1258,7 @@ mod tests {
         // Test Renew task on domain with certificate
         {
             let mut domain_for_renew = DomainEntry::new(None, now);
-            domain_for_renew.certificate = Some(b"cert_data".to_vec());
+            domain_for_renew.enc_cert = Some(b"cert_data".to_vec());
             domain_for_renew.canister_id = Some(canister_id);
             state
                 .domains
@@ -1333,7 +1333,7 @@ mod tests {
         // Scenario 1: Domain with certificate should NOT be removed (even if expired)
         {
             let mut domain_with_cert = DomainEntry::new(None, now - expiration_time - 3600);
-            domain_with_cert.certificate = Some(b"cert_data".to_vec());
+            domain_with_cert.enc_cert = Some(b"cert_data".to_vec());
             domain_with_cert.canister_id = Some(canister_id);
             state
                 .domains
@@ -1404,8 +1404,8 @@ mod tests {
             task_kind: TaskKind::Issue,
             output: Some(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id: Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
-                certificate: b"certificate_data".to_vec(),
-                private_key: b"private_key_data".to_vec(),
+                enc_cert: b"certificate_data".to_vec(),
+                enc_priv_key: b"private_key_data".to_vec(),
                 not_before: 1000,
                 not_after: 2000,
             })),
@@ -1438,8 +1438,8 @@ mod tests {
             task_kind: TaskKind::Issue,
             output: Some(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id: Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
-                certificate: b"certificate_data".to_vec(),
-                private_key: b"private_key_data".to_vec(),
+                enc_cert: b"certificate_data".to_vec(),
+                enc_priv_key: b"private_key_data".to_vec(),
                 not_before: 1000,
                 not_after: 2000,
             })),
@@ -1482,8 +1482,8 @@ mod tests {
             task_kind: TaskKind::Issue,
             output: Some(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id,
-                certificate: certificate_data.clone(),
-                private_key: private_key_data.clone(),
+                enc_cert: certificate_data.clone(),
+                enc_priv_key: private_key_data.clone(),
                 not_before,
                 not_after,
             })),
@@ -1496,8 +1496,8 @@ mod tests {
 
         // Verify domain state updated correctly
         let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
-        assert_eq!(domain_entry.certificate, Some(certificate_data));
-        assert_eq!(domain_entry.private_key, Some(private_key_data));
+        assert_eq!(domain_entry.enc_cert, Some(certificate_data));
+        assert_eq!(domain_entry.enc_priv_key, Some(private_key_data));
         assert_eq!(domain_entry.not_before, Some(not_before));
         assert_eq!(domain_entry.not_after, Some(not_after));
         assert_eq!(domain_entry.canister_id, Some(canister_id));
@@ -1524,8 +1524,8 @@ mod tests {
         let mut domain = DomainEntry::new(Some(TaskKind::Update), now);
         domain.taken_at = Some(task_id);
         domain.canister_id = Some(canister_id);
-        domain.certificate = Some(b"old_certificate".to_vec());
-        domain.private_key = Some(b"old_private_key".to_vec());
+        domain.enc_cert = Some(b"old_certificate".to_vec());
+        domain.enc_priv_key = Some(b"old_private_key".to_vec());
         state.domains.insert("test.com".to_string(), domain);
 
         let task_result = TaskResult {
@@ -1550,8 +1550,8 @@ mod tests {
         assert_eq!(domain_entry.last_fail_time, None);
         assert_eq!(domain_entry.last_failure_reason, None);
         // Certificate and private key should remain unchanged
-        assert_eq!(domain_entry.certificate, Some(b"old_certificate".to_vec()));
-        assert_eq!(domain_entry.private_key, Some(b"old_private_key".to_vec()));
+        assert_eq!(domain_entry.enc_cert, Some(b"old_certificate".to_vec()));
+        assert_eq!(domain_entry.enc_priv_key, Some(b"old_private_key".to_vec()));
 
         // Verify last_change timestamp updated
         assert_eq!(*state.last_change.get(), now);
@@ -1568,8 +1568,8 @@ mod tests {
         let mut domain = DomainEntry::new(Some(TaskKind::Delete), now);
         domain.taken_at = Some(task_id);
         domain.canister_id = Some(canister_id);
-        domain.certificate = Some(b"certificate_data".to_vec());
-        domain.private_key = Some(b"private_key_data".to_vec());
+        domain.enc_cert = Some(b"certificate_data".to_vec());
+        domain.enc_priv_key = Some(b"private_key_data".to_vec());
         state.domains.insert("test.com".to_string(), domain);
 
         let task_result = TaskResult {
@@ -1602,8 +1602,8 @@ mod tests {
         let mut domain = DomainEntry::new(Some(TaskKind::Renew), now);
         domain.taken_at = Some(task_id);
         domain.canister_id = Some(canister_id);
-        domain.certificate = Some(b"old_certificate".to_vec());
-        domain.private_key = Some(b"old_private_key".to_vec());
+        domain.enc_cert = Some(b"old_certificate".to_vec());
+        domain.enc_priv_key = Some(b"old_private_key".to_vec());
         domain.not_before = Some(500);
         domain.not_after = Some(1500);
         state.domains.insert("test.com".to_string(), domain);
@@ -1618,8 +1618,8 @@ mod tests {
             task_kind: TaskKind::Renew,
             output: Some(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id,
-                certificate: new_certificate_data.clone(),
-                private_key: new_private_key_data.clone(),
+                enc_cert: new_certificate_data.clone(),
+                enc_priv_key: new_private_key_data.clone(),
                 not_before: new_not_before,
                 not_after: new_not_after,
             })),
@@ -1632,8 +1632,8 @@ mod tests {
 
         // Verify domain state updated correctly
         let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
-        assert_eq!(domain_entry.certificate, Some(new_certificate_data));
-        assert_eq!(domain_entry.private_key, Some(new_private_key_data));
+        assert_eq!(domain_entry.enc_cert, Some(new_certificate_data));
+        assert_eq!(domain_entry.enc_priv_key, Some(new_private_key_data));
         assert_eq!(domain_entry.not_before, Some(new_not_before));
         assert_eq!(domain_entry.not_after, Some(new_not_after));
         assert_eq!(domain_entry.task, None);
@@ -1673,8 +1673,8 @@ mod tests {
             task_kind: TaskKind::Issue,
             output: Some(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id,
-                certificate: certificate_data.clone(),
-                private_key: private_key_data.clone(),
+                enc_cert: certificate_data.clone(),
+                enc_priv_key: private_key_data.clone(),
                 not_before: 1000,
                 not_after: 2000,
             })),
@@ -1687,8 +1687,8 @@ mod tests {
 
         // Verify all failure state was cleared on success
         let domain_entry = state.domains.get(&"test.com".to_string()).unwrap();
-        assert_eq!(domain_entry.certificate, Some(certificate_data));
-        assert_eq!(domain_entry.private_key, Some(private_key_data));
+        assert_eq!(domain_entry.enc_cert, Some(certificate_data));
+        assert_eq!(domain_entry.enc_priv_key, Some(private_key_data));
         assert_eq!(domain_entry.task, None);
         assert_eq!(domain_entry.taken_at, None);
         assert_eq!(domain_entry.failures_count, 0);
