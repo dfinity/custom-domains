@@ -40,7 +40,8 @@ impl TestEnv {
 
         info!("pocket-ic server with time autoprogressing started");
 
-        let wasm_path = std::env::var("WASM_PATH").expect("WASM_PATH env var not set");
+        let wasm_path =
+            std::env::var("CANISTER_WASM_PATH").expect("CANISTER_WASM_PATH env var not set");
 
         let wasm = fs::read(PathBuf::from(wasm_path))?;
 
