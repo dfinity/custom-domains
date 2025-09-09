@@ -3,7 +3,13 @@
 //! This module provides a client for interacting with the custom domains canister.
 //! It handles all communication, serialization, encryption, and error handling.
 
-use std::sync::{atomic::AtomicU64, atomic::Ordering, Arc};
+use std::{
+    str::FromStr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
@@ -214,11 +220,18 @@ impl Repository for CanisterClient {
         match response {
             None => Ok(None),
             Some(api_task) => {
-                let task = ScheduledTask::try_from(api_task).map_err(|err| {
-                    RepositoryError::InternalError(anyhow!(
-                        "Failed to convert scheduled task: {err}"
-                    ))
+                // Decrypt certificate if present
+                let certificate = api_task
+                    .cert_encrypted
+                    .map(|encrypted_cert| self.decrypt_field(encrypted_cert.as_slice()))
+                    .transpose()?;
+
+                let domain = FQDN::from_str(&api_task.domain).map_err(|err| {
+                    RepositoryError::InternalError(anyhow!("Invalid domain from canister: {err}"))
                 })?;
+                
+                let task =
+                    ScheduledTask::new(api_task.kind.into(), domain, api_task.id, certificate);
                 Ok(Some(task))
             }
         }

@@ -128,7 +128,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     helpers::init_logging();
     // Initialize router
     let mock_time = Arc::new(MockTime::new(1));
-    let cipher = Arc::new(CertificateCipher::new());
+    let cipher = Arc::new(CertificateCipher::new_with_random_key());
     let local_state = LocalState::new(mock_time);
     let local_repository = Arc::new(LocalRepository::new(cipher, local_state));
     let validator = Arc::new(Validator::default());

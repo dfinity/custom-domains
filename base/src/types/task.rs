@@ -1,10 +1,10 @@
-use std::{str::FromStr, time::Duration};
+use std::time::Duration;
 
 use candid::Principal;
 use canister_api::{
     InputTask as ApiInputTask, IssueCertificateOutput as ApiIssueCertificateOutput,
-    ScheduledTask as ApiScheduledTask, TaskFailReason as ApiTaskFailReason,
-    TaskKind as ApiTaskKind, TaskOutput as ApiTaskOutput, TaskResult as ApiTaskResult,
+    TaskFailReason as ApiTaskFailReason, TaskKind as ApiTaskKind, TaskOutput as ApiTaskOutput,
+    TaskResult as ApiTaskResult,
 };
 use derive_new::new;
 use fqdn::FQDN;
@@ -167,19 +167,6 @@ impl From<ApiTaskKind> for TaskKind {
             ApiTaskKind::Update => TaskKind::Update,
             ApiTaskKind::Delete => TaskKind::Delete,
         }
-    }
-}
-
-impl TryFrom<ApiScheduledTask> for ScheduledTask {
-    type Error = anyhow::Error;
-
-    fn try_from(api_task: ApiScheduledTask) -> Result<Self, Self::Error> {
-        Ok(ScheduledTask {
-            kind: api_task.kind.into(),
-            domain: FQDN::from_str(&api_task.domain)?,
-            task_id: api_task.id,
-            certificate: api_task.certificate,
-        })
     }
 }
 

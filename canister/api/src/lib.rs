@@ -81,7 +81,7 @@ pub struct ScheduledTask {
     pub kind: TaskKind,
     pub domain: String,
     pub id: TaskId,
-    pub certificate: Option<Vec<u8>>,
+    pub cert_encrypted: Option<Vec<u8>>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]

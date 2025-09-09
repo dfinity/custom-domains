@@ -26,13 +26,14 @@ use tracing::info;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
     let canister_id = env::var("CANISTER_ID").expect("CANISTER_ID var is not set");
     let cloudflare_api_token =
         env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
-
-    let cipher = Arc::new(CertificateCipher::new());
+    let cipher = Arc::new(CertificateCipher::new_with_random_key());
     let agent = Agent::builder().with_url("https://ic0.app").build()?;
     let canister_id = canister_id.parse().expect("Invalid CANISTER_ID format");
     let repository = Arc::new(CanisterClient::new(agent, canister_id, cipher));
