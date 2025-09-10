@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
     let cipher = {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
-        let cipher = CertificateCipher::new(XChaCha20Poly1305::new(&key));
+        let cipher = CertificateCipher::new_with_key(&key);
         Arc::new(cipher)
     };
     let agent = Agent::builder().with_url("https://ic0.app").build()?;

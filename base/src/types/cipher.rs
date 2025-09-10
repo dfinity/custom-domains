@@ -1,9 +1,8 @@
+use crate::traits::cipher::{CipherError, CiphersCertificates};
 use chacha20poly1305::{
     aead::{rand_core::RngCore, Aead, OsRng},
-    XChaCha20Poly1305, XNonce,
+    Key, KeyInit, XChaCha20Poly1305, XNonce,
 };
-
-use crate::traits::cipher::{CipherError, CiphersCertificates};
 
 /// The length of the XChaCha20Poly1305 nonce in bytes.
 const NONCE_LEN: usize = 24;
@@ -26,8 +25,8 @@ impl std::fmt::Debug for CertificateCipher {
 
 impl CertificateCipher {
     /// Creates a new CertificateCipher.
-    pub fn new(cipher: XChaCha20Poly1305) -> Self {
-        Self(cipher)
+    pub fn new_with_key(key: &Key) -> Self {
+        Self(XChaCha20Poly1305::new(key))
     }
 }
 
@@ -89,7 +88,7 @@ mod tests {
         /// Creates a new CertificateCipher with a randomly generated key.
         pub fn new_with_random_key() -> Self {
             let key = XChaCha20Poly1305::generate_key(&mut OsRng);
-            Self::new(XChaCha20Poly1305::new(&key))
+            Self::new_with_key(&key)
         }
     }
 

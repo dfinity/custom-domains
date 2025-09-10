@@ -131,7 +131,7 @@ async fn basic_registration_scenario() -> anyhow::Result<()> {
     let mock_time = Arc::new(MockTime::new(1));
     let cipher = {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
-        let cipher = CertificateCipher::new(XChaCha20Poly1305::new(&key));
+        let cipher = CertificateCipher::new_with_key(&key);
         Arc::new(cipher)
     };
     let local_state = LocalState::new(mock_time);
