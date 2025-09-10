@@ -8,6 +8,7 @@ use base::types::{
     worker::{Worker, WorkerConfig},
 };
 use canister_client::canister_client::CanisterClient;
+use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
 use ic_agent::Agent;
 use prometheus::Registry;
 use tokio::spawn;
@@ -33,7 +34,11 @@ async fn main() -> anyhow::Result<()> {
     let canister_id = env::var("CANISTER_ID").expect("CANISTER_ID var is not set");
     let cloudflare_api_token =
         env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
-    let cipher = Arc::new(CertificateCipher::new_with_random_key());
+    let cipher = {
+        let key = XChaCha20Poly1305::generate_key(&mut OsRng);
+        let cipher = CertificateCipher::new(XChaCha20Poly1305::new(&key));
+        Arc::new(cipher)
+    };
     let agent = Agent::builder().with_url("https://ic0.app").build()?;
     let canister_id = canister_id.parse().expect("Invalid CANISTER_ID format");
     let repository = Arc::new(CanisterClient::new(agent, canister_id, cipher));
