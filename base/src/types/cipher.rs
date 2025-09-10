@@ -35,18 +35,6 @@ impl CertificateCipher {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
         Self::new(XChaCha20Poly1305::new(&key))
     }
-
-    /// Validate the input data for minimum required length.
-    fn validate_encrypted_data_length(data: &[u8]) -> Result<(), CipherError> {
-        if data.len() < MIN_ENCRYPTED_DATA_LEN {
-            return Err(CipherError::InvalidInput(format!(
-                "Encrypted data too short: got {} bytes, minimum {} required",
-                data.len(),
-                MIN_ENCRYPTED_DATA_LEN
-            )));
-        }
-        Ok(())
-    }
 }
 
 impl CiphersCertificates for CertificateCipher {
@@ -76,7 +64,13 @@ impl CiphersCertificates for CertificateCipher {
 
     /// Decrypts the provided encrypted data.
     fn decrypt(&self, encrypted_data: &[u8]) -> Result<Vec<u8>, CipherError> {
-        Self::validate_encrypted_data_length(encrypted_data)?;
+        // Validate input length
+        if encrypted_data.len() < MIN_ENCRYPTED_DATA_LEN {
+            return Err(CipherError::InvalidInput(format!(
+                "Encrypted data too short: got {} bytes, minimum {MIN_ENCRYPTED_DATA_LEN} required",
+                encrypted_data.len(),
+            )));
+        }
 
         // Check above ensures this split won't panic
         let (nonce_bytes, ciphertext) = encrypted_data.split_at(NONCE_LEN);
