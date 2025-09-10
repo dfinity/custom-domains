@@ -124,3 +124,55 @@ fn http_request(request: HttpRequest) -> HttpResponse {
         _ => HttpResponseBuilder::not_found().build(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{env, fs::read_to_string, path::PathBuf};
+
+    use candid_parser::utils::{service_equal, CandidSource};
+
+    use super::*;
+
+    fn source_to_str(source: &CandidSource) -> String {
+        match source {
+            CandidSource::File(f) => read_to_string(f).unwrap_or_else(|_| "".to_string()),
+            CandidSource::Text(t) => t.to_string(),
+        }
+    }
+
+    fn check_service_equal(new_name: &str, new: CandidSource, old_name: &str, old: CandidSource) {
+        let new_str = source_to_str(&new);
+        let old_str = source_to_str(&old);
+
+        match service_equal(new, old) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!(
+                    "{new_name} is not compatible with {old_name}!\n\n\
+                    {new_name}:\n{new_str}\n\n\
+                    {old_name}:\n{old_str}\n"
+                );
+                panic!("Candid interface mismatch: {e:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn check_candid_interface_compatibility() {
+        candid::export_service!();
+
+        let new_interface = __export_service();
+
+        // check the public interface against the actual one
+        let canister_did = "canister_backend.did";
+        let old_interface =
+            PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join(canister_did);
+
+        check_service_equal(
+            "actual candid interface",
+            candid_parser::utils::CandidSource::Text(&new_interface),
+            "declared candid interface in {canister_did} file",
+            candid_parser::utils::CandidSource::File(old_interface.as_path()),
+        );
+    }
+}
