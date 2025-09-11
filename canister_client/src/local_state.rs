@@ -58,9 +58,9 @@ pub struct DomainEntry {
     /// When the current task was taken by a worker
     pub taken_at: Option<UtcTimestamp>,
     /// The certificate data (if issued)
-    pub certificate: Option<Vec<u8>>,
+    pub cert: Option<Vec<u8>>,
     /// The private key data (if issued)
-    pub private_key: Option<Vec<u8>>,
+    pub priv_key: Option<Vec<u8>>,
     /// Certificate validity start time
     pub not_before: Option<UtcTimestamp>,
     /// Certificate validity end time
@@ -110,7 +110,7 @@ impl Repository for LocalState {
 
         match mutex.get(domain) {
             Some(entry) => {
-                let status = if entry.task.is_none() && entry.certificate.is_some() {
+                let status = if entry.task.is_none() && entry.cert.is_some() {
                     RegistrationStatus::Registered
                 } else if entry.task.is_some() {
                     RegistrationStatus::Registering
@@ -179,7 +179,7 @@ impl Repository for LocalState {
 
             // Remove domains without certificates that have exceeded the retention period,
             // unless a task is currently active.
-            if entry.taken_at.is_none() && entry.certificate.is_none() {
+            if entry.taken_at.is_none() && entry.cert.is_none() {
                 let expiry_time = entry
                     .created_at
                     .saturating_add(UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs());
@@ -212,7 +212,7 @@ impl Repository for LocalState {
             entry.taken_at = Some(now);
 
             let certificate = match task_kind {
-                TaskKind::Delete => entry.certificate.clone(),
+                TaskKind::Delete => entry.cert.clone(),
                 _ => None,
             };
 
@@ -262,8 +262,8 @@ impl Repository for LocalState {
                         "Certificate issued"
                     );
                     entry.canister_id = Some(output.canister_id);
-                    entry.certificate = Some(output.certificate);
-                    entry.private_key = Some(output.private_key);
+                    entry.cert = Some(output.cert);
+                    entry.priv_key = Some(output.priv_key);
                     entry.not_before = Some(output.not_before);
                     entry.not_after = Some(output.not_after);
                     // New certificate was issued, we update the last change time
@@ -307,11 +307,11 @@ impl Repository for LocalState {
                 }
                 // Prevent explicit certificate re-issuance
                 // TODO: maybe useful functionality for the admin?
-                if task.kind == TaskKind::Issue && entry.certificate.is_some() {
+                if task.kind == TaskKind::Issue && entry.cert.is_some() {
                     return Err(RepositoryError::CertificateAlreadyIssued(domain.clone()));
                 }
                 // Require an existing certificate for `Update` task
-                if task.kind == TaskKind::Update && entry.certificate.is_none() {
+                if task.kind == TaskKind::Update && entry.cert.is_none() {
                     return Err(RepositoryError::MissingCertificateForUpdate(domain.clone()));
                 }
                 // Set the task field
@@ -345,8 +345,8 @@ impl Repository for LocalState {
             .filter_map(|(domain, entry)| {
                 let (canister_id, certificate, private_key) = match (
                     entry.canister_id.as_ref(),
-                    entry.certificate.as_ref(),
-                    entry.private_key.as_ref(),
+                    entry.cert.as_ref(),
+                    entry.priv_key.as_ref(),
                 ) {
                     (Some(canister_id), Some(cert), Some(key)) => (canister_id, cert, key),
                     _ => return None,
@@ -409,11 +409,11 @@ mod tests {
         pub fn set_certificate_field(
             &self,
             domain: &FQDN,
-            certificate: Vec<u8>,
+            cert: Vec<u8>,
         ) -> Result<(), RepositoryError> {
             let mut mutex = self.storage.lock().unwrap();
             if let Some(entry) = mutex.get_mut(domain) {
-                entry.certificate = Some(certificate);
+                entry.cert = Some(cert);
             }
             Ok(())
         }
@@ -528,7 +528,7 @@ mod tests {
         let (_, state) = create_state_with_mock_time(init_time);
         let domain = FQDN::from_str("example.org")?;
         let entry = DomainEntry {
-            certificate: Some(vec![]),
+            cert: Some(vec![]),
             ..Default::default()
         };
         state.add_entry(&domain, entry)?;
@@ -543,7 +543,7 @@ mod tests {
         );
         let entry = state.get_domain(&domain).await?.expect("domain not found");
         let expected = DomainEntry {
-            certificate: Some(vec![]),
+            cert: Some(vec![]),
             ..Default::default()
         };
         assert_eq!(entry, expected);
@@ -571,7 +571,7 @@ mod tests {
             let expected = DomainEntry {
                 task: Some(task_kind),
                 created_at: init_time,
-                certificate: Some(vec![]),
+                cert: Some(vec![]),
                 ..Default::default()
             };
             assert_eq!(entry, expected);
@@ -796,8 +796,8 @@ mod tests {
                 assert!(entry.is_none())
             } else {
                 let expected = DomainEntry {
-                    certificate: Some(vec![]),
-                    private_key: Some(vec![]),
+                    cert: Some(vec![]),
+                    priv_key: Some(vec![]),
                     created_at: init_time,
                     canister_id: Some(canister_id),
                     not_before: Some(not_before),
@@ -881,8 +881,8 @@ mod tests {
         let expected = DomainEntry {
             created_at: init_time,
             canister_id: Some(canister_id),
-            certificate: Some(vec![]),
-            private_key: Some(vec![]),
+            cert: Some(vec![]),
+            priv_key: Some(vec![]),
             not_after: Some(not_after),
             not_before: Some(not_before),
             ..Default::default()

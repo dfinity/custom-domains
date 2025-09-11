@@ -58,11 +58,11 @@ impl Repository for LocalRepository {
     async fn submit_task_result(&self, mut task_result: TaskResult) -> Result<(), RepositoryError> {
         // We encrypt certificate and private_key and pass the result further to the canister.
         if let Some(TaskOutput::Issue(issued_certificate)) = &mut task_result.output {
-            issued_certificate.certificate =
-                self.encrypt_field("certificate", &issued_certificate.certificate)?;
+            issued_certificate.cert =
+                self.encrypt_field("certificate", &issued_certificate.cert)?;
 
-            issued_certificate.private_key =
-                self.encrypt_field("private key", &issued_certificate.private_key)?;
+            issued_certificate.priv_key =
+                self.encrypt_field("private key", &issued_certificate.priv_key)?;
         }
 
         self.state.submit_task_result(task_result).await

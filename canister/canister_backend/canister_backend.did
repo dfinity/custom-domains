@@ -53,10 +53,10 @@ type TaskOutput = variant {
 type IssueCertificateOutput = record {
   // ID of the canister that custom domains points to
   canister_id: principal;
-  // Encoded certificate
-  certificate: blob;
-  // Encoded private key
-  private_key: blob;
+  // Encrypted certificate
+  enc_cert: blob;
+  // Encrypted private key
+  enc_priv_key: blob;
   // Certificate validity start time (Unix timestamp)
   not_before: Timestamp;
   // Certificate validity end time (Unix timestamp)
@@ -73,6 +73,8 @@ type TaskResult = record {
   failure: opt TaskFailReason;
   // ID of the completed task
   task_id: TaskId;
+  // Task kind
+  task_kind: TaskKind;
   // Total task execution time in seconds
   duration_secs: nat64;
 };
@@ -86,7 +88,7 @@ type ScheduledTask = record {
   // Unique task identifier
   id: TaskId;
   // Existing certificate (only for delete operation)
-  certificate: opt blob;
+  enc_cert: opt blob;
 };
 
 // Status of a domain
@@ -139,7 +141,7 @@ type SubmitTaskError = variant {
   // The specified domain was not found
   DomainNotFound: text;
   // Attempted to submit results for a non-existent task
-  NonExistingTaskSubmitted: text;
+  NonExistingTaskSubmitted: TaskId;
   // Internal error with details
   InternalError: text;
 };
@@ -229,9 +231,9 @@ type RegisteredDomain = record {
     // Principal ID of the canister this domain points to
     canister_id: principal;
     // Encrypted certificate data
-    cert_encrypted: blob;
+    enc_cert: blob;
     // Encrypted private key data
-    priv_key_encrypted: blob;
+    enc_priv_key: blob;
 };
 
 // Errors that can occur when getting certificates paginated

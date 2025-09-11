@@ -16,10 +16,10 @@ pub struct RegisteredDomain {
     pub domain: FQDN,
     /// The canister ID associated with this domain
     pub canister_id: Principal,
-    /// The encrypted certificate data
-    pub cert_encrypted: Vec<u8>,
-    /// The encrypted private key data
-    pub priv_key_encrypted: Vec<u8>,
+    /// Certificate data
+    pub cert: Vec<u8>,
+    /// Private key data
+    pub priv_key: Vec<u8>,
 }
 
 /// Represents the status of a domain registration process.
@@ -95,8 +95,8 @@ impl TryFrom<ApiRegisteredDomain> for RegisteredDomain {
         Ok(RegisteredDomain {
             domain: FQDN::from_str(&value.domain)?,
             canister_id: value.canister_id,
-            cert_encrypted: value.cert_encrypted,
-            priv_key_encrypted: value.priv_key_encrypted,
+            cert: value.enc_cert,
+            priv_key: value.enc_priv_key,
         })
     }
 }

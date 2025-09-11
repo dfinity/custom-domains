@@ -164,12 +164,7 @@ impl Worker {
         }
     }
 
-    pub fn schedule_revocation_with_delay(
-        &self,
-        domain: FQDN,
-        certificate: Vec<u8>,
-        delay: Duration,
-    ) {
+    pub fn schedule_revocation_with_delay(&self, domain: FQDN, cert: Vec<u8>, delay: Duration) {
         let acme_client = self.acme_client.clone();
         let metrics = self.metrics.clone();
         // Use a child token to allow cancelling revocation tasks independently of the worker
@@ -189,7 +184,7 @@ impl Worker {
 
             select! {
                 _ = sleep(delay) => {
-                    revoke_certificate_with_metrics_update(domain, &certificate, acme_client, &metrics).await;
+                    revoke_certificate_with_metrics_update(domain, &cert, acme_client, &metrics).await;
                 }
                 _ = token.cancelled() => {
                     warn!(domain = %domain, "Certificate revocation cancelled externally");
@@ -210,7 +205,7 @@ impl Worker {
         let domain = task.domain;
         let task_id = task.task_id;
         let task_kind = task.kind;
-        let certificate = task.certificate;
+        let certificate = task.cert;
 
         info!(
             domain = %domain,
@@ -308,12 +303,12 @@ impl Worker {
         domain: FQDN,
         task_id: UtcTimestamp,
         task_kind: TaskKind,
-        certificate: Option<Vec<u8>>,
+        cert: Option<Vec<u8>>,
     ) -> TaskResult {
         match self.validator.validate_deletion(&domain).await {
             Ok(()) => {
                 // Schedule immediate certificate revocation if certificate is present
-                if let Some(certificate) = certificate {
+                if let Some(certificate) = cert {
                     self.schedule_revocation_with_delay(
                         domain.clone(),
                         certificate,
@@ -686,12 +681,12 @@ async fn update_task(
 
 /// Revokes a certificate using the ACME protocol.
 async fn revoke_certificate(
-    certificate: &[u8],
+    cert: &[u8],
     acme_client: Arc<dyn AcmeCertificateClient>,
 ) -> anyhow::Result<()> {
     // Parse certificate chain
     let pem_str =
-        std::str::from_utf8(certificate).with_context(|| "Certificate contains invalid UTF-8")?;
+        std::str::from_utf8(cert).with_context(|| "Certificate contains invalid UTF-8")?;
 
     let pems = parse_many(pem_str).with_context(|| "Failed to parse PEM certificates")?;
 
@@ -978,7 +973,7 @@ mod tests {
             // For Issue and Renew tasks, capture the issued certificate to pass it to Delete task
             if task_kind == TaskKind::Issue || task_kind == TaskKind::Renew {
                 certificate = match result.clone().output.unwrap() {
-                    TaskOutput::Issue(output) => Some(output.certificate),
+                    TaskOutput::Issue(output) => Some(output.cert),
                     _ => panic!("Expected certificate"),
                 };
             }

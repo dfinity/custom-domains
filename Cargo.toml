@@ -33,6 +33,8 @@ async-trait = "0.1.83"
 axum = "0.8.4"
 axum-server = "0.7.2"
 candid = "0.10.16"
+candid_parser = "0.2.1"
+chacha20poly1305 = "0.10.1"
 chrono = "0.4"
 derive-new = "0.7.0"
 fqdn = "0.4.6"
@@ -77,6 +79,7 @@ base = { path = "./base" }
 candid = { workspace = true }
 canister-api = { path = "./canister/api" }
 canister-client = { path = "./canister_client" }
+chacha20poly1305 = { workspace = true }
 hex = { workspace = true }
 ic-agent = { workspace = true }
 ic-bn-lib = { workspace = true }
