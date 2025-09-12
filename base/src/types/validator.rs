@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use async_trait::async_trait;
 use candid::Principal;
 use fqdn::FQDN;
 use hickory_resolver::{
@@ -8,7 +9,6 @@ use hickory_resolver::{
     TokioResolver,
 };
 use reqwest::{Client, Method, Request, Url};
-use trait_async::trait_async;
 
 use crate::traits::validation::{ValidatesDomains, ValidationError};
 
@@ -25,7 +25,7 @@ pub struct Validator {
     dns_config: DnsConfig,
 }
 
-#[trait_async]
+#[async_trait]
 impl ValidatesDomains for Validator {
     async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
         self.validate_no_txt_challenge(domain).await?;

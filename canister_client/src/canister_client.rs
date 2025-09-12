@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
+use async_trait::async_trait;
 use base::{
     traits::{
         cipher::CiphersCertificates,
@@ -33,7 +34,6 @@ use ic_bn_lib::{
     custom_domains::{CustomDomain as IcBnCustomDomain, ProvidesCustomDomains},
     tls::providers::{Pem, ProvidesCertificates},
 };
-use trait_async::trait_async;
 
 #[derive(Debug, new)]
 pub struct CanisterClient {
@@ -172,7 +172,7 @@ impl CanisterClient {
     }
 }
 
-#[trait_async]
+#[async_trait]
 impl Repository for CanisterClient {
     async fn get_domain_status(
         &self,
@@ -196,6 +196,14 @@ impl Repository for CanisterClient {
                 Ok(Some(status))
             }
         }
+    }
+
+    async fn has_next_task(&self) -> Result<bool, RepositoryError> {
+        let response = self
+            .query::<(), bool, canister_api::HasNextTaskError>("has_next_task", &())
+            .await?;
+
+        Ok(response)
     }
 
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError> {
@@ -318,7 +326,7 @@ impl Repository for CanisterClient {
     }
 }
 
-#[trait_async]
+#[async_trait]
 impl ProvidesCertificates for CanisterClient {
     async fn get_certificates(&self) -> Result<Vec<Pem>, anyhow::Error> {
         self.maybe_update_cache().await?;
@@ -326,7 +334,7 @@ impl ProvidesCertificates for CanisterClient {
     }
 }
 
-#[trait_async]
+#[async_trait]
 impl ProvidesCustomDomains for CanisterClient {
     async fn get_custom_domains(&self) -> Result<Vec<IcBnCustomDomain>, anyhow::Error> {
         self.maybe_update_cache().await?;

@@ -128,7 +128,7 @@ pub struct Worker {
     /// Configuration settings for timeouts and intervals
     pub config: WorkerConfig,
     /// Metrics collection for observability
-    pub metrics: Arc<WorkerMetrics>,
+    pub shared_metrics: Arc<WorkerMetrics>,
     /// Total seconds since metrics reset
     pub total_sec_since_reset: Arc<AtomicU64>,
     /// Idle seconds since metrics reset
@@ -147,7 +147,7 @@ impl Worker {
         validator: Arc<dyn ValidatesDomains>,
         acme_client: Arc<dyn AcmeCertificateClient>,
         config: WorkerConfig,
-        registry: Registry,
+        shared_metrics: Arc<WorkerMetrics>,
         token: CancellationToken,
     ) -> Self {
         Self {
@@ -156,7 +156,7 @@ impl Worker {
             validator,
             acme_client,
             config,
-            metrics: Arc::new(WorkerMetrics::new(registry)),
+            shared_metrics,
             total_sec_since_reset: Arc::new(AtomicU64::new(0)),
             idle_sec_since_reset: Arc::new(AtomicU64::new(0)),
             token,
@@ -166,7 +166,7 @@ impl Worker {
 
     pub fn schedule_revocation_with_delay(&self, domain: FQDN, cert: Vec<u8>, delay: Duration) {
         let acme_client = self.acme_client.clone();
-        let metrics = self.metrics.clone();
+        let metrics = self.shared_metrics.clone();
         // Use a child token to allow cancelling revocation tasks independently of the worker
         // Not used at the moment, but could be useful in the future (or as a precaution)
         let token = self.token.child_token();
@@ -370,7 +370,7 @@ impl Worker {
 
         let task = match repository.fetch_next_task().await {
             Ok(task) => {
-                self.metrics
+                self.shared_metrics
                     .task_fetches
                     .with_label_values(&[self.name.as_str(), "success", ""])
                     .inc();
@@ -383,7 +383,7 @@ impl Worker {
                     "Failed to fetch pending task for worker {}, sleeping before retry",
                     self.name
                 );
-                self.metrics
+                self.shared_metrics
                     .task_fetches
                     .with_label_values(&[self.name.as_str(), "failure", err.into()])
                     .inc();
@@ -439,7 +439,7 @@ impl Worker {
             .unwrap_or("");
 
         // Update metrics
-        self.metrics
+        self.shared_metrics
             .task_executions
             .with_label_values(&[
                 self.name.as_str(),
@@ -494,7 +494,7 @@ impl Worker {
                     }
                 };
 
-                self.metrics
+                self.shared_metrics
                     .task_submissions
                     .with_label_values(&[
                         self.name.as_str(),
@@ -564,7 +564,7 @@ impl Worker {
             "Worker utilization metric published"
         );
 
-        self.metrics
+        self.shared_metrics
             .worker_utilization
             .with_label_values(&[self.name.as_str()])
             .set(utilization);
@@ -824,7 +824,7 @@ mod tests {
                 IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput,
                 TaskResult,
             },
-            worker::{Worker, WorkerConfig, WorkerStopped},
+            worker::{Worker, WorkerConfig, WorkerMetrics, WorkerStopped},
         },
     };
 
@@ -902,13 +902,15 @@ mod tests {
 
         let token = CancellationToken::new();
 
+        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(validator),
             Arc::new(MockAcmeClient),
             config,
-            Registry::new(),
+            metrics,
             token.clone(),
         );
 
@@ -941,13 +943,15 @@ mod tests {
             .expect_validate_deletion()
             .returning(|_| Box::pin(async { Ok(()) }));
 
+        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(validator),
             Arc::new(MockAcmeClient),
             WorkerConfig::default(),
-            Registry::new(),
+            metrics,
             CancellationToken::new(),
         );
 
@@ -1002,13 +1006,15 @@ mod tests {
             })
         });
 
+        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(validator),
             Arc::new(MockAcmeClient),
             WorkerConfig::default(),
-            Registry::new(),
+            metrics,
             CancellationToken::new(),
         );
 
@@ -1048,13 +1054,15 @@ mod tests {
             })
         });
 
+        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(validator),
             Arc::new(MockAcmeClient),
             WorkerConfig::default().with_task_timeout(Duration::from_millis(10)), // Set very short timeout
-            Registry::new(),
+            metrics,
             CancellationToken::new(),
         );
 
@@ -1091,13 +1099,14 @@ mod tests {
             .returning(|_| Box::pin(async { Ok(()) }));
 
         let registry = Registry::new();
+        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(MockValidatesDomains::new()),
             Arc::new(MockAcmeClient),
             WorkerConfig::default(),
-            registry.clone(),
+            metrics,
             CancellationToken::new(),
         );
 
@@ -1181,13 +1190,14 @@ mod tests {
             .with_task_resubmit_interval(Duration::from_millis(10));
 
         let registry = Registry::new();
+        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(MockValidatesDomains::new()),
             Arc::new(MockAcmeClient),
             config,
-            registry.clone(),
+            metrics,
             CancellationToken::new(),
         );
 
@@ -1257,13 +1267,14 @@ mod tests {
             .with_task_submit_timeout(Duration::from_millis(100)) // Some short timeout
             .with_task_resubmit_interval(Duration::from_millis(10));
 
+        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(MockValidatesDomains::new()),
             Arc::new(MockAcmeClient),
             config,
-            registry.clone(),
+            metrics,
             CancellationToken::new(),
         );
 
@@ -1311,13 +1322,14 @@ mod tests {
         });
 
         let token = CancellationToken::new();
+        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
             Arc::new(MockValidatesDomains::new()),
             Arc::new(MockAcmeClient),
             WorkerConfig::default(),
-            Registry::new(),
+            metrics,
             token.clone(),
         );
 
