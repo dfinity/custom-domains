@@ -27,18 +27,22 @@ pub fn init_logging() {
 pub struct TestEnv {
     pub pic: PocketIc,
     pub canister_id: Principal,
-    pub authorized_principal: Principal,
+    pub sender: Principal,
+    pub authorized_principal: Option<Principal>,
     pub controller: Principal,
 }
 
 #[allow(dead_code)]
 impl TestEnv {
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new(
+        authorized_principal: Option<Principal>,
+        sender: Principal,
+    ) -> anyhow::Result<Self> {
         info!("pocket-ic server starting ...");
 
         let pic = PocketIcBuilder::new().with_nns_subnet().build_async().await;
 
-        info!("pocket-ic server with time autoprogressing started");
+        info!("pocket-ic server started");
 
         let wasm_path =
             std::env::var("CANISTER_WASM_PATH").expect("CANISTER_WASM_PATH env var not set");
@@ -47,13 +51,12 @@ impl TestEnv {
 
         let controller = Principal::from_text("2vxsx-fae")?;
 
-        let authorized_principal = Principal::from_text("oqjvn-fqaaa-aaaab-qab5q-cai")?;
-
         let canister_id = install_canister(&pic, controller, authorized_principal, wasm).await?;
 
         Ok(Self {
             pic,
             canister_id,
+            sender,
             authorized_principal,
             controller,
         })
@@ -76,12 +79,7 @@ impl TestEnv {
 
         let result = self
             .pic
-            .update_call(
-                self.canister_id,
-                self.authorized_principal,
-                "try_add_task",
-                arg,
-            )
+            .update_call(self.canister_id, self.sender, "try_add_task", arg)
             .await
             .map_err(|e| anyhow!("update call failed: {e}"))?;
 
@@ -93,12 +91,7 @@ impl TestEnv {
 
         let result = self
             .pic
-            .query_call(
-                self.canister_id,
-                self.authorized_principal,
-                "get_domain_status",
-                arg,
-            )
+            .query_call(self.canister_id, self.sender, "get_domain_status", arg)
             .await
             .map_err(|e| anyhow!("query call failed: {e}"))?;
 
@@ -110,12 +103,7 @@ impl TestEnv {
 
         let result = self
             .pic
-            .query_call(
-                self.canister_id,
-                self.authorized_principal,
-                "has_next_task",
-                arg,
-            )
+            .query_call(self.canister_id, self.sender, "has_next_task", arg)
             .await
             .map_err(|e| anyhow!("query call failed: {e}"))?;
 
@@ -127,12 +115,7 @@ impl TestEnv {
 
         let result = self
             .pic
-            .update_call(
-                self.canister_id,
-                self.authorized_principal,
-                "submit_task_result",
-                arg,
-            )
+            .update_call(self.canister_id, self.sender, "submit_task_result", arg)
             .await
             .map_err(|e| anyhow!("update call failed: {e}"))?;
 
@@ -144,12 +127,7 @@ impl TestEnv {
 
         let result = self
             .pic
-            .update_call(
-                self.canister_id,
-                self.authorized_principal,
-                "fetch_next_task",
-                arg,
-            )
+            .update_call(self.canister_id, self.sender, "fetch_next_task", arg)
             .await
             .map_err(|e| anyhow!("update call failed: {e}"))?;
 
@@ -160,7 +138,7 @@ impl TestEnv {
 pub async fn install_canister(
     pic: &PocketIc,
     controller: Principal,
-    authorized_principal: Principal,
+    authorized_principal: Option<Principal>,
     canister_wasm_module: Vec<u8>,
 ) -> anyhow::Result<Principal> {
     const CANISTER_INITIAL_CYCLES: u128 = 100_000_000_000_000;
@@ -177,7 +155,7 @@ pub async fn install_canister(
         canister_id,
         canister_wasm_module,
         Encode!(&InitArg {
-            authorized_principal: Some(authorized_principal),
+            authorized_principal,
         })?,
         Some(controller),
     )

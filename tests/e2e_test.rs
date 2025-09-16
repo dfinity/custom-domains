@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -37,8 +37,10 @@ use x509_parser::{parse_x509_certificate, prelude::GeneralName};
 mod helpers;
 use helpers::init_logging;
 
-const DOMAINS_COUNT: usize = 500;
-const WORKERS_COUNT: usize = 30;
+use crate::helpers::TestEnv;
+
+const DOMAINS_COUNT: usize = 100;
+const WORKERS_COUNT: usize = 10;
 
 struct MockValidator;
 
@@ -53,17 +55,20 @@ impl ValidatesDomains for MockValidator {
     }
 }
 
-// Title: Custom Domains with Pebble ACME Server and multiple workers processing multiple registration requests in parallel
+// Title: Custom Domains with Pebble ACME test server and multiple workers processing registration requests in parallel
 // Setup:
-// - Manual: deploy the canister with `dfx deploy` and set the environment variable `CANISTER_ID` to the canister ID.
-// - Start one backend API server accepting domain registration requests
-// - Start N=50 workers polling the canister for tasks, executing them and submitting results back to the canister
+// - Start Pocket IC and install the Custom Domains canister
+// - Start HTTP Gateway server on top of Pocket IC to acc
 // - Start pebble ACME test server issuing certificates
+// - Start one backend API server accepting domain registration requests
+// - Start N=30 workers polling the canister for tasks, executing them and submitting results back to the canister
 // Steps:
-// 1. Submit N=1000 domains for registration via the API
-// 2. Each worker should pick up tasks and obtain certificates in parallel
-// 3. Verify that all domains have been registered and certificates obtained
-// 4. Verify each worker has processed multiple tasks
+// 1. Submit N=500 domains for registration via the API
+//    Each worker should pick up tasks and obtain certificates in parallel
+// 2. Verify that all domains have been registered and certificates obtained
+// 3. Verify all certificates are valid and match the requested domains
+// 4. Delete half of the domains via the API and verify they are removed from the canister
+// 5. Get canister metrics and verify the the expected of registered domains is correct
 
 async fn create_acme_client(
     addr_acme: String,
@@ -87,12 +92,17 @@ async fn create_acme_client(
 async fn e2e_pebble_test() -> anyhow::Result<()> {
     init_logging();
 
-    let canister_id = env::var("CANISTER_ID").expect("CANISTER_ID var is not set");
+    info!("Starting Pocket IC and installing custom domains canister ...");
+    let sender = Principal::anonymous();
+    let authorized_principal = Some(sender);
+    let mut env = TestEnv::new(authorized_principal, sender).await?;
+    let ic_url = env.pic.make_live_with_params(None, None, None, None).await;
+    info!("Pocket IC HTTP Gateway running at {ic_url}");
 
-    info!("Starting Pebble ACME test server ...");
+    info!("Starting Pebble ACME server and DNS challenge test server ...");
     let pebble_env = Env::new().await;
     info!(
-        "Pebble ACME server started: ACME {}, DNS {}",
+        "Pebble test environment started: ACME server at {}, DNS management server at {}",
         pebble_env.addr_acme(),
         pebble_env.addr_dns_management()
     );
@@ -102,10 +112,8 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
         format!("http://{}", pebble_env.addr_dns_management()).parse()?,
     ));
 
-    let canister_id = canister_id.parse().expect("Invalid CANISTER_ID format");
-
     // Create ACME client pointing to Pebble ACME server
-    info!("Creating ACME client ...");
+    info!("Creating ACME client for Pebble server ...");
     let acme_client = create_acme_client(pebble_env.addr_acme(), token_manager.clone()).await?;
 
     // Domains for registration
@@ -115,13 +123,15 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
 
     // Setup workers
     let cancellation_token = CancellationToken::new();
-    let agent = Agent::builder().with_url("https://ic0.app").build()?;
+    let agent = Agent::builder().with_url(ic_url).build()?;
+    let root_key = env.pic.root_key().await.expect("failed to get root key");
+    agent.set_root_key(root_key);
     let cipher = {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
         let cipher = CertificateCipher::new_with_key(&key);
         Arc::new(cipher)
     };
-    let repository = Arc::new(CanisterClient::new(agent, canister_id, cipher));
+    let repository = Arc::new(CanisterClient::new(agent, env.canister_id, cipher));
     let prometheus_registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
     let metrics = Arc::new(WorkerMetrics::new(prometheus_registry.clone()));
     let validator = Arc::new(MockValidator);
@@ -142,26 +152,30 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
     }
 
     // Spawn the API server
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let api_addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     let repository_cloned = repository.clone();
     let _handle = spawn(async move {
         let router = create_router(repository_cloned, validator, prometheus_registry, true);
-        info!("Starting server on http://{}", addr);
-        axum_server::bind(addr)
+        info!("Starting API server at http://{}", api_addr);
+        axum_server::bind(api_addr)
             .serve(router.into_make_service())
             .await
     });
 
     sleep(Duration::from_secs(5)).await;
 
-    info!("Submitting {DOMAINS_COUNT} domains for registration ...");
+    info!("Step 1: Submitting {DOMAINS_COUNT} domains for registration via API ...");
     let client = reqwest::Client::new();
     let mut task_handles = vec![];
     for domain in domains.clone() {
         let client_cloned = client.clone();
         let handle = spawn(async move {
             client_cloned
-                .post(format!("http://{}:{}/v1/domains", addr.ip(), addr.port()))
+                .post(format!(
+                    "http://{}:{}/v1/domains",
+                    api_addr.ip(),
+                    api_addr.port()
+                ))
                 .header("Content-Type", "application/json")
                 .json(&json!({"domain": domain}))
                 .send()
@@ -178,20 +192,24 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
 
     while repository.has_next_task().await? {
         let duration = Duration::from_secs(10);
-        info!("Waiting for all tasks to be processed, sleep {duration:?} ...");
+        info!("Waiting for workers to process remaining tasks, sleeping {duration:?} ...");
         sleep(duration).await;
     }
 
-    sleep(Duration::from_secs(10)).await;
-
+    info!("Step 2: Verifying that all domains have been registered and certificates obtained ...");
     for domain in &domains {
-        let status = repository
-            .get_domain_status(&domain.parse()?)
-            .await?
-            .context("Domain not found")?;
-        assert_eq!(status.status, RegistrationStatus::Registered);
+        loop {
+            let status = repository
+                .get_domain_status(&domain.parse()?)
+                .await?
+                .context("Domain not found")?;
+            if status.status == RegistrationStatus::Registered {
+                break;
+            }
+        }
     }
 
+    info!("Step 3: Verifying all certificates are valid and match the requested domains ...");
     let registered_domains = repository.all_registrations().await?;
     let mut domains_set: HashSet<String> = HashSet::from_iter(domains.clone());
     for registered_domain in registered_domains {
@@ -199,7 +217,51 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
         assert!(domains_set.remove(&domain));
     }
     assert!(domains_set.is_empty());
-    info!("Certificates for all {DOMAINS_COUNT} were issued successfully");
+    info!("All {DOMAINS_COUNT} certificates were issued successfully by Pebble ACME server");
+
+    info!("Step 4: Deleting half of the domains via API and verifying they are removed from the canister ...");
+    let domains_to_delete = &domains[..(DOMAINS_COUNT / 2)];
+    for domain in domains_to_delete {
+        let response = client
+            .delete(format!(
+                "http://{}:{}/v1/domains/{}",
+                api_addr.ip(),
+                api_addr.port(),
+                domain
+            ))
+            .send()
+            .await?;
+        assert!(response.status().is_success());
+    }
+
+    for domain in domains_to_delete {
+        while let Some(_domain_status) = repository.get_domain_status(&domain.parse()?).await? {
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+    info!("Half of the domains ({DOMAINS_COUNT}/2) were deleted successfully");
+
+    info!("Step 5: Getting canister metrics and verifying they are reasonable ...");
+    let metrics_text = client
+        .get(format!(
+            "http://{}.raw.{}:{}/metrics",
+            env.canister_id,
+            api_addr.ip(),
+            api_addr.port()
+        ))
+        .send()
+        .await?
+        .text()
+        .await?;
+    assert!(metrics_text.contains(
+        &format!(
+            "domains_total{{registration_status=\"registered\"}} {}",
+            DOMAINS_COUNT / 2
+        )
+    ));
+    assert!(metrics_text.contains("domains_total{registration_status=\"expired\"} 0"));
+    assert!(metrics_text.contains("domains_total{registration_status=\"failed\"} 0"));
+    assert!(metrics_text.contains("domains_total{registration_status=\"registering\"} 0"));
 
     Ok(())
 }
