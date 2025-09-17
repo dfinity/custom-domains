@@ -475,6 +475,8 @@ async fn verify_wokers_metrics(ctx: &TestContext) -> anyhow::Result<()> {
         if processed_tasks < 2 {
             bail!("Worker {worker_name} has processed less than two tasks");
         }
+
+        info!("Worker {worker_name} has processed {processed_tasks} tasks");
     }
 
     Ok(())
