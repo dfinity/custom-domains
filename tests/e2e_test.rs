@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
 use backend::router::create_router;
 use base::traits::repository::Repository;
@@ -17,7 +17,8 @@ use candid::Principal;
 use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
 use fqdn::FQDN;
-use ic_agent::Agent;
+use ic_agent::identity::BasicIdentity;
+use ic_agent::{Agent, Identity};
 use ic_bn_lib::reqwest::{self, Url};
 use ic_bn_lib::{
     tests::pebble::{dns::TokenManagerPebble, Env},
@@ -38,6 +39,8 @@ mod helpers;
 use helpers::init_logging;
 
 use crate::helpers::TestEnv;
+
+const CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 const DOMAINS_COUNT: usize = 100;
 const WORKERS_COUNT: usize = 5;
@@ -134,10 +137,14 @@ struct TestContext {
     canister_repository: Arc<CanisterClient>,
     http_gateway_url: Url,
     api_server_addr: SocketAddr,
+    sender: Principal,
 }
 
 async fn setup_test_environment() -> anyhow::Result<TestContext> {
-    let sender = Principal::anonymous();
+    let identity = test_identity();
+    let sender = identity
+        .sender()
+        .map_err(|_| anyhow!("Failed to extract sender"))?;
     let authorized_principal = Some(sender);
 
     let mut pocket_ic_env = TestEnv::new(authorized_principal, sender).await?;
@@ -167,6 +174,7 @@ async fn setup_test_environment() -> anyhow::Result<TestContext> {
 
     let agent = Agent::builder()
         .with_url(http_gateway_url.clone())
+        .with_identity(identity)
         .build()?;
     let root_key = pocket_ic_env
         .pic
@@ -202,12 +210,13 @@ async fn setup_test_environment() -> anyhow::Result<TestContext> {
     )
     .await;
 
-    let api_addr = spawn_api_server(repository.clone(), validator, prometheus_registry).await;
+    let api_addr = spawn_api_server(repository.clone(), validator, prometheus_registry).await?;
 
     Ok(TestContext {
         pocket_ic_env,
         pebble_env,
         http_gateway_url,
+        sender,
         canister_repository: repository,
         api_server_addr: api_addr,
     })
@@ -239,7 +248,7 @@ async fn spawn_api_server(
     repository: Arc<CanisterClient>,
     validator: Arc<MockValidator>,
     prometheus_registry: Registry,
-) -> SocketAddr {
+) -> anyhow::Result<SocketAddr> {
     let api_addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     spawn(async move {
         let router = create_router(repository, validator, prometheus_registry, true);
@@ -248,9 +257,25 @@ async fn spawn_api_server(
             .serve(router.into_make_service())
             .await
     });
-    // Give the server some time to start
-    sleep(Duration::from_secs(3)).await;
-    api_addr
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(100))
+        .build()?;
+
+    let metrics_url = format!("http://{}:{}/metrics", api_addr.ip(), api_addr.port());
+    // Wait for server to be ready by polling metrics endpoint
+    loop {
+        match client.get(&metrics_url).send().await {
+            Ok(response) if response.status().is_success() => {
+                info!("API server ready");
+                return Ok(api_addr);
+            }
+            Ok(_) | Err(_) => {
+                debug!("API server not ready yet");
+                sleep(Duration::from_millis(300)).await;
+            }
+        }
+    }
 }
 
 async fn submit_domains_for_registration(ctx: &TestContext) -> anyhow::Result<Vec<String>> {
@@ -314,7 +339,8 @@ async fn verify_domains_registration(
             if status.status == RegistrationStatus::Registered {
                 break;
             }
-            sleep(Duration::from_millis(20)).await;
+            sleep(CANISTER_CALL_RETRY_DELAY).await;
+            info!("Waiting for domain {domain} to be registered ...");
         }
     }
     Ok(())
@@ -359,7 +385,10 @@ async fn delete_half_domains(
     Ok(domains_to_delete)
 }
 
-async fn verify_domains_deletion(ctx: &TestContext, deleted_domains: Vec<String>) -> anyhow::Result<()> {
+async fn verify_domains_deletion(
+    ctx: &TestContext,
+    deleted_domains: Vec<String>,
+) -> anyhow::Result<()> {
     for domain in deleted_domains {
         loop {
             let status = ctx
@@ -369,7 +398,8 @@ async fn verify_domains_deletion(ctx: &TestContext, deleted_domains: Vec<String>
             if status.is_none() {
                 break;
             }
-            sleep(Duration::from_millis(10)).await;
+            info!("Waiting for domain {domain} to be deleted from canister ...");
+            sleep(CANISTER_CALL_RETRY_DELAY).await;
         }
     }
     Ok(())
@@ -473,4 +503,14 @@ fn extract_domain_from_cert(cert: Vec<u8>) -> anyhow::Result<String> {
         .collect();
 
     Ok(cert_domains[0].clone())
+}
+
+pub fn test_identity() -> BasicIdentity {
+    BasicIdentity::from_pem(
+        &b"-----BEGIN PRIVATE KEY-----
+MFMCAQEwBQYDK2VwBCIEIJKDIfd1Ybt48Z23cVEbjL2DGj1P5iDYmthcrptvBO3z
+oSMDIQCJuBJPWt2WWxv0zQmXcXMjY+fP0CJSsB80ztXpOFd2ZQ==
+-----END PRIVATE KEY-----"[..],
+    )
+    .expect("failed to parse identity from PEM")
 }
