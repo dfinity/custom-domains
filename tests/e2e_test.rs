@@ -70,7 +70,7 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
     info!(
         "Setting up test environment: Pocket IC, Pebble ACME and DNS servers, workers, and API server ..."
     );
-    let ctx = setup_test_environment().await?;
+    let (ctx, workers_metrics) = setup_test_environment().await?;
 
     info!("Step 1: Submitting {DOMAINS_COUNT} domains for registration via the API ...");
     let domains = submit_domains_for_registration(&ctx).await?;
@@ -94,7 +94,7 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
     verify_canister_metrics(&ctx).await?;
 
     info!("Step 7: Getting workers metrics and verifying they all have processed more than one task each");
-    verify_wokers_metrics(&ctx).await?;
+    verify_workers_metrics(workers_metrics).await?;
 
     Ok(())
 }
@@ -141,7 +141,7 @@ struct TestContext {
     sender: Principal,
 }
 
-async fn setup_test_environment() -> anyhow::Result<TestContext> {
+async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetrics>)> {
     let identity = test_identity();
     let sender = identity
         .sender()
@@ -213,14 +213,17 @@ async fn setup_test_environment() -> anyhow::Result<TestContext> {
 
     let api_addr = spawn_api_server(repository.clone(), validator, prometheus_registry).await?;
 
-    Ok(TestContext {
-        pocket_ic_env,
-        pebble_env,
-        http_gateway_url,
-        sender,
-        canister_repository: repository,
-        api_server_addr: api_addr,
-    })
+    Ok((
+        TestContext {
+            pocket_ic_env,
+            pebble_env,
+            http_gateway_url,
+            sender,
+            canister_repository: repository,
+            api_server_addr: api_addr,
+        },
+        workers_metrics,
+    ))
 }
 
 async fn spawn_workers(
@@ -241,7 +244,12 @@ async fn spawn_workers(
             cancellation_token.clone(),
         );
 
-        spawn(async move { worker.run().await });
+        let delay = Duration::from_millis(i as u64 * 30);
+
+        spawn(async move {
+            sleep(delay).await;
+            worker.run().await
+        });
     }
 }
 
@@ -438,46 +446,54 @@ async fn verify_canister_metrics(ctx: &TestContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn verify_wokers_metrics(ctx: &TestContext) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
-
-    let metrics_text = client
-        .get(format!(
-            "http://{}:{}/metrics",
-            ctx.api_server_addr.ip(),
-            ctx.api_server_addr.port()
-        ))
-        .send()
-        .await?
-        .text()
-        .await?;
+async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<()> {
+    let mut issue_tasks_total = 0;
+    let mut delete_tasks_total = 0;
 
     for i in 0..WORKERS_COUNT {
         let worker_name = format!("worker_{}", i + 1);
+        let worker_name = worker_name.as_str();
 
-        let line = metrics_text
-            .lines()
-            .find(|line| {
-                line.contains("task_submission_with_retries") && line.contains(&worker_name)
-            })
-            .with_context(|| format!("No metrics found for worker {worker_name}"))?;
+        let issue_tasks = metrics
+            .task_submissions
+            .get_metric_with_label_values(&[
+                worker_name, // worker_name
+                "issue",     // task_kind
+                "success",   // status
+                "1",         // attempts
+                "",          // last_failure
+            ])?
+            .get();
 
-        let parts: Vec<&str> = line.split_whitespace().collect();
+        let delete_tasks = metrics
+            .task_submissions
+            .get_metric_with_label_values(&[
+                worker_name, // worker_name
+                "delete",    // task_kind
+                "success",   // status
+                "1",         // attempts
+                "",          // last_failure
+            ])?
+            .get();
 
-        if parts.len() != 2 {
-            bail!("Invalid metrics line format for worker {worker_name}");
-        }
+        issue_tasks_total += issue_tasks;
+        delete_tasks_total += delete_tasks;
 
-        let processed_tasks: u32 = parts[1]
-            .parse()
-            .with_context(|| format!("Failed to parse tasks count for worker {worker_name}"))?;
+        info!("Worker {worker_name} has processed {issue_tasks} issue tasks");
+        info!("Worker {worker_name} has processed {delete_tasks} delete tasks");
 
-        if processed_tasks < 2 {
-            bail!("Worker {worker_name} has processed less than two tasks");
-        }
-
-        info!("Worker {worker_name} has processed {processed_tasks} tasks");
+        assert!(
+            issue_tasks > 0,
+            "Worker {worker_name} has not processed any issue tasks"
+        );
+        assert!(
+            delete_tasks > 0,
+            "Worker {worker_name} has not processed any delete tasks"
+        );
     }
+
+    assert_eq!(issue_tasks_total as usize, DOMAINS_COUNT);
+    assert_eq!(delete_tasks_total as usize, DOMAINS_COUNT / 2);
 
     Ok(())
 }
