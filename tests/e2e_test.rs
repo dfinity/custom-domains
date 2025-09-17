@@ -40,7 +40,8 @@ use helpers::init_logging;
 
 use crate::helpers::TestEnv;
 
-const CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_secs(1);
+const INIT_CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_millis(100);
+const MAX_CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 const DOMAINS_COUNT: usize = 100;
 const WORKERS_COUNT: usize = 5;
@@ -330,6 +331,7 @@ async fn verify_domains_registration(
     domains: &Vec<String>,
 ) -> anyhow::Result<()> {
     for domain in domains {
+        let mut sleep_interval = INIT_CANISTER_CALL_RETRY_DELAY;
         loop {
             let status = ctx
                 .canister_repository
@@ -339,8 +341,10 @@ async fn verify_domains_registration(
             if status.status == RegistrationStatus::Registered {
                 break;
             }
-            sleep(CANISTER_CALL_RETRY_DELAY).await;
-            info!("Waiting for domain {domain} to be registered ...");
+            info!("Domain {domain} is not yet registered, sleeping {sleep_interval:?} ...");
+            sleep(sleep_interval).await;
+            sleep_interval = 2 * sleep_interval;
+            sleep_interval = sleep_interval.min(MAX_CANISTER_CALL_RETRY_DELAY)
         }
     }
     Ok(())
@@ -390,6 +394,7 @@ async fn verify_domains_deletion(
     deleted_domains: Vec<String>,
 ) -> anyhow::Result<()> {
     for domain in deleted_domains {
+        let mut sleep_interval = INIT_CANISTER_CALL_RETRY_DELAY;
         loop {
             let status = ctx
                 .canister_repository
@@ -398,8 +403,10 @@ async fn verify_domains_deletion(
             if status.is_none() {
                 break;
             }
-            info!("Waiting for domain {domain} to be deleted from canister ...");
-            sleep(CANISTER_CALL_RETRY_DELAY).await;
+            info!("Domain {domain} is not yet deleted, sleeping {sleep_interval:?} ...");
+            sleep(sleep_interval).await;
+            sleep_interval = 2 * sleep_interval;
+            sleep_interval = sleep_interval.min(MAX_CANISTER_CALL_RETRY_DELAY)
         }
     }
     Ok(())
