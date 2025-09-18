@@ -76,7 +76,7 @@ pub struct InputTask {
     pub domain: String,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, new)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, PartialEq, Eq, new)]
 pub struct ScheduledTask {
     pub kind: TaskKind,
     pub domain: String,

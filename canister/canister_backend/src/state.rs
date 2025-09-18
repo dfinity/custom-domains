@@ -48,6 +48,8 @@ pub struct DomainEntry {
     pub created_at: UtcTimestamp,
     // Timestamp when the current task was taken by a worker
     pub taken_at: Option<UtcTimestamp>,
+    // Timestamp when the current task was created
+    pub task_created_at: Option<UtcTimestamp>,
     // PEM-encoded certificate data (encrypted)
     pub enc_cert: Option<Vec<u8>>,
     // PEM-encoded private key data (encrypted)
@@ -200,29 +202,56 @@ impl CanisterState {
     }
 
     pub fn fetch_next_task(&mut self, now: UtcTimestamp) -> FetchTaskResult {
-        // TODO: consider adding randomization to task selection
-        // Iterate through domains and find the first one with a pending task
-        for entry in self.domains.iter() {
-            let domain = entry.key().clone();
-            let mut domain_entry = entry.value();
+        let mut domains_to_update = Vec::new();
+        let mut oldest_candidate_task = None;
+        let mut oldest_task_created_at = u64::MAX;
 
-            // Schedule only the first available pending task
+        // Pass through all domains:
+        // - create all needed renewal tasks and track domain entries that need updates
+        // - find the oldest pending task
+        for entry in self.domains.iter() {
+            let domain = entry.key();
+            let mut domain_entry = entry.value().clone();
+
             if let Some(task_kind) = next_pending_task(&domain_entry, now) {
-                domain_entry.taken_at = Some(now);
-                domain_entry.task = Some(task_kind);
-                let scheduled_task = Some(ScheduledTask::new(
-                    task_kind,
-                    domain.clone(),
-                    now,
-                    domain_entry.enc_cert.clone(),
-                ));
-                // Update the domain entry
-                self.domains.insert(domain, domain_entry);
-                return Ok(scheduled_task);
+                // Create Renew task
+                if task_kind == TaskKind::Renew && domain_entry.task.is_none() {
+                    domain_entry.task = Some(task_kind);
+                    domain_entry.task_created_at = Some(now);
+                    domains_to_update.push((domain.clone(), domain_entry.clone()));
+                }
+
+                // Keep track of the oldest task
+                if let Some(task_created_at) = domain_entry.task_created_at {
+                    if task_created_at < oldest_task_created_at {
+                        oldest_task_created_at = task_created_at;
+                        oldest_candidate_task = Some((domain.clone(), domain_entry.clone()));
+                    }
+                }
             }
         }
 
-        Ok(None)
+        // Update all domains with renewal tasks created
+        for (domain, domain_entry) in domains_to_update {
+            self.domains.insert(domain, domain_entry);
+        }
+
+        // Schedule the oldest task if exists
+        match oldest_candidate_task {
+            Some((domain, mut domain_entry)) => {
+                // Mark task as taken and update the value
+                domain_entry.taken_at = Some(now);
+                self.domains.insert(domain.clone(), domain_entry.clone());
+
+                Ok(Some(ScheduledTask::new(
+                    domain_entry.task.unwrap(),
+                    domain,
+                    now,
+                    domain_entry.enc_cert,
+                )))
+            }
+            None => Ok(None),
+        }
     }
 
     // Compute statistics about the domains and tasks
@@ -364,6 +393,7 @@ impl CanisterState {
                 entry.failures_count = 0;
                 entry.last_failure_reason = None;
                 entry.rate_limit_failures_count = 0;
+                entry.task_created_at = Some(now);
 
                 entry
             }
@@ -373,7 +403,9 @@ impl CanisterState {
                     return Err(TryAddTaskError::DomainNotFound(domain));
                 }
 
-                DomainEntry::new(Some(task.kind), now)
+                let mut entry = DomainEntry::new(Some(task.kind), now);
+                entry.task_created_at = Some(now);
+                entry
             }
         };
 
@@ -446,6 +478,7 @@ impl CanisterState {
             entry.last_fail_time = None;
             entry.rate_limit_failures_count = 0;
             self.last_change.set(now);
+            entry.task_created_at = None;
 
             match output {
                 TaskOutput::Issue(output) => {
@@ -1321,6 +1354,92 @@ mod tests {
             let entry = state.domains.get(&"delete.com".to_string()).unwrap();
             assert_eq!(entry.task, Some(TaskKind::Delete));
         }
+    }
+
+    #[test]
+    fn test_fetch_next_task_no_tasks() {
+        // Arrange
+        let mut state = create_test_empty_state();
+        let now = 1000;
+
+        // Act + Assert
+        // No domains at all
+        let result = state.fetch_next_task(now).unwrap();
+        assert!(result.is_none());
+        // Add a domain without any task
+        let domain = DomainEntry::new(None, now);
+        state.domains.insert("no-task.com".to_string(), domain);
+        let result = state.fetch_next_task(now).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fetch_next_task_returns_tasks() {
+        // Arrange
+        let mut state = create_test_empty_state();
+        let now = 1000;
+
+        // Add two domain with two tasks
+        let task_1 = InputTask {
+            domain: "task1.com".to_string(),
+            kind: TaskKind::Issue,
+        };
+        let task_2 = InputTask {
+            domain: "task2.com".to_string(),
+            kind: TaskKind::Issue,
+        };
+        state
+            .try_add_task(task_1, now)
+            .expect("failed to add a task");
+        state
+            .try_add_task(task_2, now + 10)
+            .expect("failed to add a task");
+
+        // Act + Assert: fetch tasks one by one, the older comes first
+        let task = state.fetch_next_task(now).unwrap();
+        let expected_task = Some(canister_api::ScheduledTask::new(
+            canister_api::TaskKind::Issue,
+            "task1.com".to_string(),
+            now,
+            None,
+        ));
+        assert_eq!(task, expected_task);
+        let task = state.fetch_next_task(now).unwrap();
+        let expected_task = Some(canister_api::ScheduledTask::new(
+            canister_api::TaskKind::Issue,
+            "task2.com".to_string(),
+            now,
+            None,
+        ));
+        assert_eq!(task, expected_task);
+        let task = state.fetch_next_task(now).unwrap();
+        assert!(task.is_none())
+    }
+
+    #[test]
+    fn test_fetch_next_task_renewal_task() {
+        // Arrange
+        let mut state = create_test_empty_state();
+        let now = 10000;
+        state.domains.insert("renewal.com".to_string(), {
+            let mut domain = DomainEntry::new(None, now - 5000);
+            domain.enc_cert = Some(b"cert_data".to_vec());
+            domain.not_before = Some(0);
+            domain.not_after = Some(now);
+            domain
+        });
+
+        // Act
+        let result = state.fetch_next_task(now - 4000).unwrap();
+        assert!(result.is_none(), "No renewal needed yet");
+        let result = state.fetch_next_task(now - 3000).unwrap();
+        let expected_task = Some(canister_api::ScheduledTask::new(
+            canister_api::TaskKind::Renew,
+            "renewal.com".to_string(),
+            now - 3000,
+            Some(b"cert_data".to_vec()),
+        ));
+        assert_eq!(result, expected_task);
     }
 
     #[test]
