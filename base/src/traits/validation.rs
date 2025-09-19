@@ -1,8 +1,8 @@
+use async_trait::async_trait;
 use candid::Principal;
 use fqdn::FQDN;
 use mockall::automock;
 use thiserror::Error;
-use trait_async::trait_async;
 
 /// Errors that can occur during domain validation.
 #[derive(Debug, Error)]
@@ -37,7 +37,7 @@ pub enum ValidationError {
 }
 
 /// Trait for validating domain configurations for certificate issuance and management.
-#[trait_async]
+#[async_trait]
 #[automock]
 pub trait ValidatesDomains: Send + Sync {
     /// Validates that a domain can be registered or updated.

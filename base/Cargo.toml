@@ -24,7 +24,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-trait-async = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]

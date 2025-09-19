@@ -1,187 +1,541 @@
-use std::{env, sync::Arc, time::Duration};
+use std::collections::HashSet;
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, bail};
-use axum::{
-    body::{to_bytes, Body},
-    http::{Request, Response, StatusCode},
-    Router,
-};
+use anyhow::{anyhow, bail, Context};
+use async_trait::async_trait;
 use backend::router::create_router;
+use base::traits::repository::Repository;
+use base::types::domain::RegistrationStatus;
 use base::{
-    helpers::retry_async,
+    traits::validation::{ValidatesDomains, ValidationError},
     types::{
-        acme::AcmeClientConfig,
         cipher::CertificateCipher,
-        time::MockTime,
-        validator::Validator,
-        worker::{Worker, WorkerConfig},
+        worker::{Worker, WorkerConfig, WorkerMetrics},
     },
 };
-use canister_client::{local_client::LocalRepository, local_state::LocalState};
+use candid::Principal;
+use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
+use fqdn::FQDN;
+use ic_agent::identity::BasicIdentity;
+use ic_agent::{Agent, Identity};
+use ic_bn_lib::reqwest::{self, Url};
+use ic_bn_lib::{
+    tests::pebble::{dns::TokenManagerPebble, Env},
+    tls::acme::{
+        client::{AcmeCertificateClient, ClientBuilder},
+        AcmeUrl, TokenManager,
+    },
+};
+use pem::parse_many;
 use prometheus::Registry;
 use serde_json::json;
-use tokio::spawn;
+use tokio::{spawn, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tower::ServiceExt;
-use tracing::{info, Level};
+use tracing::{debug, info};
+use x509_parser::{parse_x509_certificate, prelude::GeneralName};
 
 mod helpers;
+use helpers::init_logging;
 
-const LIMIT: usize = 20000;
-const AWAIT_TIMEOUT: Duration = Duration::from_secs(120);
-const RETRY_INTERVAL: Duration = Duration::from_secs(15);
+use crate::helpers::TestEnv;
 
-pub async fn submit_registration(router: &Router, domain: &str) -> Response<Body> {
-    let body = json!({ "domain": domain });
+const INIT_CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_millis(100);
+const MAX_CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_secs(2);
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/v1/domains")
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap();
+const DOMAINS_COUNT: usize = 100;
+const WORKERS_COUNT: usize = 5;
 
-    router.clone().oneshot(request).await.unwrap()
+// Title: Custom Domains with Pebble ACME test server and multiple workers processing registration requests in parallel
+// Setup:
+// - Start Pocket IC and install the Custom Domains canister
+// - Start HTTP Gateway server on top of Pocket IC to emulate prod environment
+// - Start Pebble environment for issuing certificates via ACME DNS-01 challenge (includes ACME server and DNS management server)
+// - Start one backend API server accepting domain registration requests
+// - Start M workers polling the canister for tasks, executing them and submitting results back to the canister
+// Steps:
+// 1. Submit N domains for registration via the API
+//    Each worker should start picking up tasks and obtain certificates in parallel
+// 2. Verify all domains have been registered after all tasks are processed
+// 3. Download all certificates and verify they match the requested domains
+// 4. Submit half of the registered domains for deletion via the API calls
+// 5. Verify all these domains are eventually deleted from the canister
+// 6. Get canister metrics and verify the expected stats of domain registrations
+// 7. Get workers metrics and verify they all have processed more than one task each
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e_pebble_test() -> anyhow::Result<()> {
+    init_logging();
+
+    info!(
+        "Setting up test environment: Pocket IC, Pebble ACME and DNS servers, workers, and API server ..."
+    );
+    let (ctx, workers_metrics) = setup_test_environment().await?;
+
+    info!("Step 1: Submitting {DOMAINS_COUNT} domains for registration via the API ...");
+    let domains = submit_domains_for_registration(&ctx).await?;
+    wait_for_all_tasks_completion(&ctx.canister_repository).await?;
+
+    info!("Step 2: Verifying all domains have been registered after all tasks are processed");
+    verify_domains_registration(&ctx, &domains).await?;
+
+    info!("Step 3: Downloading all certificates and verifying they match the requested domains");
+    download_certificates_and_validate(&ctx, domains.clone()).await?;
+
+    info!("Step 4: Submitting half of the registered domains for deletion via the API calls");
+    let deleted_domains = delete_half_domains(&ctx, domains).await?;
+
+    info!("Step 5: Verifying all these domains are eventually deleted from the canister");
+    verify_domains_deletion(&ctx, deleted_domains).await?;
+
+    info!(
+        "Step 6: Getting canister metrics and verifying the expected stats of domain registrations"
+    );
+    verify_canister_metrics(&ctx).await?;
+
+    info!("Step 7: Getting workers metrics and verifying they all have processed more than one task each");
+    verify_workers_metrics(workers_metrics).await?;
+
+    Ok(())
 }
 
-async fn get_status(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/v1/domains/{domain}/status");
+async fn create_acme_client(
+    addr_acme: String,
+    token_manager: Arc<dyn TokenManager>,
+) -> anyhow::Result<Arc<dyn AcmeCertificateClient>> {
+    let builder = ClientBuilder::new(true)
+        .with_acme_url(AcmeUrl::Custom(format!("https://{addr_acme}/dir").parse()?))
+        .with_token_manager(token_manager);
 
-    let request = Request::builder()
-        .method("GET")
-        .uri(uri)
-        .header("content-type", "application/json")
-        .body(Body::empty())
-        .unwrap();
+    let (builder, _contract) = builder.create_account("mailto:foo@bar.com").await?;
 
-    router.clone().oneshot(request).await.unwrap()
+    let acme_client = builder
+        .build()
+        .await
+        .with_context(|| "failed to build ACME client")?;
+
+    Ok(Arc::new(acme_client))
 }
 
-async fn delete_domain(router: &Router, domain: &str) -> Response<Body> {
-    let uri = format!("/v1/domains/{domain}");
+// Mock validator that approves all domains for registration and deletion
+struct MockValidator;
 
-    let request = Request::builder()
-        .method("DELETE")
-        .uri(uri)
-        .header("content-type", "application/json")
-        .body(Body::empty())
-        .unwrap();
+#[async_trait]
+impl ValidatesDomains for MockValidator {
+    async fn validate(&self, _domain: &FQDN) -> Result<Principal, ValidationError> {
+        Ok("laqa6-raaaa-aaaam-aehzq-cai".parse().unwrap())
+    }
 
-    router.clone().oneshot(request).await.unwrap()
+    async fn validate_deletion(&self, _domain: &FQDN) -> Result<(), ValidationError> {
+        Ok(())
+    }
 }
 
-async fn await_registration_ready(router: &Router, domain: &str) {
-    let msg = &format!("awaiting registration for domain {domain}");
-    let closure = || async {
-        let response = get_status(router, domain).await;
-        let body_bytes = to_bytes(response.into_body(), LIMIT).await.unwrap();
-        let body_str = std::str::from_utf8(&body_bytes).unwrap();
-        if body_str.contains("registered") {
-            info!("registration is ready: {body_str}");
-            return Ok(());
-        }
-        bail!("certificate is not ready yet");
-    };
-
-    retry_async(
-        Some(msg),
-        Some(Level::INFO),
-        AWAIT_TIMEOUT,
-        RETRY_INTERVAL,
-        closure,
-    )
-    .await
-    .map_err(|err| anyhow!("failed to await for registration: {err:?}"))
-    .unwrap();
+#[allow(dead_code)]
+struct TestContext {
+    pocket_ic_env: TestEnv,
+    pebble_env: Env,
+    canister_repository: Arc<CanisterClient>,
+    http_gateway_url: Url,
+    api_server_addr: SocketAddr,
+    sender: Principal,
 }
 
-async fn await_registration_deletion(router: Router, domain: &str) {
-    let msg = &format!("awaiting deletion of domain {domain}");
-    let closure = || async {
-        let response = get_status(&router, domain).await;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Ok(());
-        }
-        bail!("domain is not deleted yet");
-    };
+async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetrics>)> {
+    let identity = test_identity();
+    let sender = identity
+        .sender()
+        .map_err(|_| anyhow!("Failed to extract sender"))?;
+    let authorized_principal = Some(sender);
 
-    retry_async(
-        Some(msg),
-        Some(Level::INFO),
-        AWAIT_TIMEOUT,
-        RETRY_INTERVAL,
-        closure,
-    )
-    .await
-    .map_err(|err| anyhow!("failed to await for registration: {err:?}"))
-    .unwrap();
-}
+    let mut pocket_ic_env = TestEnv::new(authorized_principal, sender).await?;
 
-#[tokio::test]
-#[ignore]
-async fn basic_registration_scenario() -> anyhow::Result<()> {
-    // For this domain a certificate will be obtained
-    let domain = &env::var("DOMAIN_NAME").expect("DOMAIN_NAME var is not set");
-    // API cloudflare token is required to perform an acme dns-01 challenge
-    let cloudflare_api_token =
-        env::var("CLOUDFLARE_API_TOKEN").expect("CLOUDFLARE_API_TOKEN var is not set");
-    helpers::init_logging();
-    // Initialize router
-    let mock_time = Arc::new(MockTime::new(1));
+    // Make HTTP Gateway with autoprogressing Pocket IC
+    let http_gateway_url = pocket_ic_env
+        .pic
+        .make_live_with_params(None, None, None, None)
+        .await;
+    info!("HTTP Gateway for Pocket IC running at {http_gateway_url}");
+
+    let pebble_env = Env::new().await;
+    info!(
+        "Pebble test environment started: ACME server at {}, DNS management server at {}",
+        pebble_env.addr_acme(),
+        pebble_env.addr_dns_management()
+    );
+
+    // Token manager for executing ACME DNS-01 challenges
+    let token_manager = Arc::new(TokenManagerPebble::new(
+        format!("http://{}", pebble_env.addr_dns_management()).parse()?,
+    ));
+
+    let acme_client = create_acme_client(pebble_env.addr_acme(), token_manager.clone()).await?;
+
+    let cancellation_token = CancellationToken::new();
+
+    let agent = Agent::builder()
+        .with_url(http_gateway_url.clone())
+        .with_identity(identity)
+        .build()?;
+    let root_key = pocket_ic_env
+        .pic
+        .root_key()
+        .await
+        .expect("failed to get root key");
+    agent.set_root_key(root_key);
+
     let cipher = {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
         let cipher = CertificateCipher::new_with_key(&key);
         Arc::new(cipher)
     };
-    let local_state = LocalState::new(mock_time);
-    let local_repository = Arc::new(LocalRepository::new(cipher, local_state));
-    let validator = Arc::new(Validator::default());
-    let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
-    let router = create_router(
-        local_repository.clone(),
+
+    let repository = Arc::new(CanisterClient::new(
+        agent,
+        pocket_ic_env.canister_id,
+        cipher,
+    ));
+
+    let prometheus_registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
+
+    let workers_metrics = Arc::new(WorkerMetrics::new(prometheus_registry.clone()));
+
+    let validator = Arc::new(MockValidator);
+
+    spawn_workers(
+        repository.clone(),
         validator.clone(),
-        registry.clone(),
-        true,
-    );
+        acme_client.clone(),
+        workers_metrics.clone(),
+        cancellation_token,
+    )
+    .await;
 
-    info!("user submits domain={domain} for registration");
-    let response = submit_registration(&router, domain).await;
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let api_addr = spawn_api_server(repository.clone(), validator, prometheus_registry).await?;
 
-    info!("user verifies domain is being processed");
-    let response = get_status(&router, domain).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body_bytes = to_bytes(response.into_body(), LIMIT).await.unwrap();
-    let body_str = std::str::from_utf8(&body_bytes).unwrap();
-    assert!(body_str.contains("processing"));
+    Ok((
+        TestContext {
+            pocket_ic_env,
+            pebble_env,
+            http_gateway_url,
+            sender,
+            canister_repository: repository,
+            api_server_addr: api_addr,
+        },
+        workers_metrics,
+    ))
+}
 
-    info!("starting worker, which peforms all tasks ...");
-    let token = CancellationToken::new();
-    let acme_client = Arc::new(AcmeClientConfig::new(cloudflare_api_token).build().await?);
+async fn spawn_workers(
+    repository: Arc<CanisterClient>,
+    validator: Arc<MockValidator>,
+    acme_client: Arc<dyn AcmeCertificateClient>,
+    metrics: Arc<WorkerMetrics>,
+    cancellation_token: CancellationToken,
+) {
+    for i in 0..WORKERS_COUNT {
+        let worker = Worker::new(
+            format!("worker_{}", i + 1),
+            repository.clone(),
+            validator.clone(),
+            acme_client.clone(),
+            WorkerConfig::default(),
+            metrics.clone(),
+            cancellation_token.clone(),
+        );
 
-    let worker = Worker::new(
-        "hard_worker".to_string(),
-        local_repository.clone(),
-        validator,
-        acme_client,
-        WorkerConfig::default(),
-        registry,
-        token.clone(),
-    );
-    spawn(async move { worker.run().await });
+        let delay = Duration::from_millis(i as u64 * 30);
 
-    info!("awaiting the worker to obtain a certificate ...");
-    await_registration_ready(&router, domain).await;
+        spawn(async move {
+            sleep(delay).await;
+            worker.run().await
+        });
+    }
+}
 
-    info!("user deletes the registration of domain={domain}");
-    let response = delete_domain(&router, domain).await;
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+async fn spawn_api_server(
+    repository: Arc<CanisterClient>,
+    validator: Arc<MockValidator>,
+    prometheus_registry: Registry,
+) -> anyhow::Result<SocketAddr> {
+    let api_addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    spawn(async move {
+        let router = create_router(repository, validator, prometheus_registry, true);
+        info!("Starting API server at http://{}", api_addr);
+        axum_server::bind(api_addr)
+            .serve(router.into_make_service())
+            .await
+    });
 
-    info!("awaiting the worker to delete the registration ...");
-    await_registration_deletion(router, domain).await;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(100))
+        .build()?;
 
-    token.cancel();
+    let metrics_url = format!("http://{}:{}/metrics", api_addr.ip(), api_addr.port());
+    // Wait for server to be ready by polling metrics endpoint
+    loop {
+        match client.get(&metrics_url).send().await {
+            Ok(response) if response.status().is_success() => {
+                info!("API server ready");
+                return Ok(api_addr);
+            }
+            Ok(_) | Err(_) => {
+                debug!("API server not ready yet");
+                sleep(Duration::from_millis(300)).await;
+            }
+        }
+    }
+}
+
+async fn submit_domains_for_registration(ctx: &TestContext) -> anyhow::Result<Vec<String>> {
+    let domains = (0..DOMAINS_COUNT)
+        .map(|i| format!("custom-domain-{i}.example.com"))
+        .collect::<Vec<_>>();
+
+    let mut task_handles = vec![];
+
+    let client = reqwest::Client::new();
+
+    for domain in domains.clone() {
+        let client_cloned = client.clone();
+        let api_addr = ctx.api_server_addr;
+
+        let handle = spawn(async move {
+            client_cloned
+                .post(format!(
+                    "http://{}:{}/v1/domains",
+                    api_addr.ip(),
+                    api_addr.port()
+                ))
+                .header("Content-Type", "application/json")
+                .json(&json!({"domain": domain}))
+                .send()
+                .await
+                .unwrap()
+        });
+
+        task_handles.push(handle);
+    }
+
+    for handle in task_handles {
+        let response = handle.await?;
+        assert!(response.status().is_success());
+    }
+
+    Ok(domains)
+}
+
+async fn wait_for_all_tasks_completion(repository: &Arc<CanisterClient>) -> anyhow::Result<()> {
+    let duration = Duration::from_secs(5);
+    while repository.has_next_task().await? {
+        debug!("Tasks queue is not empty, sleeping {duration:?} ...");
+        sleep(duration).await;
+    }
+    Ok(())
+}
+
+async fn verify_domains_registration(
+    ctx: &TestContext,
+    domains: &Vec<String>,
+) -> anyhow::Result<()> {
+    for domain in domains {
+        let mut sleep_interval = INIT_CANISTER_CALL_RETRY_DELAY;
+        loop {
+            let status = ctx
+                .canister_repository
+                .get_domain_status(&domain.parse()?)
+                .await?
+                .context("Domain not found")?;
+            if status.status == RegistrationStatus::Registered {
+                break;
+            }
+            info!("Domain {domain} is not yet registered, sleeping {sleep_interval:?} ...");
+            sleep(sleep_interval).await;
+            sleep_interval = 2 * sleep_interval;
+            sleep_interval = sleep_interval.min(MAX_CANISTER_CALL_RETRY_DELAY)
+        }
+    }
+    Ok(())
+}
+
+async fn download_certificates_and_validate(
+    ctx: &TestContext,
+    domains: Vec<String>,
+) -> anyhow::Result<()> {
+    let registered_domains = ctx.canister_repository.all_registrations().await?;
+    let mut domains_set: HashSet<String> = HashSet::from_iter(domains);
+    for registered_domain in registered_domains {
+        let domain = extract_domain_from_cert(registered_domain.cert)?;
+        assert!(domains_set.remove(&domain));
+    }
+    // All domains should have been matched
+    assert!(domains_set.is_empty());
+    Ok(())
+}
+
+async fn delete_half_domains(
+    ctx: &TestContext,
+    domains: Vec<String>,
+) -> anyhow::Result<Vec<String>> {
+    let domains_to_delete = domains[..(DOMAINS_COUNT / 2)].to_vec();
+
+    let client = reqwest::Client::new();
+
+    for domain in domains_to_delete.clone() {
+        let response = client
+            .delete(format!(
+                "http://{}:{}/v1/domains/{}",
+                ctx.api_server_addr.ip(),
+                ctx.api_server_addr.port(),
+                domain
+            ))
+            .send()
+            .await?;
+        assert!(response.status().is_success());
+    }
+
+    Ok(domains_to_delete)
+}
+
+async fn verify_domains_deletion(
+    ctx: &TestContext,
+    deleted_domains: Vec<String>,
+) -> anyhow::Result<()> {
+    for domain in deleted_domains {
+        let mut sleep_interval = INIT_CANISTER_CALL_RETRY_DELAY;
+        loop {
+            let status = ctx
+                .canister_repository
+                .get_domain_status(&domain.parse()?)
+                .await?;
+            if status.is_none() {
+                break;
+            }
+            info!("Domain {domain} is not yet deleted, sleeping {sleep_interval:?} ...");
+            sleep(sleep_interval).await;
+            sleep_interval = 2 * sleep_interval;
+            sleep_interval = sleep_interval.min(MAX_CANISTER_CALL_RETRY_DELAY)
+        }
+    }
+    Ok(())
+}
+
+async fn verify_canister_metrics(ctx: &TestContext) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+
+    let metrics_text = client
+        .get(format!(
+            "http://{}.raw.{}:{}/metrics",
+            ctx.pocket_ic_env.canister_id,
+            ctx.http_gateway_url.domain().unwrap(),
+            ctx.http_gateway_url.port().unwrap(),
+        ))
+        .send()
+        .await?
+        .text()
+        .await?;
+
+    assert!(metrics_text.contains(&format!(
+        "domains_total{{registration_status=\"registered\"}} {}",
+        DOMAINS_COUNT / 2
+    )));
+    assert!(metrics_text.contains("domains_total{registration_status=\"expired\"} 0"));
+    assert!(metrics_text.contains("domains_total{registration_status=\"failed\"} 0"));
+    assert!(metrics_text.contains("domains_total{registration_status=\"registering\"} 0"));
 
     Ok(())
+}
+
+async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<()> {
+    let mut issue_tasks_total = 0;
+    let mut delete_tasks_total = 0;
+
+    for i in 0..WORKERS_COUNT {
+        let worker_name = format!("worker_{}", i + 1);
+        let worker_name = worker_name.as_str();
+
+        let issue_tasks = metrics
+            .task_submissions
+            .get_metric_with_label_values(&[
+                worker_name, // worker_name
+                "issue",     // task_kind
+                "success",   // status
+                "1",         // attempts
+                "",          // last_failure
+            ])?
+            .get();
+
+        let delete_tasks = metrics
+            .task_submissions
+            .get_metric_with_label_values(&[
+                worker_name, // worker_name
+                "delete",    // task_kind
+                "success",   // status
+                "1",         // attempts
+                "",          // last_failure
+            ])?
+            .get();
+
+        issue_tasks_total += issue_tasks;
+        delete_tasks_total += delete_tasks;
+
+        info!("Worker {worker_name} has processed {issue_tasks} issue tasks");
+        info!("Worker {worker_name} has processed {delete_tasks} delete tasks");
+
+        assert!(
+            issue_tasks > 0,
+            "Worker {worker_name} has not processed any issue tasks"
+        );
+        assert!(
+            delete_tasks > 0,
+            "Worker {worker_name} has not processed any delete tasks"
+        );
+    }
+
+    assert_eq!(issue_tasks_total as usize, DOMAINS_COUNT);
+    assert_eq!(delete_tasks_total as usize, DOMAINS_COUNT / 2);
+
+    Ok(())
+}
+
+fn extract_domain_from_cert(cert: Vec<u8>) -> anyhow::Result<String> {
+    // Parse certificate chain
+    let pem_str =
+        std::str::from_utf8(&cert).with_context(|| "Certificate contains invalid UTF-8")?;
+
+    let pems = parse_many(pem_str).with_context(|| "Failed to parse PEM certificates")?;
+
+    let Some(first_cert) = pems.first() else {
+        bail!("No certificates found in PEM chain");
+    };
+
+    // Parse certificate
+    let (_, cert) = parse_x509_certificate(first_cert.contents())
+        .with_context(|| "Failed to parse X509 certificate")?;
+
+    // Validate that issued certificate is for the requested domain
+    let subject_alt_names = cert
+        .subject_alternative_name()?
+        .map(|ext| &ext.value.general_names)
+        .with_context(|| "Certificate has no Subject Alternative Name")?;
+
+    let cert_domains: Vec<String> = subject_alt_names
+        .iter()
+        .filter_map(|name| match name {
+            GeneralName::DNSName(dns) => Some(dns.to_string()),
+            _ => None,
+        })
+        .collect();
+
+    Ok(cert_domains[0].clone())
+}
+
+pub fn test_identity() -> BasicIdentity {
+    BasicIdentity::from_pem(
+        &b"-----BEGIN PRIVATE KEY-----
+MFMCAQEwBQYDK2VwBCIEIJKDIfd1Ybt48Z23cVEbjL2DGj1P5iDYmthcrptvBO3z
+oSMDIQCJuBJPWt2WWxv0zQmXcXMjY+fP0CJSsB80ztXpOFd2ZQ==
+-----END PRIVATE KEY-----"[..],
+    )
+    .expect("failed to parse identity from PEM")
 }

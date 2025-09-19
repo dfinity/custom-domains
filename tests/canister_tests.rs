@@ -22,7 +22,9 @@ mod helpers;
 async fn test_canister_authorization() -> anyhow::Result<()> {
     init_logging();
 
-    let env = TestEnv::new().await?;
+    let sender = Principal::from_text("oqjvn-fqaaa-aaaab-qab5q-cai")?;
+    let authorized_principal = Some(sender);
+    let env = TestEnv::new(authorized_principal, sender).await?;
 
     info!("Step 1: Test successful call by authorized principal");
     verify_authorized_principal_access(&env).await?;
@@ -38,7 +40,9 @@ async fn test_canister_authorization() -> anyhow::Result<()> {
 async fn test_unregistered_domain_deletion() -> anyhow::Result<()> {
     init_logging();
 
-    let env = TestEnv::new().await?;
+    let sender = Principal::from_text("oqjvn-fqaaa-aaaab-qab5q-cai")?;
+    let authorized_principal = Some(sender);
+    let env = TestEnv::new(authorized_principal, sender).await?;
 
     let domain = "example.com";
 
@@ -109,7 +113,9 @@ async fn test_unregistered_domain_deletion() -> anyhow::Result<()> {
 async fn test_comprehensive_registration_scenario() -> anyhow::Result<()> {
     init_logging();
 
-    let env = TestEnv::new().await?;
+    let sender = Principal::from_text("oqjvn-fqaaa-aaaab-qab5q-cai")?;
+    let authorized_principal = Some(sender);
+    let env = TestEnv::new(authorized_principal, sender).await?;
 
     let domain_successful = "example1.com";
     let domain_with_failure = "example2.com";
@@ -296,12 +302,7 @@ async fn verify_authorized_principal_access(env: &TestEnv) -> anyhow::Result<()>
 
     let result = env
         .pic
-        .query_call(
-            env.canister_id,
-            env.authorized_principal,
-            "has_next_task",
-            arg,
-        )
+        .query_call(env.canister_id, env.sender, "has_next_task", arg)
         .await
         .map_err(|err| anyhow!("Query call from authorized principal rejected: {:?}", err))?;
 

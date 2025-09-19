@@ -29,7 +29,7 @@ edition = "2021"
 [workspace.dependencies]
 anyhow = "1.0.98"
 arc-swap = { version = "1.7.1" }
-async-trait = "0.1.83"
+async-trait = "0.1.89"
 axum = "0.8.4"
 axum-server = "0.7.2"
 candid = "0.10.16"
@@ -67,11 +67,11 @@ tokio-util = "0.7.15"
 tower = "0.5.2"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
-trait-async = "0.1.24"
 x509-parser = "0.17.0"
 
 [dev-dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
 axum-server = { workspace = true }
 backend = { path = "./backend" }
@@ -80,9 +80,11 @@ candid = { workspace = true }
 canister-api = { path = "./canister/api" }
 canister-client = { path = "./canister_client" }
 chacha20poly1305 = { workspace = true }
+fqdn = { workspace = true }
 hex = { workspace = true }
 ic-agent = { workspace = true }
 ic-bn-lib = { workspace = true }
+pem = { workspace = true }
 pocket-ic = { workspace = true }
 prometheus = { workspace = true }
 rcgen = { workspace = true }
@@ -92,3 +94,4 @@ tokio-util = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+x509-parser = { workspace = true }

@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use async_trait::async_trait;
 use canister_api::{
     FetchTaskError as ApiFetchTaskError, GetDomainStatusError as ApiGetDomainStatusError,
     GetLastChangeTimeError as ApiGetLastChangeTimeError, HasNextTaskError as ApiHasNextTaskError,
@@ -10,7 +11,6 @@ use fqdn::FQDN;
 use mockall::automock;
 use strum::IntoStaticStr;
 use thiserror::Error;
-use trait_async::trait_async;
 
 use crate::{
     traits::time::UtcTimestamp,
@@ -42,7 +42,7 @@ pub enum RepositoryError {
     InternalError(#[from] anyhow::Error),
 }
 
-#[trait_async]
+#[async_trait]
 #[automock]
 pub trait Repository: Send + Sync {
     /// Retrieves domain status.
@@ -50,6 +50,8 @@ pub trait Repository: Send + Sync {
         &self,
         domain: &FQDN,
     ) -> Result<Option<DomainStatus>, RepositoryError>;
+    /// Checks if there is at least one pending task for execution.
+    async fn has_next_task(&self) -> Result<bool, RepositoryError>;
     /// Fetch next pending task for execution.
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError>;
     /// Submits task execution result.

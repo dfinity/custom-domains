@@ -5,7 +5,7 @@ use base::types::{
     acme::AcmeClientConfig,
     cipher::CertificateCipher,
     validator::Validator,
-    worker::{Worker, WorkerConfig},
+    worker::{Worker, WorkerConfig, WorkerMetrics},
 };
 use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
@@ -48,13 +48,14 @@ async fn main() -> anyhow::Result<()> {
     let token = CancellationToken::new();
     let acme_client = Arc::new(AcmeClientConfig::new(cloudflare_api_token).build().await?);
     let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
+    let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
     let worker = Worker::new(
         "worker_1".to_string(),
         repository.clone(),
         validator.clone(),
         acme_client,
         WorkerConfig::default(),
-        registry.clone(),
+        metrics,
         token.clone(),
     );
 
