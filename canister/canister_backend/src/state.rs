@@ -507,6 +507,8 @@ impl CanisterState {
             entry.last_failure_reason = Some(failure);
             entry.taken_at = None;
             entry.last_fail_time = Some(now);
+            // To keep scheduling fair, update the task creation time on failure
+            entry.task_created_at = Some(now);
 
             // Delete the task if the retry limit is reached
             if entry.failures_count >= MAX_TASK_FAILURES {
