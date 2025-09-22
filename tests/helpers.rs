@@ -3,8 +3,8 @@ use std::{fs, path::PathBuf, sync::Once};
 use anyhow::anyhow;
 use candid::{Decode, Encode};
 use canister_api::{
-    FetchTaskResult, GetDomainStatusResult, HasNextTaskResult, InitArg, InputTask,
-    SubmitTaskResult, TaskKind, TaskResult, TryAddTaskResult,
+    FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult, HasNextTaskResult, InitArg,
+    InputTask, SubmitTaskResult, TaskKind, TaskResult, TryAddTaskResult,
 };
 use hex::encode;
 use ic_agent::export::Principal;
@@ -96,6 +96,18 @@ impl TestEnv {
             .map_err(|e| anyhow!("query call failed: {e}"))?;
 
         Decode!(&result, GetDomainStatusResult).map_err(|_| anyhow!("decoding failed"))
+    }
+
+    pub async fn get_domain_entry(&self, domain: &str) -> anyhow::Result<GetDomainEntryResult> {
+        let arg = Encode!(&domain)?;
+
+        let result = self
+            .pic
+            .query_call(self.canister_id, self.sender, "get_domain_entry", arg)
+            .await
+            .map_err(|e| anyhow!("query call failed: {e}"))?;
+
+        Decode!(&result, GetDomainEntryResult).map_err(|_| anyhow!("decoding failed"))
     }
 
     pub async fn has_next_task(&self) -> anyhow::Result<HasNextTaskResult> {

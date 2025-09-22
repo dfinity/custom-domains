@@ -1,9 +1,9 @@
 use canister_api::{
-    FetchTaskError, FetchTaskResult, GetDomainStatusError, GetDomainStatusResult,
-    GetLastChangeTimeError, GetLastChangeTimeResult, HasNextTaskError, HasNextTaskResult, InitArg,
-    InputTask, ListCertificatesPageError, ListCertificatesPageInput, ListCertificatesPageResult,
-    SubmitTaskError, SubmitTaskResult, TaskResult, TryAddTaskError, TryAddTaskResult,
-    STALE_DOMAINS_CLEANUP_INTERVAL,
+    FetchTaskError, FetchTaskResult, GetDomainEntryError, GetDomainEntryResult,
+    GetDomainStatusError, GetDomainStatusResult, GetLastChangeTimeError, GetLastChangeTimeResult,
+    HasNextTaskError, HasNextTaskResult, InitArg, InputTask, ListCertificatesPageError,
+    ListCertificatesPageInput, ListCertificatesPageResult, SubmitTaskError, SubmitTaskResult,
+    TaskResult, TryAddTaskError, TryAddTaskResult, STALE_DOMAINS_CLEANUP_INTERVAL,
 };
 use ic_cdk::{
     api::{call::accept_message, time},
@@ -74,6 +74,12 @@ async fn get_domain_status(domain: String) -> GetDomainStatusResult {
     validate_caller(GetDomainStatusError::Unauthorized)?;
     let now = get_time_secs();
     with_state(|state| state.get_domain_status(domain, now))
+}
+
+#[query]
+async fn get_domain_entry(domain: String) -> GetDomainEntryResult {
+    validate_caller(GetDomainEntryError::Unauthorized)?;
+    with_state(|state| state.get_domain_entry(domain))
 }
 
 #[query]

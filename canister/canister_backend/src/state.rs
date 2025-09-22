@@ -1,6 +1,6 @@
 use candid::Principal;
 use canister_api::{
-    CertificatesPage, DomainStatus, FetchTaskResult, GetDomainStatusResult,
+    CertificatesPage, DomainStatus, FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult,
     GetLastChangeTimeResult, HasNextTaskResult, InputTask, ListCertificatesPageInput,
     ListCertificatesPageResult, RegisteredDomain, RegistrationStatus, ScheduledTask,
     SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutput, TaskResult,
@@ -319,6 +319,15 @@ impl CanisterState {
         };
 
         Ok(Some(domain_status))
+    }
+
+    pub fn get_domain_entry(&self, domain: String) -> GetDomainEntryResult {
+        let entry = match self.domains.get(&domain) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
+
+        Ok(Some(entry.into()))
     }
 
     // Removes unregistered domains that have been in the system for too long
@@ -731,6 +740,26 @@ pub fn with_state<R>(f: impl FnOnce(&CanisterState) -> R) -> R {
 
 pub fn with_state_mut<R>(f: impl FnOnce(&mut CanisterState) -> R) -> R {
     STATE.with(|s| f(&mut s.borrow_mut()))
+}
+
+impl From<DomainEntry> for canister_api::DomainEntry {
+    fn from(entry: DomainEntry) -> Self {
+        canister_api::DomainEntry {
+            task: entry.task,
+            last_fail_time: entry.last_fail_time,
+            last_failure_reason: entry.last_failure_reason.clone(),
+            failures_count: entry.failures_count,
+            rate_limit_failures_count: entry.rate_limit_failures_count,
+            canister_id: entry.canister_id,
+            created_at: entry.created_at,
+            taken_at: entry.taken_at,
+            task_created_at: entry.task_created_at,
+            enc_cert: entry.enc_cert.clone(),
+            enc_priv_key: entry.enc_priv_key.clone(),
+            not_before: entry.not_before,
+            not_after: entry.not_after,
+        }
+    }
 }
 
 #[cfg(test)]
