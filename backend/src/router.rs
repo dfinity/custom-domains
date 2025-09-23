@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     middleware::{from_fn, from_fn_with_state},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use base::traits::{repository::Repository, validation::ValidatesDomains};
@@ -28,8 +28,8 @@ pub fn create_router(
 
     let api_router = Router::new()
         .route("/v1/domains", post(create_handler))
-        .route("/v1/domains/{:id}/status", get(get_handler))
-        .route("/v1/domains/{:id}/update", post(update_handler))
+        .route("/v1/domains/{:id}", get(get_handler))
+        .route("/v1/domains/{:id}", patch(update_handler))
         .route("/v1/domains/{:id}", delete(delete_handler))
         .route("/v1/domains/{:id}/validate", get(validate_handler))
         .fallback(|| async { (StatusCode::NOT_FOUND, "path not found") })
@@ -48,7 +48,19 @@ pub fn create_router(
         Router::new()
     };
 
-    api_router.merge(metrics_router)
+    let mut api_router = api_router.merge(metrics_router);
+
+    #[cfg(feature = "openapi")]
+    {
+        use crate::openapi::get_openapi_json;
+        use utoipa_swagger_ui::SwaggerUi;
+
+        let swagger_ui =
+            SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", get_openapi_json());
+        api_router = api_router.merge(swagger_ui);
+    }
+
+    api_router
 }
 
 #[cfg(test)]
@@ -153,7 +165,6 @@ mod tests {
         ] {
             assert_eq!(status, StatusCode::ACCEPTED);
             assert_eq!(response_json["status"], "success");
-            assert_eq!(response_json["code"], 202);
             assert_eq!(response_json["data"]["domain"], domain);
             assert_eq!(
                 response_json["data"]["canister_id"],
@@ -189,7 +200,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 409);
         assert_eq!(
             response_json["message"],
             "Domain registration request failed"
@@ -226,7 +236,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 409);
         assert_eq!(response_json["data"]["domain"], domain);
         assert_eq!(
             response_json["errors"].as_str().unwrap(),
@@ -249,7 +258,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 400);
         assert_eq!(response_json["data"]["domain"], "invalid..domain");
         assert!(response_json["errors"]
             .as_str()
@@ -279,7 +287,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 400);
         assert_eq!(response_json["data"]["domain"], "example.org");
         assert_eq!(
             response_json["errors"].as_str().unwrap(),
@@ -312,7 +319,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 500);
         assert_eq!(response_json["data"]["domain"], "example.org");
         assert_eq!(response_json["errors"], "internal_server_error: An unexpected error occurred. Please try again later or contact support.");
     }
@@ -396,7 +402,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 400);
         assert_eq!(response_json["errors"], "bad_request: Domain is too long");
     }
 
@@ -423,11 +428,10 @@ mod tests {
 
     /// Helper function to make a GET request to /v1/domains/{domain}/status
     async fn get_domain_status_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
-        let uri = format!("/v1/domains/{domain}/status");
+        let uri = format!("/v1/domains/{domain}");
         let request = Request::builder()
             .method("GET")
             .uri(uri)
-            .header("content-type", "application/json")
             .body(Body::empty())
             .unwrap();
 
@@ -481,7 +485,6 @@ mod tests {
                     "Failed for status: {expected_status_str} with domain: {domain}",
                 );
                 assert_eq!(response_json["status"], "success");
-                assert_eq!(response_json["code"], 200);
                 assert_eq!(response_json["data"]["domain"], *domain);
                 assert_eq!(
                     response_json["data"]["canister_id"],
@@ -527,7 +530,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::OK);
         assert_eq!(response_json["status"], "success");
-        assert_eq!(response_json["code"], 200);
         assert_eq!(response_json["data"]["domain"], "example.org");
         assert!(response_json["data"]["canister_id"].is_null());
         // Important: internal failure message is not exposed in API response
@@ -559,7 +561,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 404);
         assert_eq!(response_json["data"]["domain"], "nonexistent.org");
         assert_eq!(
             response_json["message"].as_str().unwrap(),
@@ -584,7 +585,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 400);
         assert_eq!(response_json["data"]["domain"], "invalid..domain");
         assert_eq!(
             response_json["message"].as_str().unwrap(),
@@ -604,21 +604,18 @@ mod tests {
         let router = create_test_router(mock_repository, mock_validator);
 
         // Act
-        let (status, response_json) = get_domain_status_request(router, "").await;
+        let uri = "/v1/domains/".to_string(); // Missing domain
+        let request = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
 
         // Assert
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 400);
-        assert_eq!(response_json["data"]["domain"], "");
-        assert_eq!(
-            response_json["message"].as_str().unwrap(),
-            "Registration status request failed"
-        );
-        assert_eq!(
-            response_json["errors"].as_str().unwrap(),
-            "bad_request: Domain cannot be empty"
-        );
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -635,7 +632,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 400);
         assert_eq!(response_json["data"]["domain"], long_domain);
         assert_eq!(
             response_json["message"].as_str().unwrap(),
@@ -669,7 +665,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 500);
         assert_eq!(response_json["data"]["domain"], "example.org");
         assert_eq!(
             response_json["message"].as_str().unwrap(),
@@ -679,27 +674,6 @@ mod tests {
             response_json["errors"].as_str().unwrap(),
             "internal_server_error: An unexpected error occurred. Please try again later or contact support."
         );
-    }
-
-    #[tokio::test]
-    async fn test_get_domain_status_missing_domain_in_path() {
-        // Arrange
-        let mock_validator = MockValidatesDomains::new();
-        let mock_repository = MockRepository::new();
-        let router = create_test_router(mock_repository, mock_validator);
-
-        // Act: request without domain in path
-        let request = Request::builder()
-            .method("GET")
-            .uri("/v1/domains//status")
-            .header("content-type", "application/json")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = router.oneshot(request).await.unwrap();
-
-        // Assert: should get bad request due to empty domain
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -765,7 +739,6 @@ mod tests {
             // Assert
             assert_eq!(status, StatusCode::OK,);
             assert_eq!(response_json["status"], "success");
-            assert_eq!(response_json["code"], 200);
             assert_eq!(response_json["data"]["domain"], *domain);
             assert_eq!(
                 response_json["data"]["canister_id"],
@@ -801,7 +774,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 422);
         assert_eq!(response_json["data"]["domain"], "example.org");
         assert_eq!(
             response_json["message"].as_str().unwrap(),
@@ -814,12 +786,11 @@ mod tests {
     }
 
     /// Helper function to make a POST request to /v1/domains/{domain}/update
-    async fn post_domain_update_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
-        let uri = format!("/v1/domains/{domain}/update");
+    async fn domain_update_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
+        let uri = format!("/v1/domains/{domain}");
         let request = Request::builder()
-            .method("POST")
+            .method("PATCH")
             .uri(uri)
-            .header("content-type", "application/json")
             .body(Body::empty())
             .unwrap();
 
@@ -862,10 +833,9 @@ mod tests {
         let router = create_test_router(mock_repository, mock_validator);
 
         // Act
-        let (status, response_json) =
-            post_domain_update_request(router.clone(), domain_normal).await;
+        let (status, response_json) = domain_update_request(router.clone(), domain_normal).await;
         let (status_unicode, response_json_unicode) =
-            post_domain_update_request(router, subdomain_unicode).await;
+            domain_update_request(router, subdomain_unicode).await;
 
         // Assert
         for (status, response_json, domain) in [
@@ -874,7 +844,6 @@ mod tests {
         ] {
             assert_eq!(status, StatusCode::ACCEPTED);
             assert_eq!(response_json["status"], "success");
-            assert_eq!(response_json["code"], 202);
             assert_eq!(response_json["data"]["domain"], domain);
             assert_eq!(
                 response_json["data"]["canister_id"],
@@ -904,12 +873,11 @@ mod tests {
         let router = create_test_router(mock_repository, mock_validator);
 
         // Act
-        let (status, response_json) = post_domain_update_request(router, "example.org").await;
+        let (status, response_json) = domain_update_request(router, "example.org").await;
 
         // Assert
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 400);
         assert_eq!(
             response_json["message"],
             "Update domain registration request failed"
@@ -977,7 +945,6 @@ mod tests {
         ] {
             assert_eq!(status, StatusCode::ACCEPTED);
             assert_eq!(response_json["status"], "success");
-            assert_eq!(response_json["code"], 202);
             assert_eq!(response_json["data"]["domain"], domain);
             assert!(response_json["data"]["canister_id"].is_null());
             assert_eq!(
@@ -1009,7 +976,6 @@ mod tests {
         // Assert
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(response_json["status"], "error");
-        assert_eq!(response_json["code"], 404);
         assert_eq!(
             response_json["message"],
             "Delete domain registration request failed"

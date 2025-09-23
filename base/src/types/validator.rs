@@ -162,9 +162,7 @@ impl Validator {
                     Ok(())
                 } else {
                     Err(ValidationError::UnexpectedError(anyhow!(
-                        "Failed to resolve TXT record for {}: {}",
-                        txt_src,
-                        err
+                        "Failed to resolve TXT record for {txt_src}: {err}"
                     )))
                 }
             }
@@ -196,9 +194,7 @@ impl Validator {
                     Ok(())
                 } else {
                     Err(ValidationError::UnexpectedError(anyhow!(
-                        "Failed to resolve TXT record for {}: {}",
-                        txt_src,
-                        err
+                        "Failed to resolve TXT record for {txt_src}: {err}",
                     )))
                 }
             }
@@ -230,9 +226,7 @@ impl Validator {
                     }
                 } else {
                     ValidationError::UnexpectedError(anyhow!(
-                        "Failed to resolve CNAME from {}: {}",
-                        cname_src,
-                        err
+                        "Failed to resolve CNAME from {cname_src}: {err}"
                     ))
                 }
             })?;
@@ -268,9 +262,7 @@ impl Validator {
                     }
                 } else {
                     ValidationError::UnexpectedError(anyhow!(
-                        "Failed to resolve TXT record at {}: {}",
-                        txt_src,
-                        err
+                        "Failed to resolve TXT record at {txt_src}: {err}",
                     ))
                 }
             })?;

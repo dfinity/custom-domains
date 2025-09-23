@@ -25,6 +25,7 @@ pub struct RegisteredDomain {
 /// Represents the status of a domain registration process.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum RegistrationStatus {
     /// The registration is currently being processed
     Registering,

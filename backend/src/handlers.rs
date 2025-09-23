@@ -2,7 +2,10 @@ use base::types::task::TaskKind;
 
 use crate::{
     backend_service::BackendService,
-    models::{error_response, success_response, ApiError, DomainData, PostPayload},
+    models::{
+        error_response, success_response, ApiError, CreateOrUpdateResponse, DeleteResponse,
+        ErrorResponse, GetStatusResponse, PostPayload, ValidateResponse,
+    },
 };
 use axum::{
     extract::{Path, Request, State},
@@ -42,56 +45,23 @@ fn log_error(err: &ApiError, domain: &str, operation: &str) {
     );
 }
 
-/// POST /domains
+/// Register a new domain.
 ///
-/// Registers a new domain by triggering a certificate issuance task.
-/// Responds with 202 Accepted to indicate async processing.
-///
-/// Example responses:
-///
-/// 202 Accepted:
-/// {
-///   "status": "success",
-///   "code": 202,
-///   "message": "Domain registration request accepted and may take a few minutes to process",
-///   "data": {
-///     "domain": "example.org",
-///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///   }
-/// }
-///
-/// 400 Bad Request:
-/// {
-///   "status": "error",
-///   "code": 400,
-///   "message": "Domain registration request failed",
-///   "data": {
-///     "domain": "example.org"
-///   },
-///   "errors": "bad_request: missing DNS CNAME record from _acme-challenge.example.org. to _acme-challenge.example.org.icp2.io."
-/// }
-///
-/// 409 Conflict (submitted after issue finishes):
-/// {
-///   "status": "error",
-///   "code": 409,
-///   "message": "Domain registration request failed",
-///   "data": {
-///     "domain": "example.org"
-///   },
-///   "errors": "conflict: Certificate for example.org already exists; reissuance is not permitted."
-/// }
-///
-/// 409 Conflict (submitted before issue finishes):
-/// {
-///   "status": "error",
-///   "code": 409,
-///   "message": "Domain registration request failed",
-///   "data": {
-///     "domain": "example.org"
-///   },
-///   "errors": "conflict: A task for example.org is already in progress. Please retry after it completes."
-/// }
+/// Triggers an async certificate issuance task for the specified domain.
+#[cfg_attr(
+    feature = "openapi",
+    utoipa::path(
+        post,
+        path = "/v1/domains",
+        request_body = PostPayload,
+        responses(
+            (status = 202, description = "Domain registration request accepted", body = crate::models::ApiResponse<CreateOrUpdateResponse>),
+            (status = 400, description = "Invalid request data", body = crate::models::ApiResponse<ErrorResponse>),
+            (status = 409, description = "Conflict - certificate already exists or task in progress", body = crate::models::ApiResponse<ErrorResponse>)
+        ),
+        tag = "domains"
+    )
+)]
 pub async fn create_handler(
     State(backend_service): State<BackendService>,
     Json(PostPayload { domain }): Json<PostPayload>,
@@ -99,11 +69,9 @@ pub async fn create_handler(
     match backend_service.submit_task(&domain, TaskKind::Issue).await {
         Ok(canister_id) => success_response(
             StatusCode::ACCEPTED,
-            DomainData {
+            CreateOrUpdateResponse {
                 domain: domain.clone(),
-                canister_id: Some(canister_id),
-                validation_status: None,
-                registration_status: None,
+                canister_id,
             },
             Some(
                 "Domain registration request accepted and may take a few minutes to process"
@@ -114,46 +82,33 @@ pub async fn create_handler(
             log_error(&err, &domain, "create_registration");
             error_response(
                 err,
-                DomainData {
-                    domain,
-                    canister_id: None,
-                    validation_status: None,
-                    registration_status: None,
-                },
+                ErrorResponse::new(domain),
                 Some("Domain registration request failed".to_string()),
             )
         }
     }
 }
 
-/// POST /domains/{id}/update
+/// Update a domain's canister mapping.
 ///
-/// Triggers an update task for an existing domain registration, updates domain -> canister_id mapping.
-/// Responds with 202 Accepted to indicate async processing.
-///
-/// Example responses:
-///
-/// 202 Accepted:
-/// {
-///   "status": "success",
-///   "code": 202,
-///   "message": "Update domain registration request accepted and may take a few minutes to process",
-///   "data": {
-///     "domain": "example.org",
-///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai"
-///   }
-/// }
-///
-/// Error responses:
-/// {
-///   "status": "error",
-///   "code": xxx,
-///   "message": "Update domain registration request failed",
-///   "data": {
-///     "domain": "example.org"
-///   },
-///   "errors": "error details..."
-/// }
+/// Changes which canister the registered domain points to via an async task.
+#[cfg_attr(
+    feature = "openapi",
+    utoipa::path(
+        patch,
+        path = "/v1/domains/{id}",
+        params(
+            ("id" = String, Path, description = "Domain name to update")
+        ),
+        responses(
+            (status = 202, description = "Update request accepted", body = crate::models::ApiResponse<CreateOrUpdateResponse>),
+            (status = 400, description = "Invalid request data", body = crate::models::ApiResponse<ErrorResponse>),
+            (status = 404, description = "Domain not found", body = crate::models::ApiResponse<ErrorResponse>),
+            (status = 409, description = "Conflict - another task already in progress", body = crate::models::ApiResponse<ErrorResponse>)
+        ),
+        tag = "domains"
+    )
+)]
 pub async fn update_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
@@ -161,11 +116,9 @@ pub async fn update_handler(
     match backend_service.submit_task(&domain, TaskKind::Update).await {
         Ok(canister_id) => success_response(
             StatusCode::ACCEPTED,
-            DomainData {
+            CreateOrUpdateResponse {
                 domain: domain.clone(),
-                canister_id: Some(canister_id),
-                validation_status: None,
-                registration_status: None,
+                canister_id,
             },
             Some(
                 "Update domain registration request accepted and may take a few minutes to process"
@@ -176,60 +129,30 @@ pub async fn update_handler(
             log_error(&err, &domain, "update_registration");
             error_response(
                 err,
-                DomainData {
-                    domain,
-                    canister_id: None,
-                    validation_status: None,
-                    registration_status: None,
-                },
+                ErrorResponse::new(domain),
                 Some("Update domain registration request failed".to_string()),
             )
         }
     }
 }
 
-/// GET /domains/{id}/status
-///
-/// Retrieves the current registration status of the given domain.
-/// Returns 200 OK with the status payload.
-///
-/// Example responses:
-///
-/// 200 OK:
-/// {
-///   "status": "success",
-///   "code": 200,
-///   "message": "Registration status of the domain",
-///   "data": {
-///     "domain": "example.org",
-///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "registration_status": "registered" | "processing"
-///   }
-/// }
-///
-/// 200 OK (failure case):
-/// {
-///   "status": "success",
-///   "code": 200,
-///   "message": "Registration status of the domain",
-///   "data": {
-///     "domain": "example.org",
-///     "registration_status": {
-///       "failed": "An unexpected error occurred during registration. Please try again later or contact support."
-///     }
-///   }
-/// }
-///
-/// Error responses:
-/// {
-///   "status": "error",
-///   "code": xxx,
-///   "message": "Registration status request failed",
-///   "data": {
-///     "domain": "example.org"
-///   },
-///   "errors": "error details..."
-/// }
+/// Get domain registration status.
+#[cfg_attr(
+    feature = "openapi",
+    utoipa::path(
+        get,
+        path = "/v1/domains/{id}",
+        params(
+            ("id" = String, Path, description = "Domain name to get registration status for")
+        ),
+        responses(
+            (status = 200, description = "Domain status retrieved successfully", body = crate::models::ApiResponse<GetStatusResponse>),
+            (status = 404, description = "Domain not found", body = crate::models::ApiResponse<ErrorResponse>),
+            (status = 500, description = "Internal server error", body = crate::models::ApiResponse<ErrorResponse>)
+        ),
+        tag = "domains"
+    )
+)]
 pub async fn get_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
@@ -237,11 +160,10 @@ pub async fn get_handler(
     match backend_service.get_domain_status(&domain).await {
         Ok(domains_status) => success_response(
             StatusCode::OK,
-            DomainData {
+            GetStatusResponse {
                 domain: domain.clone(),
                 canister_id: domains_status.canister_id,
-                validation_status: None,
-                registration_status: Some(domains_status.status),
+                registration_status: domains_status.status,
             },
             Some("Registration status of the domain".to_string()),
         ),
@@ -249,49 +171,31 @@ pub async fn get_handler(
             log_error(&err, &domain, "registration_status");
             error_response(
                 err,
-                DomainData {
-                    domain,
-                    canister_id: None,
-                    validation_status: None,
-                    registration_status: None,
-                },
+                ErrorResponse::new(domain),
                 Some("Registration status request failed".to_string()),
             )
         }
     }
 }
 
-/// GET /domains/{id}/validate
+/// Validate domain eligibility for registration.
 ///
-/// Validates if the specified domain is eligible for registration.
-///
-/// This endpoint checks whether all DNS records for the given domain are correctly configured by the owner,
-/// and whether canister ownership is confirmed.
-///
-/// Example responses:
-///
-/// 200 OK:
-/// {
-///   "status": "success",
-///   "code": 200,
-///   "message": "Domain is eligible for registration: DNS records are valid and canister ownership is verified",
-///   "data": {
-///     "domain": "example.org",
-///     "canister_id": "laqa6-raaaa-aaaam-aehzq-cai",
-///     "validation_status": "valid"
-///   }
-/// }
-///
-/// 422 Unprocessable Entity:
-/// {
-///   "status": "error",
-///   "code": 422,
-///   "message": "Failed to validate DNS records or verify canister ownership",
-///   "data": {
-///     "domain": "example.org"
-///   },
-///   "errors": "unprocessable_entity: missing DNS CNAME record from _acme-challenge.example.org. to _acme-challenge.example.org.icp2.io."
-/// }
+/// Verifies DNS configuration and canister ownership for the specified domain.
+#[cfg_attr(
+    feature = "openapi",
+    utoipa::path(
+        get,
+        path = "/v1/domains/{id}/validate",
+        params(
+            ("id" = String, Path, description = "Domain name to validate")
+        ),
+        responses(
+            (status = 200, description = "Domain validation successful", body = crate::models::ApiResponse<ValidateResponse>),
+            (status = 422, description = "Domain validation failed", body = crate::models::ApiResponse<ErrorResponse>)
+        ),
+        tag = "domains"
+    )
+)]
 pub async fn validate_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
@@ -299,11 +203,10 @@ pub async fn validate_handler(
     match backend_service.validate(&domain).await {
         Ok((canister_id, validation_status)) => success_response(
             StatusCode::OK,
-            DomainData {
+            ValidateResponse {
                 domain: domain.clone(),
-                canister_id: Some(canister_id),
-                validation_status: Some(validation_status),
-                registration_status: None,
+                canister_id,
+                validation_status,
             },
             Some("Domain is eligible for registration: DNS records are valid and canister ownership is verified".to_string()),
         ),
@@ -311,45 +214,32 @@ pub async fn validate_handler(
             log_error(&err, &domain, "validate_domain");
             error_response(
                 err,
-                DomainData {
-                    domain,
-                    canister_id: None,
-                    validation_status: None,
-                    registration_status: None,
-                },
+            ErrorResponse::new(domain),
                 Some("Failed to validate DNS records or verify canister ownership".to_string()),
             )
         }
     }
 }
 
-/// DELETE /domains/{id}
+/// Delete an existing domain registration.
 ///
-/// Deletes an existing domain registration and revokes its certificate.
-/// Responds with 202 Accepted to indicate async revocation.
-///
-/// Example responses:
-///
-/// 202 Accepted:
-/// {
-///   "status": "success",
-///   "code": 202,
-///   "message": "Delete domain registration request accepted and may take a few minutes to process",
-///   "data": {
-///     "domain": "example.org"
-///   }
-/// }
-///
-/// Error responses:
-/// {
-///   "status": "error",
-///   "code": xxx,
-///   "message": "Delete domain registration request failed",
-///   "data": {
-///     "domain": "example.org"
-///   },
-///   "errors": "error details..."
-/// }
+/// Revokes the certificate and removes the domain registration asynchronously.
+#[cfg_attr(
+    feature = "openapi",
+    utoipa::path(
+        delete,
+        path = "/v1/domains/{id}",
+        params(
+            ("id" = String, Path, description = "Domain name to delete")
+        ),
+        responses(
+            (status = 202, description = "Delete request accepted", body = crate::models::ApiResponse<DeleteResponse>),
+            (status = 404, description = "Domain not found", body = crate::models::ApiResponse<ErrorResponse>),
+            (status = 409, description = "Conflict - cannot delete domain", body = crate::models::ApiResponse<ErrorResponse>)
+        ),
+        tag = "domains"
+    )
+)]
 pub async fn delete_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
@@ -357,11 +247,8 @@ pub async fn delete_handler(
     match backend_service.submit_delete_task(&domain).await {
         Ok(()) => success_response(
             StatusCode::ACCEPTED,
-            DomainData {
+            DeleteResponse {
                 domain: domain.clone(),
-                canister_id: None,
-                validation_status: None,
-                registration_status: None,
             },
             Some(
                 "Delete domain registration request accepted and may take a few minutes to process"
@@ -372,12 +259,7 @@ pub async fn delete_handler(
             log_error(&err, &domain, "delete_registration");
             error_response(
                 err,
-                DomainData {
-                    domain,
-                    canister_id: None,
-                    validation_status: None,
-                    registration_status: None,
-                },
+                ErrorResponse::new(domain),
                 Some("Delete domain registration request failed".to_string()),
             )
         }
