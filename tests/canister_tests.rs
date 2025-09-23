@@ -161,6 +161,7 @@ async fn test_comprehensive_registration_scenario() -> anyhow::Result<()> {
         RegistrationStatus::Registered,
     )
     .await?;
+    verify_certificate_exists(&env, domain_successful).await?;
 
     info!("Step 6: Test task timeout and automatic rescheduling for {domain_with_failure}");
     let task2 = simulate_task_timeout_and_rescheduling(&env, &task2, canister_id2).await?;
@@ -293,6 +294,19 @@ async fn verify_domain_status(
         },
         "Domain {domain} should be in status {status:?}",
     );
+
+    Ok(())
+}
+
+async fn verify_certificate_exists(env: &TestEnv, domain: &str) -> anyhow::Result<()> {
+    let entry = env
+        .get_domain_entry(domain)
+        .await?
+        .map_err(|err| anyhow!("Failed to get domain entry for {}: {:?}", domain, err))?
+        .ok_or_else(|| anyhow!("Domain {} not found", domain))?;
+
+    assert!(entry.enc_cert.is_some());
+    assert!(entry.enc_priv_key.is_some());
 
     Ok(())
 }

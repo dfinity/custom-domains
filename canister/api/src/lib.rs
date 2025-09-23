@@ -12,7 +12,7 @@ use strum::{EnumIter, IntoStaticStr};
 use thiserror::Error;
 
 type TaskId = u64;
-type Timestamp = u64;
+type UtcTimestamp = u64;
 
 // Declare constants related to the canister here, enabling usage in other modules and tests.
 
@@ -50,7 +50,8 @@ pub type FetchTaskResult = Result<Option<ScheduledTask>, FetchTaskError>;
 pub type SubmitTaskResult = Result<(), SubmitTaskError>;
 pub type TryAddTaskResult = Result<(), TryAddTaskError>;
 pub type GetDomainStatusResult = Result<Option<DomainStatus>, GetDomainStatusError>;
-pub type GetLastChangeTimeResult = Result<Timestamp, GetLastChangeTimeError>;
+pub type GetDomainEntryResult = Result<Option<DomainEntry>, GetDomainEntryError>;
+pub type GetLastChangeTimeResult = Result<UtcTimestamp, GetLastChangeTimeError>;
 pub type ListCertificatesPageResult = Result<CertificatesPage, ListCertificatesPageError>;
 pub type HasNextTaskResult = Result<bool, HasNextTaskError>;
 
@@ -76,7 +77,7 @@ pub struct InputTask {
     pub domain: String,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone, new)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, PartialEq, Eq, new)]
 pub struct ScheduledTask {
     pub kind: TaskKind,
     pub domain: String,
@@ -91,7 +92,7 @@ pub struct TaskResult {
     pub failure: Option<TaskFailReason>,
     pub task_id: TaskId,
     pub task_kind: TaskKind,
-    pub duration_secs: Timestamp,
+    pub duration_secs: u64,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
@@ -106,8 +107,8 @@ pub struct IssueCertificateOutput {
     pub canister_id: Principal,
     pub enc_cert: Vec<u8>,
     pub enc_priv_key: Vec<u8>,
-    pub not_before: Timestamp,
-    pub not_after: Timestamp,
+    pub not_before: UtcTimestamp,
+    pub not_after: UtcTimestamp,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug, PartialEq, Eq, Error, IntoStaticStr)]
@@ -116,7 +117,7 @@ pub enum TaskFailReason {
     #[error("validation_failed: {0}")]
     ValidationFailed(String),
     #[error("timeout after {duration_secs}s")]
-    Timeout { duration_secs: Timestamp },
+    Timeout { duration_secs: UtcTimestamp },
     #[error("rate_limited")]
     RateLimited,
     #[error("generic_failure: {0}")]
@@ -128,6 +129,35 @@ pub struct DomainStatus {
     pub domain: String,
     pub canister_id: Option<Principal>,
     pub status: RegistrationStatus,
+}
+
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
+pub struct DomainEntry {
+    pub task: Option<TaskKind>,
+    // Timestamp when the task failed last time, if any
+    pub last_fail_time: Option<UtcTimestamp>,
+    // Reason for the last failure, if any
+    pub last_failure_reason: Option<TaskFailReason>,
+    // Number of consecutive failures for the current task (excluding rate limit failures)
+    pub failures_count: u32,
+    // Number of rate limit failures for the current task
+    pub rate_limit_failures_count: u32,
+    // Canister ID associated with the domain
+    pub canister_id: Option<Principal>,
+    // Timestamp when the domain entry was created (set once and never updated)
+    pub created_at: UtcTimestamp,
+    // Timestamp when the current task was taken by a worker
+    pub taken_at: Option<UtcTimestamp>,
+    // Timestamp when the current task was created
+    pub task_created_at: Option<UtcTimestamp>,
+    // PEM-encoded certificate data (encrypted)
+    pub enc_cert: Option<Vec<u8>>,
+    // PEM-encoded private key data (encrypted)
+    pub enc_priv_key: Option<Vec<u8>>,
+    // Certificate validity period start (as UNIX timestamp)
+    pub not_before: Option<UtcTimestamp>,
+    // Certificate validity period end (as UNIX timestamp)
+    pub not_after: Option<UtcTimestamp>,
 }
 
 #[derive(
@@ -188,9 +218,11 @@ pub struct RegisteredDomain {
     pub enc_priv_key: Vec<u8>,
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Error)]
 pub enum GetLastChangeTimeError {
+    #[error("Unauthorized")]
     Unauthorized,
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
@@ -211,9 +243,19 @@ pub enum GetDomainStatusError {
     InternalError(String),
 }
 
-#[derive(CandidType, Deserialize, Serialize, Debug, Clone)]
-pub enum ListCertificatesPageError {
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Error)]
+pub enum GetDomainEntryError {
+    #[error("Unauthorized")]
     Unauthorized,
+    #[error("Internal error: {0}")]
+    InternalError(String),
+}
+
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Error)]
+pub enum ListCertificatesPageError {
+    #[error("Unauthorized")]
+    Unauthorized,
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
@@ -249,7 +291,7 @@ pub enum TryAddTaskError {
     AnotherTaskInProgress(String),
     #[error("Certificate already issued for domain: {0}")]
     CertificateAlreadyIssued(String),
-    #[error("Update requires an exisiting certificate: {0}")]
+    #[error("Update requires an existing certificate: {0}")]
     MissingCertificateForUpdate(String),
     #[error("Internal error: {0}")]
     InternalError(String),

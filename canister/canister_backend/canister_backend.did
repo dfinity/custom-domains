@@ -1,7 +1,7 @@
 // Unique identifier for a task
 type TaskId = nat64;
-// Unix timestamp in seconds
-type Timestamp = nat64;
+// Unix Timestamp in seconds
+type UtcTimestamp = nat64;
 // Domain name (FQDN)
 type Domain = text;
 // Structured HTTP header representation
@@ -57,10 +57,10 @@ type IssueCertificateOutput = record {
   enc_cert: blob;
   // Encrypted private key
   enc_priv_key: blob;
-  // Certificate validity start time (Unix timestamp)
-  not_before: Timestamp;
-  // Certificate validity end time (Unix timestamp)
-  not_after: Timestamp;
+  // Certificate validity start time
+  not_before: UtcTimestamp;
+  // Certificate validity end time
+  not_after: UtcTimestamp;
 };
 
 // Result of a completed task (success or failure)
@@ -96,6 +96,36 @@ type DomainStatus = record {
   domain: text;
   canister_id: opt principal;
   status: RegistrationStatus;
+};
+
+// Complete domain entry with all associated data
+type DomainEntry = record {
+  // Current task being processed for the domain, if any
+  task: opt TaskKind;
+  // Timestamp when the task failed last time, if any
+  last_fail_time: opt UtcTimestamp;
+  // Reason for the last failure, if any
+  last_failure_reason: opt TaskFailReason;
+  // Number of consecutive failures for the current task (excluding rate limit failures)
+  failures_count: nat32;
+  // Number of rate limit failures for the current task
+  rate_limit_failures_count: nat32;
+  // Canister ID associated with the domain
+  canister_id: opt principal;
+  // Timestamp when the domain entry was created (set once and never updated)
+  created_at: UtcTimestamp;
+  // Timestamp when the current task was taken by a worker
+  taken_at: opt UtcTimestamp;
+  // Timestamp when the current task was created
+  task_created_at: opt UtcTimestamp;
+  // PEM-encoded certificate data (encrypted)
+  enc_cert: opt blob;
+  // PEM-encoded private key data (encrypted)
+  enc_priv_key: opt blob;
+  // Certificate validity period start (as UNIX timestamp)
+  not_before: opt UtcTimestamp;
+  // Certificate validity period end (as UNIX timestamp)
+  not_after: opt UtcTimestamp;
 };
 
 // Current registration status of a custom domain
@@ -200,9 +230,25 @@ type TryAddTaskResult = variant {
   Err: TryAddTaskError;
 };
 
+// Result of domain entry query
+type GetDomainEntryResult = variant {
+  // Success: complete domain entry
+  Ok: opt DomainEntry;
+  // Error occurred during query
+  Err: GetDomainEntryError;
+};
+
+// Errors that can occur when getting domain entry
+type GetDomainEntryError = variant {
+  // Indicates an unauthorized operation
+  Unauthorized;
+  // Internal error with details
+  InternalError: text;
+};
+
 // Result of getting the last change time of the stored domains
 type GetLastChangeTimeResult = variant {
-  Ok: Timestamp;
+  Ok: UtcTimestamp;
   // Error occurred while adding task
   Err: GetLastChangeTimeError;
 };
@@ -281,6 +327,9 @@ type InitArg = record {
 service: (InitArg) -> {
   // Retrieves the domain status
   get_domain_status: (domain: Domain) -> (GetDomainStatusResult) query;
+
+  // Retrieve the full domain entry, including encrypted certificate, task, failures, etc.
+  get_domain_entry: (domain: Domain) -> (GetDomainEntryResult) query;
 
   // Checks whether there is a pending task ready for execution
   has_next_task: () -> (HasNextTaskResult) query;
