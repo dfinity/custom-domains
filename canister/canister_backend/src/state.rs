@@ -385,7 +385,7 @@ impl CanisterState {
                 }
 
                 // Prevent explicit certificate re-issuance
-                // TODO: maybe useful functionality for the admin?
+                // Note: to reissue certificate, submit `Renew` task instead
                 if task.kind == TaskKind::Issue && entry.enc_cert.is_some() {
                     return Err(TryAddTaskError::CertificateAlreadyIssued(domain));
                 }
@@ -1384,6 +1384,48 @@ mod tests {
 
             let entry = state.domains.get(&"delete.com".to_string()).unwrap();
             assert_eq!(entry.task, Some(TaskKind::Delete));
+        }
+
+        // Test Issue task on domain with existing certificate is not allowed
+        {
+            let mut domain_with_cert = DomainEntry::new(None, now);
+            domain_with_cert.enc_cert = Some(b"cert_data".to_vec());
+            domain_with_cert.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("issue.com".to_string(), domain_with_cert);
+
+            let task = InputTask {
+                domain: "issue.com".to_string(),
+                kind: TaskKind::Issue,
+            };
+            let result = state.try_add_task(task, now);
+            // Should fail because Issue on already registered domain is not allowed
+            assert!(matches!(
+                result,
+                Err(TryAddTaskError::CertificateAlreadyIssued(domain)) if domain == "issue.com"
+            ));
+        }
+
+        // Test Renew task on domain with certificate should succeed
+        {
+            let mut domain_with_cert = DomainEntry::new(None, now);
+            domain_with_cert.enc_cert = Some(b"cert_data".to_vec());
+            domain_with_cert.canister_id = Some(canister_id);
+            state
+                .domains
+                .insert("renew.com".to_string(), domain_with_cert);
+
+            let task = InputTask {
+                domain: "renew.com".to_string(),
+                kind: TaskKind::Renew,
+            };
+            let result = state.try_add_task(task, now);
+            // Should succeed because Renew on registered domain is allowed
+            assert!(result.is_ok());
+
+            let entry = state.domains.get(&"renew.com".to_string()).unwrap();
+            assert_eq!(entry.task, Some(TaskKind::Renew));
         }
     }
 
