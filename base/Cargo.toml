@@ -25,6 +25,10 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 x509-parser = { workspace = true }
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }
+
+[features]
+openapi = ["utoipa"]

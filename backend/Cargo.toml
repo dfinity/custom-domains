@@ -21,6 +21,11 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+utoipa = { workspace = true, optional = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+
+[features]
+openapi = ["utoipa", "utoipa-swagger-ui"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

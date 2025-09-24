@@ -5,16 +5,19 @@ use base::{
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use candid::Principal;
+use derive_new::new;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[cfg(feature = "openapi")]
+use utoipa::ToSchema;
+
 /// Generic API response structure for all endpoints.
 #[derive(Serialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ApiResponse<T> {
     /// Status of the response ("success" or "error")
     status: String,
-    /// HTTP status code
-    code: u16,
     /// Optional human-readable message
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
@@ -46,21 +49,62 @@ pub enum ApiError {
     InternalServerError(String),
 }
 
+/// Response data payload for domain creation/update.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
+pub struct CreateOrUpdateResponse {
+    /// The domain name
+    pub domain: String,
+    /// Associated canister ID
+    #[cfg_attr(feature = "openapi", schema(value_type = String, example = "rrkah-fqaaa-aaaaa-aaaaq-cai"))]
+    pub canister_id: Principal,
+}
+
+/// Error response data payload.
+#[derive(Serialize, Deserialize, Debug, Clone, new)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
+pub struct ErrorResponse {
+    /// The domain name
+    pub domain: String,
+}
+
+/// Delete response data payload.
+#[derive(Serialize, Deserialize, Debug, Clone, new)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
+pub struct DeleteResponse {
+    /// The domain name
+    pub domain: String,
+}
+
+/// Get domains status response data payload.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
+pub struct GetStatusResponse {
+    /// The domain name
+    pub domain: String,
+    /// Associated canister ID
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>, example = "rrkah-fqaaa-aaaaa-aaaaq-cai", nullable = true))]
+    pub canister_id: Option<Principal>,
+    /// Domain registration status
+    pub registration_status: RegistrationStatus,
+}
+
 /// Response data payload for domain-related endpoints.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
-pub struct DomainData {
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
+pub struct ValidateResponse {
     /// The domain name
     pub domain: String,
-    /// Associated canister ID (if available)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub canister_id: Option<Principal>,
-    /// Domain validation status (if available)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub validation_status: Option<ValidationStatus>,
-    /// Domain registration status (if available)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub registration_status: Option<RegistrationStatus>,
+    /// Associated canister ID
+    #[cfg_attr(feature = "openapi", schema(value_type = String, example = "rrkah-fqaaa-aaaaa-aaaaq-cai"))]
+    pub canister_id: Principal,
+    /// Domain validation status
+    pub validation_status: ValidationStatus,
 }
 
 impl From<RepositoryError> for ApiError {
@@ -90,7 +134,6 @@ pub fn success_response<T: Serialize>(
 ) -> axum::response::Response {
     let json: Json<ApiResponse<T>> = Json(ApiResponse {
         status: "success".to_string(),
-        code: code.as_u16(),
         message,
         data: Some(data),
         errors: None,
@@ -115,7 +158,6 @@ pub fn error_response<T: Serialize>(
 
     let json: Json<ApiResponse<T>> = Json(ApiResponse {
         status: "error".to_string(),
-        code: code.as_u16(),
         message,
         data: Some(data),
         errors: Some(error.to_string()),
@@ -127,6 +169,7 @@ pub fn error_response<T: Serialize>(
 /// Domain validation status for API responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub enum ValidationStatus {
     /// Domain validation passed
     Valid,
@@ -136,6 +179,7 @@ pub enum ValidationStatus {
 
 /// Request payload for domain registration endpoints.
 #[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct PostPayload {
     pub domain: String,
 }
