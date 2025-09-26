@@ -3,6 +3,9 @@ name = "backend"
 version.workspace = true
 edition.workspace = true
 
+[features]
+openapi = ["utoipa", "utoipa-swagger-ui"]
+
 [dependencies]
 anyhow = { workspace = true }
 axum = { workspace = true }
@@ -23,9 +26,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 utoipa = { workspace = true, optional = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
-
-[features]
-openapi = ["utoipa", "utoipa-swagger-ui"]
 
 [dev-dependencies]
 ic-bn-lib = { workspace = true }

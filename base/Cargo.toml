@@ -3,11 +3,15 @@ name = "base"
 version.workspace = true
 edition.workspace = true
 
+[features]
+openapi = ["utoipa"]
+
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 candid = { workspace = true }
 canister-api = { path = "../canister/api" }
+chacha20poly1305 = { workspace = true }
 chrono = { workspace = true }
 derive-new = { workspace = true }
 fqdn = { workspace = true }
@@ -15,7 +19,6 @@ hickory-resolver = { workspace = true }
 ic-bn-lib = { workspace = true }
 mockall = { workspace = true }
 pem = { workspace = true }
-chacha20poly1305 = { workspace = true }
 prometheus = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -24,11 +27,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-x509-parser = { workspace = true }
 utoipa = { workspace = true, optional = true }
+x509-parser = { workspace = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }
-
-[features]
-openapi = ["utoipa"]
