@@ -11,7 +11,7 @@ base = { path = "../base" }
 candid = { workspace = true }
 canister-client = { path = "../canister_client" }
 derive-new = { workspace = true }
-fqdn = { workspace = true, features = ["punycode"]}
+fqdn = { workspace = true, features = ["punycode"] }
 prometheus = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -28,6 +28,7 @@ utoipa-swagger-ui = { workspace = true, optional = true }
 openapi = ["utoipa", "utoipa-swagger-ui"]
 
 [dev-dependencies]
+ic-bn-lib = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }

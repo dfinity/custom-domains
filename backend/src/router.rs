@@ -40,6 +40,7 @@ pub fn create_router(
         .layer(from_fn(logging_middleware))
         .with_state(backend_service);
 
+    // Optionally add /metrics endpoint
     let metrics_router = if with_metrics_endpoint {
         Router::new()
             .route("/metrics", get(metrics_handler))
@@ -48,17 +49,17 @@ pub fn create_router(
         Router::new()
     };
 
-    let mut api_router = api_router.merge(metrics_router);
+    let api_router = api_router.merge(metrics_router);
 
     #[cfg(feature = "openapi")]
-    {
+    let api_router = {
         use crate::openapi::get_openapi_json;
         use utoipa_swagger_ui::SwaggerUi;
 
         let swagger_ui =
             SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", get_openapi_json());
-        api_router = api_router.merge(swagger_ui);
-    }
+        api_router.merge(swagger_ui)
+    };
 
     api_router
 }
@@ -75,6 +76,7 @@ mod tests {
             task::{InputTask, TaskKind},
         },
     };
+    use ic_bn_lib::http::middleware::rate_limiter::layer_by_ip;
     use std::{str::FromStr, sync::Arc};
 
     use axum::{
@@ -85,7 +87,7 @@ mod tests {
     use fqdn::FQDN;
     use prometheus::Registry;
     use serde_json::{json, Value};
-    use tower::util::ServiceExt;
+    use tower::{util::ServiceExt, Service};
 
     use crate::router::create_router;
 
@@ -985,5 +987,74 @@ mod tests {
             response_json["errors"].as_str().unwrap(),
             "not_found: Domain example.org not found."
         );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiting_by_ip() {
+        use tower::ServiceExt;
+
+        // Arrange
+        let mut mock_validator = MockValidatesDomains::new();
+        let expected_canister_id = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        mock_validator
+            .expect_validate()
+            .returning(move |_| Box::pin(async move { Ok(expected_canister_id) }))
+            .times(2); // Only two requests should reach this point
+
+        let mut mock_repository = MockRepository::new();
+        mock_repository
+            .expect_try_add_task()
+            .returning(|_| Box::pin(async { Ok(()) }))
+            .times(2); // Only two requests should reach this point
+
+        // Add additional rate-limiting layer
+        let rate_limiter =
+            layer_by_ip(1, 1, (StatusCode::TOO_MANY_REQUESTS, "rate_limited")).unwrap();
+        let router = create_test_router(mock_repository, mock_validator).layer(rate_limiter);
+        let test_ip_1 = "192.168.1.100";
+        let test_ip_2 = "192.168.1.101";
+
+        // Create a service that maintains state between calls (needed for rate limiting)
+        let mut service = router.into_service();
+
+        let request1 = Request::builder()
+            .method("POST")
+            .uri("/v1/domains")
+            .header("content-type", "application/json")
+            .header("x-real-ip", test_ip_1)
+            .body(Body::from(json!({"domain": "example1.org"}).to_string()))
+            .unwrap();
+
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/v1/domains")
+            .header("content-type", "application/json")
+            .header("x-real-ip", test_ip_2)
+            .body(Body::from(json!({"domain": "example2.org"}).to_string()))
+            .unwrap();
+
+        // Should be rate-limited, as it's 2nd request from the same IP
+        let request3 = Request::builder()
+            .method("POST")
+            .uri("/v1/domains")
+            .header("content-type", "application/json")
+            .header("x-real-ip", test_ip_1)
+            .body(Body::from(json!({"domain": "example3.org"}).to_string()))
+            .unwrap();
+
+        // Act
+        let response1 = service.ready().await.unwrap().call(request1).await.unwrap();
+        let response2 = service.ready().await.unwrap().call(request2).await.unwrap();
+        let response3 = service.ready().await.unwrap().call(request3).await.unwrap();
+
+        // Assert
+        let status1 = response1.status();
+        assert_eq!(status1, StatusCode::ACCEPTED);
+        let status2 = response2.status();
+        assert_eq!(status2, StatusCode::ACCEPTED);
+        let status3 = response3.status();
+        assert_eq!(status3, StatusCode::TOO_MANY_REQUESTS);
+        let body_bytes = to_bytes(response3.into_body(), BODY_LIMIT).await.unwrap();
+        assert_eq!(body_bytes.to_vec(), b"rate_limited");
     }
 }
