@@ -1,7 +1,7 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
 use axum::http::StatusCode;
-use backend::router::create_router;
+use backend::router::{create_router, RateLimitConfig};
 use base::types::{
     acme::AcmeClientConfig,
     cipher::CertificateCipher,
@@ -65,7 +65,14 @@ async fn main() -> anyhow::Result<()> {
 
     let registry = Registry::new_custom(Some("custom_domains".into()), None)?;
     let rate_limiter = layer_by_ip(1, 1, (StatusCode::TOO_MANY_REQUESTS, "Too many requests"))?;
-    let app = create_router(repository.clone(), validator, registry, true).layer(rate_limiter);
+    let app = create_router(
+        repository.clone(),
+        validator,
+        registry,
+        RateLimitConfig::default(),
+        true,
+    )
+    .layer(rate_limiter);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
 

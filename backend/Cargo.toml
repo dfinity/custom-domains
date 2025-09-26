@@ -10,11 +10,13 @@ openapi = ["utoipa", "utoipa-swagger-ui"]
 anyhow = { workspace = true }
 axum = { workspace = true }
 axum-server = { workspace = true }
+axum-extra = { workspace = true }
 base = { path = "../base" }
 candid = { workspace = true }
 canister-client = { path = "../canister_client" }
 derive-new = { workspace = true }
 fqdn = { workspace = true, features = ["punycode"] }
+ic-bn-lib = { workspace = true }
 prometheus = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
