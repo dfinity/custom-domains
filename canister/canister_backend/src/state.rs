@@ -18,6 +18,7 @@ use std::hash::Hash;
 use std::{borrow::Cow, collections::HashMap, ops::Bound as RangeBound};
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 
+use crate::storage::MAX_STORED_DOMAINS;
 use crate::{
     get_time_secs,
     metrics::{
@@ -167,6 +168,7 @@ impl Storable for DomainEntry {
 pub struct CanisterState {
     pub domains: StableBTreeMap<String, DomainEntry, VirtualMemory<DefaultMemoryImpl>>,
     pub last_change: StableCell<UtcTimestamp, VirtualMemory<DefaultMemoryImpl>>,
+    pub max_domains: u64,
 }
 
 impl CanisterState {
@@ -376,6 +378,12 @@ impl CanisterState {
     }
 
     fn try_add_task(&mut self, task: InputTask, now: UtcTimestamp) -> TryAddTaskResult {
+        if self.domains.len() >= self.max_domains {
+            return Err(TryAddTaskError::InternalError(
+                "Maximum domains count reached".to_string(),
+            ));
+        }
+
         let domain = task.domain;
         let domain_entry = match self.domains.get(&domain) {
             Some(mut entry) => {
@@ -604,6 +612,7 @@ impl CanisterState {
         let mut state = Self {
             domains,
             last_change,
+            max_domains: MAX_STORED_DOMAINS,
         };
 
         // Some sample canister IDs
@@ -780,6 +789,7 @@ mod tests {
         CanisterState {
             domains,
             last_change,
+            max_domains: MAX_STORED_DOMAINS,
         }
     }
 
@@ -795,6 +805,7 @@ mod tests {
         let mut state = CanisterState {
             domains,
             last_change,
+            max_domains: MAX_STORED_DOMAINS,
         };
 
         let canister_id_1 = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
@@ -985,6 +996,7 @@ mod tests {
         let state = CanisterState {
             domains,
             last_change,
+            max_domains: MAX_STORED_DOMAINS,
         };
 
         let input = ListCertificatesPageInput {
@@ -1890,5 +1902,29 @@ mod tests {
 
         // Verify last_change timestamp updated
         assert_eq!(*state.last_change.get(), now);
+    }
+
+    #[test]
+    fn test_canister_max_domains_storage() {
+        let mut state = create_test_empty_state();
+        state.max_domains = 1;
+        let now = 1000;
+
+        let task1 = InputTask {
+            domain: "example.com".to_string(),
+            kind: TaskKind::Issue,
+        };
+        let task2 = InputTask {
+            domain: "example1.com".to_string(),
+            kind: TaskKind::Issue,
+        };
+
+        // First task should succeed
+        state.try_add_task(task1, now).unwrap();
+        // Second task should fail due to max domains limit
+        let result = state.try_add_task(task2, now);
+        assert!(
+            matches!(result, Err(TryAddTaskError::InternalError(err) ) if err == "Maximum domains count reached")
+        );
     }
 }
