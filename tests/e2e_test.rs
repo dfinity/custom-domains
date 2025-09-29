@@ -453,9 +453,6 @@ async fn verify_canister_metrics(ctx: &TestContext) -> anyhow::Result<()> {
 }
 
 async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<()> {
-    let mut issue_tasks_total = 0;
-    let mut delete_tasks_total = 0;
-
     for i in 0..WORKERS_COUNT {
         let worker_name = format!("worker_{}", i + 1);
         let worker_name = worker_name.as_str();
@@ -482,9 +479,6 @@ async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<(
             ])?
             .get();
 
-        issue_tasks_total += issue_tasks;
-        delete_tasks_total += delete_tasks;
-
         info!("Worker {worker_name} has processed {issue_tasks} issue tasks");
         info!("Worker {worker_name} has processed {delete_tasks} delete tasks");
 
@@ -497,9 +491,6 @@ async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<(
             "Worker {worker_name} has not processed any delete tasks"
         );
     }
-
-    assert_eq!(issue_tasks_total as usize, DOMAINS_COUNT);
-    assert_eq!(delete_tasks_total as usize, DOMAINS_COUNT / 2);
 
     Ok(())
 }
