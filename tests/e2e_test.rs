@@ -43,8 +43,8 @@ use crate::helpers::TestEnv;
 const INIT_CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_millis(100);
 const MAX_CANISTER_CALL_RETRY_DELAY: Duration = Duration::from_secs(2);
 
-const DOMAINS_COUNT: usize = 100;
-const WORKERS_COUNT: usize = 5;
+const DOMAINS_COUNT: usize = 160;
+const WORKERS_COUNT: usize = 4;
 
 // Title: Custom Domains with Pebble ACME test server and multiple workers processing registration requests in parallel
 // Setup:
