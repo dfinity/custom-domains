@@ -3,15 +3,20 @@ name = "backend"
 version.workspace = true
 edition.workspace = true
 
+[features]
+openapi = ["utoipa", "utoipa-swagger-ui"]
+
 [dependencies]
 anyhow = { workspace = true }
 axum = { workspace = true }
 axum-server = { workspace = true }
+axum-extra = { workspace = true }
 base = { path = "../base" }
 candid = { workspace = true }
 canister-client = { path = "../canister_client" }
 derive-new = { workspace = true }
-fqdn = { workspace = true, features = ["punycode"]}
+fqdn = { workspace = true, features = ["punycode"] }
+ic-bn-lib = { workspace = true }
 prometheus = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -24,10 +29,8 @@ tracing-subscriber = { workspace = true }
 utoipa = { workspace = true, optional = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
 
-[features]
-openapi = ["utoipa", "utoipa-swagger-ui"]
-
 [dev-dependencies]
+ic-bn-lib = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }

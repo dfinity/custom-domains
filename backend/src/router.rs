@@ -5,7 +5,9 @@ use axum::{
     routing::{delete, get, patch, post},
     Router,
 };
+use axum_extra::middleware::option_layer;
 use base::traits::{repository::Repository, validation::ValidatesDomains};
+use ic_bn_lib::http::middleware::rate_limiter::layer_by_ip;
 use prometheus::Registry;
 use reqwest::StatusCode;
 
@@ -18,20 +20,46 @@ use crate::{
     metrics::{metrics_handler, metrics_middleware, HttpMetrics},
 };
 
+/// Options for configuring rate limits on various endpoints.
+#[derive(Clone, Debug, Default)]
+pub struct RateLimitConfig {
+    pub limit_get: Option<u32>,
+    pub limit_create: Option<u32>,
+    pub limit_patch: Option<u32>,
+    pub limit_delete: Option<u32>,
+    pub limit_validate: Option<u32>,
+}
+
 pub fn create_router(
     repository: Arc<dyn Repository>,
     validator: Arc<dyn ValidatesDomains>,
     registry: Registry,
+    rate_limits: RateLimitConfig,
     with_metrics_endpoint: bool,
 ) -> Router {
     let backend_service = BackendService::new(repository, validator);
+    let response = (StatusCode::TOO_MANY_REQUESTS, "Too many requests");
+
+    // Use ic-bn-lib rate limiting middleware, with key by IP address.
+    let create_rate_limiter = |limit: Option<u32>, response| {
+        option_layer(limit.map(|lim| layer_by_ip(lim, 2 * lim, response).unwrap()))
+    };
+
+    let rl_get = create_rate_limiter(rate_limits.limit_get, response);
+    let rl_create = create_rate_limiter(rate_limits.limit_create, response);
+    let rl_patch = create_rate_limiter(rate_limits.limit_patch, response);
+    let rl_delete = create_rate_limiter(rate_limits.limit_delete, response);
+    let rl_validate = create_rate_limiter(rate_limits.limit_validate, response);
 
     let api_router = Router::new()
-        .route("/v1/domains", post(create_handler))
-        .route("/v1/domains/{:id}", get(get_handler))
-        .route("/v1/domains/{:id}", patch(update_handler))
-        .route("/v1/domains/{:id}", delete(delete_handler))
-        .route("/v1/domains/{:id}/validate", get(validate_handler))
+        .route("/v1/domains", post(create_handler).layer(rl_create))
+        .route("/v1/domains/{:id}", get(get_handler).layer(rl_get))
+        .route("/v1/domains/{:id}", patch(update_handler).layer(rl_patch))
+        .route("/v1/domains/{:id}", delete(delete_handler).layer(rl_delete))
+        .route(
+            "/v1/domains/{:id}/validate",
+            get(validate_handler).layer(rl_validate),
+        )
         .fallback(|| async { (StatusCode::NOT_FOUND, "path not found") })
         .layer(from_fn_with_state(
             Arc::new(HttpMetrics::new(registry.clone())),
@@ -40,6 +68,7 @@ pub fn create_router(
         .layer(from_fn(logging_middleware))
         .with_state(backend_service);
 
+    // Optionally add /metrics endpoint
     let metrics_router = if with_metrics_endpoint {
         Router::new()
             .route("/metrics", get(metrics_handler))
@@ -48,17 +77,17 @@ pub fn create_router(
         Router::new()
     };
 
-    let mut api_router = api_router.merge(metrics_router);
+    let api_router = api_router.merge(metrics_router);
 
     #[cfg(feature = "openapi")]
-    {
+    let api_router = {
         use crate::openapi::get_openapi_json;
         use utoipa_swagger_ui::SwaggerUi;
 
         let swagger_ui =
             SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", get_openapi_json());
-        api_router = api_router.merge(swagger_ui);
-    }
+        api_router.merge(swagger_ui)
+    };
 
     api_router
 }
@@ -85,9 +114,9 @@ mod tests {
     use fqdn::FQDN;
     use prometheus::Registry;
     use serde_json::{json, Value};
-    use tower::util::ServiceExt;
+    use tower::{util::ServiceExt, Service};
 
-    use crate::router::create_router;
+    use crate::router::{create_router, RateLimitConfig};
 
     const BODY_LIMIT: usize = 5000;
 
@@ -101,6 +130,22 @@ mod tests {
             Arc::new(mock_repository),
             Arc::new(mock_validator),
             registry,
+            RateLimitConfig::default(),
+            true,
+        )
+    }
+
+    fn create_test_router_with_rate_limiter(
+        mock_repository: MockRepository,
+        mock_validator: MockValidatesDomains,
+        rate_limits: RateLimitConfig,
+    ) -> axum::Router {
+        let registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
+        create_router(
+            Arc::new(mock_repository),
+            Arc::new(mock_validator),
+            registry,
+            rate_limits,
             true,
         )
     }
@@ -985,5 +1030,77 @@ mod tests {
             response_json["errors"].as_str().unwrap(),
             "not_found: Domain example.org not found."
         );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiting_by_ip() {
+        use tower::ServiceExt;
+
+        // Arrange
+        let mut mock_validator = MockValidatesDomains::new();
+        let expected_canister_id = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap();
+        mock_validator
+            .expect_validate()
+            .returning(move |_| Box::pin(async move { Ok(expected_canister_id) }))
+            .times(2); // Only two requests should reach this point
+
+        let mut mock_repository = MockRepository::new();
+        mock_repository
+            .expect_try_add_task()
+            .returning(|_| Box::pin(async { Ok(()) }))
+            .times(2); // Only two requests should reach this point
+
+        // Add additional rate-limiter for POST endpoint
+        let rate_limits = RateLimitConfig {
+            limit_create: Some(1),
+            ..Default::default()
+        };
+
+        let router =
+            create_test_router_with_rate_limiter(mock_repository, mock_validator, rate_limits);
+        let test_ip = "192.168.1.100";
+
+        // Create a service that maintains state between calls (needed for rate limiting)
+        let mut service = router.into_service();
+
+        let request1 = Request::builder()
+            .method("POST")
+            .uri("/v1/domains")
+            .header("content-type", "application/json")
+            .header("x-real-ip", test_ip)
+            .body(Body::from(json!({"domain": "example1.org"}).to_string()))
+            .unwrap();
+
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/v1/domains")
+            .header("content-type", "application/json")
+            .header("x-real-ip", test_ip)
+            .body(Body::from(json!({"domain": "example2.org"}).to_string()))
+            .unwrap();
+
+        // Should be rate-limited, as it's 3nd request from the same IP
+        let request3 = Request::builder()
+            .method("POST")
+            .uri("/v1/domains")
+            .header("content-type", "application/json")
+            .header("x-real-ip", test_ip)
+            .body(Body::from(json!({"domain": "example3.org"}).to_string()))
+            .unwrap();
+
+        // Act
+        let response1 = service.ready().await.unwrap().call(request1).await.unwrap();
+        let response2 = service.ready().await.unwrap().call(request2).await.unwrap();
+        let response3 = service.ready().await.unwrap().call(request3).await.unwrap();
+
+        // Assert
+        let status1 = response1.status();
+        assert_eq!(status1, StatusCode::ACCEPTED);
+        let status2 = response2.status();
+        assert_eq!(status2, StatusCode::ACCEPTED);
+        let status3 = response3.status();
+        assert_eq!(status3, StatusCode::TOO_MANY_REQUESTS);
+        let body_bytes = to_bytes(response3.into_body(), BODY_LIMIT).await.unwrap();
+        assert_eq!(body_bytes.to_vec(), b"Too many requests");
     }
 }

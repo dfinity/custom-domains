@@ -103,7 +103,7 @@ async fn test_unregistered_domain_deletion() -> anyhow::Result<()> {
     let status = env
         .get_domain_status(domain)
         .await?
-        .map_err(|err| anyhow!("Failed to get status for {}: {:?}", domain, err))?;
+        .map_err(|err| anyhow!("Failed to get status for {domain}: {err:?}"))?;
     assert!(status.is_none(), "Domain {domain} should have been deleted");
 
     Ok(())
@@ -269,7 +269,7 @@ async fn verify_certificate_renewal_tasks_scheduled(env: &TestEnv) -> anyhow::Re
 async fn add_task(env: &TestEnv, domain: &str, task_kind: TaskKind) -> anyhow::Result<()> {
     env.try_add_task(domain.to_string(), TaskKind::Issue)
         .await?
-        .map_err(|err| anyhow!("Failed to add task {task_kind:?} for {}: {:?}", domain, err))?;
+        .map_err(|err| anyhow!("Failed to add task {task_kind:?} for {domain}: {err:?}"))?;
     Ok(())
 }
 
@@ -282,8 +282,8 @@ async fn verify_domain_status(
     let status = env
         .get_domain_status(domain)
         .await?
-        .map_err(|err| anyhow!("Failed to get status for {}: {:?}", domain, err))?
-        .ok_or_else(|| anyhow!("Domain {} not found", domain))?;
+        .map_err(|err| anyhow!("Failed to get status for {domain}: {err:?}"))?
+        .ok_or_else(|| anyhow!("Domain {domain} not found"))?;
 
     assert_eq!(
         status,
@@ -302,8 +302,8 @@ async fn verify_certificate_exists(env: &TestEnv, domain: &str) -> anyhow::Resul
     let entry = env
         .get_domain_entry(domain)
         .await?
-        .map_err(|err| anyhow!("Failed to get domain entry for {}: {:?}", domain, err))?
-        .ok_or_else(|| anyhow!("Domain {} not found", domain))?;
+        .map_err(|err| anyhow!("Failed to get domain entry for {domain}: {err:?}"))?
+        .ok_or_else(|| anyhow!("Domain {domain} not found"))?;
 
     assert!(entry.enc_cert.is_some());
     assert!(entry.enc_priv_key.is_some());
@@ -312,17 +312,17 @@ async fn verify_certificate_exists(env: &TestEnv, domain: &str) -> anyhow::Resul
 }
 
 async fn verify_authorized_principal_access(env: &TestEnv) -> anyhow::Result<()> {
-    let arg = Encode!(&()).map_err(|err| anyhow!("Failed to encode arguments: {:?}", err))?;
+    let arg = Encode!(&()).map_err(|err| anyhow!("Failed to encode arguments: {err:?}"))?;
 
     let result = env
         .pic
         .query_call(env.canister_id, env.sender, "has_next_task", arg)
         .await
-        .map_err(|err| anyhow!("Query call from authorized principal rejected: {:?}", err))?;
+        .map_err(|err| anyhow!("Query call from authorized principal rejected: {err:?}"))?;
 
     let has_next_task = Decode!(&result, HasNextTaskResult)
-        .map_err(|err| anyhow!("Failed to decode response: {:?}", err))?
-        .map_err(|err| anyhow!("has_next_task call failed: {:?}", err))?;
+        .map_err(|err| anyhow!("Failed to decode response: {err:?}"))?
+        .map_err(|err| anyhow!("has_next_task call failed: {err:?}"))?;
 
     assert!(!has_next_task, "Expected no tasks initially in canister");
 
@@ -330,16 +330,16 @@ async fn verify_authorized_principal_access(env: &TestEnv) -> anyhow::Result<()>
 }
 
 async fn verify_unauthorized_principal_rejection(env: &TestEnv) -> anyhow::Result<()> {
-    let arg = Encode!(&()).map_err(|err| anyhow!("Failed to encode arguments: {:?}", err))?;
+    let arg = Encode!(&()).map_err(|err| anyhow!("Failed to encode arguments: {err:?}"))?;
 
     let result = env
         .pic
         .query_call(env.canister_id, env.controller, "has_next_task", arg)
         .await
-        .map_err(|err| anyhow!("Query call from unauthorized principal rejected: {:?}", err))?;
+        .map_err(|err| anyhow!("Query call from unauthorized principal rejected: {err:?}"))?;
 
     let unauthorized_result = Decode!(&result, HasNextTaskResult)
-        .map_err(|err| anyhow!("Failed to decode unauthorized response: {:?}", err))?;
+        .map_err(|err| anyhow!("Failed to decode unauthorized response: {err:?}"))?;
 
     assert_eq!(unauthorized_result, Err(HasNextTaskError::Unauthorized));
 
@@ -349,7 +349,7 @@ async fn verify_unauthorized_principal_rejection(env: &TestEnv) -> anyhow::Resul
 async fn fetch_next_task(env: &TestEnv) -> anyhow::Result<ScheduledTask> {
     env.fetch_next_task()
         .await?
-        .map_err(|err| anyhow!("Failed to fetch task: {:?}", err))?
+        .map_err(|err| anyhow!("Failed to fetch task: {err:?}"))?
         .ok_or_else(|| anyhow!("Expected a task"))
 }
 
@@ -357,7 +357,7 @@ async fn assert_has_no_next_task(env: &TestEnv) -> anyhow::Result<()> {
     let has_task = env
         .has_next_task()
         .await?
-        .map_err(|err| anyhow!("Failed to check for next task: {:?}", err))?;
+        .map_err(|err| anyhow!("Failed to check for next task: {err:?}"))?;
     assert!(!has_task, "Expected no more tasks to be available");
     Ok(())
 }
@@ -366,7 +366,7 @@ async fn assert_has_next_task(env: &TestEnv) -> anyhow::Result<()> {
     let has_task = env
         .has_next_task()
         .await?
-        .map_err(|err| anyhow!("Failed to check for next task: {:?}", err))?;
+        .map_err(|err| anyhow!("Failed to check for next task: {err:?}"))?;
 
     assert!(has_task, "Expected a task to be available");
 
@@ -405,7 +405,7 @@ async fn submit_successful_task_result(
 
     env.submit_task_result(task_result)
         .await?
-        .map_err(|err| anyhow!("Failed to submit successful task result: {:?}", err))?;
+        .map_err(|err| anyhow!("Failed to submit successful task result: {err:?}"))?;
 
     Ok(())
 }
@@ -461,7 +461,7 @@ async fn simulate_retries_after_rate_limited_errors(
 
         env.submit_task_result(failure_result)
             .await?
-            .map_err(|err| anyhow!("Failed to submit rate-limited failure: {:?}", err))?;
+            .map_err(|err| anyhow!("Failed to submit rate-limited failure: {err:?}"))?;
 
         assert_has_no_next_task(env).await?;
 
@@ -490,7 +490,7 @@ async fn simulate_retries_after_generic_failures(
 
         env.submit_task_result(failure_result)
             .await?
-            .map_err(|err| anyhow!("Failed to submit generic failure: {:?}", err))?;
+            .map_err(|err| anyhow!("Failed to submit generic failure: {err:?}"))?;
 
         assert_has_no_next_task(env).await?;
 

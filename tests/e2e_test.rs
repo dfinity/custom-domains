@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
-use backend::router::create_router;
+use backend::router::{create_router, RateLimitConfig};
 use base::traits::repository::Repository;
 use base::types::domain::RegistrationStatus;
 use base::{
@@ -260,7 +260,13 @@ async fn spawn_api_server(
 ) -> anyhow::Result<SocketAddr> {
     let api_addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     spawn(async move {
-        let router = create_router(repository, validator, prometheus_registry, true);
+        let router = create_router(
+            repository,
+            validator,
+            prometheus_registry,
+            RateLimitConfig::default(),
+            true,
+        );
         info!("Starting API server at http://{}", api_addr);
         axum_server::bind(api_addr)
             .serve(router.into_make_service())
