@@ -1,6 +1,5 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
-use axum::http::StatusCode;
 use backend::router::{create_router, RateLimitConfig};
 use base::types::{
     acme::AcmeClientConfig,
@@ -11,7 +10,6 @@ use base::types::{
 use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
 use ic_agent::Agent;
-use ic_bn_lib::http::middleware::rate_limiter::layer_by_ip;
 use prometheus::Registry;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
@@ -62,18 +60,14 @@ async fn main() -> anyhow::Result<()> {
     );
 
     spawn(async move { worker.run().await });
-
     let registry = Registry::new_custom(Some("custom_domains".into()), None)?;
-    let rate_limiter = layer_by_ip(1, 1, (StatusCode::TOO_MANY_REQUESTS, "Too many requests"))?;
     let app = create_router(
         repository.clone(),
         validator,
         registry,
         RateLimitConfig::default(),
         true,
-    )
-    .layer(rate_limiter);
-
+    );
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
 
     info!("Starting server on http://{}", addr);
