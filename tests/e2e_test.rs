@@ -94,7 +94,7 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
     verify_canister_metrics(&ctx).await?;
 
     info!("Step 7: Getting workers metrics and verifying they all have processed more than one task each");
-    verify_workers_metrics(workers_metrics).await?;
+    verify_workers_metrics_with_retries(workers_metrics).await?;
 
     Ok(())
 }
@@ -452,7 +452,7 @@ async fn verify_canister_metrics(ctx: &TestContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<()> {
+async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<bool> {
     for i in 0..WORKERS_COUNT {
         let worker_name = format!("worker_{}", i + 1);
         let worker_name = worker_name.as_str();
@@ -482,17 +482,32 @@ async fn verify_workers_metrics(metrics: Arc<WorkerMetrics>) -> anyhow::Result<(
         info!("Worker {worker_name} has processed {issue_tasks} issue tasks");
         info!("Worker {worker_name} has processed {delete_tasks} delete tasks");
 
-        assert!(
-            issue_tasks > 0,
-            "Worker {worker_name} has not processed any issue tasks"
-        );
-        assert!(
-            delete_tasks > 0,
-            "Worker {worker_name} has not processed any delete tasks"
-        );
+        if issue_tasks == 0 || delete_tasks == 0 {
+            return Ok(false);
+        }
     }
+    Ok(true)
+}
 
-    Ok(())
+async fn verify_workers_metrics_with_retries(metrics: Arc<WorkerMetrics>) -> anyhow::Result<bool> {
+    // As workers update their own metrics only after execution of update+read call to the canister, it may take some time till metrics are updated
+    let max_retries = 10;
+    let max_delay = Duration::from_secs(2);
+    let mut retries = 0;
+    let mut sleep_interval = Duration::from_millis(200);
+    loop {
+        if verify_workers_metrics(metrics.clone()).await? {
+            return Ok(true);
+        }
+        if retries >= max_retries {
+            bail!("Workers metrics did not reach expected values after {max_retries} retries");
+        }
+        info!("Workers metrics not ready, sleeping {sleep_interval:?} ...");
+        sleep(sleep_interval).await;
+        sleep_interval = 2 * sleep_interval;
+        sleep_interval = sleep_interval.min(max_delay);
+        retries += 1;
+    }
 }
 
 fn extract_domain_from_cert(cert: Vec<u8>) -> anyhow::Result<String> {
