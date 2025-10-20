@@ -1,27 +1,28 @@
-use anyhow::anyhow;
+use std::{net::IpAddr, sync::Arc, time::Duration};
+
+use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use candid::Principal;
 use fqdn::FQDN;
-use hickory_resolver::{
-    config::{ResolveHosts, ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
-    proto::rr::RecordType,
-    TokioResolver,
+use hickory_resolver::{config::CLOUDFLARE_IPS, proto::rr::RecordType};
+use ic_bn_lib::http::{
+    client::Options as HttpOptions,
+    dns::{Options as DnsOptions, Resolver, Resolves},
+    Client, ReqwestClient,
 };
-use reqwest::{Client, Method, Request, Url};
+use reqwest::{Method, Request, Url};
 
 use crate::traits::validation::{ValidatesDomains, ValidationError};
 
 const DEFAULT_DELEGATION_DOMAIN: &str = "icp2.io";
-const DEFAULT_ACME_CHALLENGE_PREFIX: &str = "_acme-challenge";
-const DEFAULT_CANISTER_ID_PREFIX: &str = "_canister-id";
 
 /// DNS validator for custom domain registration.
 ///
 /// Validates that a domain is properly configured for custom domain registration
 /// by checking DNS records, CNAME delegation, and canister ownership.
 pub struct Validator {
-    resolver: TokioResolver,
+    client: Arc<dyn Client>,
+    resolver: Arc<dyn Resolves>,
     dns_config: DnsConfig,
 }
 
@@ -44,69 +45,57 @@ impl ValidatesDomains for Validator {
 pub struct DnsConfig {
     /// The delegation domain (e.g., "icp2.io")
     pub delegation_domain: String,
-    /// The prefix for ACME challenge records (e.g., "_acme-challenge")
-    pub acme_challenge_prefix: String,
-    /// The prefix for canister ID records (e.g., "_canister-id")
-    pub canister_id_prefix: String,
+    /// DNS servers to use
+    pub servers: Vec<IpAddr>,
+    /// DNS timeout (divided evenly between all DNS servers)
+    pub timeout: Duration,
 }
 
 impl Default for DnsConfig {
     fn default() -> Self {
         Self {
             delegation_domain: DEFAULT_DELEGATION_DOMAIN.to_string(),
-            acme_challenge_prefix: DEFAULT_ACME_CHALLENGE_PREFIX.to_string(),
-            canister_id_prefix: DEFAULT_CANISTER_ID_PREFIX.to_string(),
+            servers: CLOUDFLARE_IPS.to_vec(),
+            timeout: Duration::from_secs(10),
         }
     }
 }
 
 impl Default for Validator {
     fn default() -> Self {
-        // Use non-caching configuration as default
-        Self::new_without_cache(DnsConfig::default()).unwrap()
+        Self::new(DnsConfig::default()).unwrap()
     }
 }
 
 impl Validator {
-    /// Create a new Validator with custom resolver and DNS configuration
-    pub fn new(resolver: TokioResolver, dns_config: DnsConfig) -> Result<Self, ValidationError> {
+    /// Create a new Validator
+    pub fn new(dns_config: DnsConfig) -> Result<Self, ValidationError> {
         if dns_config.delegation_domain.is_empty() {
             return Err(ValidationError::UnexpectedError(anyhow!(
                 "Delegation domain cannot be empty"
             )));
         }
 
-        Ok(Self {
-            resolver,
-            dns_config,
-        })
-    }
-}
-
-impl Validator {
-    /// Create a new Validator without DNS caching (useful for real-time validation)
-    pub fn new_without_cache(dns_config: DnsConfig) -> Result<Self, ValidationError> {
-        if dns_config.delegation_domain.is_empty() {
+        if dns_config.servers.is_empty() {
             return Err(ValidationError::UnexpectedError(anyhow!(
-                "Delegation domain cannot be empty"
+                "You need to specify DNS servers"
             )));
         }
 
-        let cfg = ResolverConfig::cloudflare();
+        let mut dns_opts = DnsOptions::default();
+        dns_opts.cache_size = 0;
+        dns_opts.servers = dns_config.servers.clone();
+        dns_opts.timeout = dns_config.timeout;
 
-        let mut opts = ResolverOpts::default();
-        opts.cache_size = 0;
-        opts.use_hosts_file = ResolveHosts::Never;
-        opts.validate = false;
-        opts.recursion_desired = true;
+        let resolver = Resolver::new(dns_opts);
 
-        let builder = TokioResolver::builder_with_config(cfg, TokioConnectionProvider::default())
-            .with_options(opts);
-
-        let resolver = builder.build();
+        let http_opts = HttpOptions::default();
+        let client = ReqwestClient::new(http_opts, Some(resolver.clone()))
+            .context("unable to create HTTP client")?;
 
         Ok(Self {
-            resolver,
+            client: Arc::new(client),
+            resolver: Arc::new(resolver),
             dns_config,
         })
     }
@@ -122,47 +111,45 @@ impl Validator {
     ) -> Result<(), ValidationError> {
         // Verify domain name is stored inside the canister, confirming canister ownership
         // TODO: verify ic-certification is handled already
-        let client = Client::builder()
-            .build()
-            .map_err(|err| ValidationError::UnexpectedError(err.into()))?;
-        let canister_id = canister_id.to_text();
-        let url = Url::parse(&format!(
-            "https://{canister_id}.icp0.io/.well-known/ic-domains"
-        ))
-        .unwrap();
-        let request = Request::new(Method::GET, url);
+        let url = format!(
+            "https://{canister_id}.{}/.well-known/ic-domains",
+            self.dns_config.delegation_domain
+        );
 
-        let response = client
+        let request = Request::new(Method::GET, Url::parse(&url).unwrap());
+
+        let response = self
+            .client
             .execute(request)
             .await
             .map_err(|_| ValidationError::KnownDomainsUnavailable {
-                id: canister_id.clone(),
+                id: canister_id.to_string(),
             })?
             .text()
             .await
             .map_err(|err| ValidationError::UnexpectedError(err.into()))?;
 
-        response
-            .contains(&domain.to_string())
-            .then_some(())
-            .ok_or(ValidationError::MissingKnownDomains { id: canister_id })
+        response.contains(&domain.to_string()).then_some(()).ok_or(
+            ValidationError::MissingKnownDomains {
+                id: canister_id.to_string(),
+            },
+        )
     }
 
     /// Validates that there are no existing canister ID TXT records for the domain.
     ///
     /// This check ensures the domain can be safely deleted or is not already registered.
     async fn validate_no_canister_id_record(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        let txt_src = format!("{}.{domain}.", self.dns_config.canister_id_prefix);
+        let hostname = format!("_canister-id.{domain}.");
 
-        match self.resolver.lookup(&txt_src, RecordType::TXT).await {
-            Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: txt_src }),
+        match self.resolver.resolve(RecordType::TXT, &hostname).await {
+            Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: hostname }),
             Err(err) => {
-                let err_str = err.to_string();
-                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
+                if err.is_no_records_found() || err.is_nx_domain() {
                     Ok(())
                 } else {
                     Err(ValidationError::UnexpectedError(anyhow!(
-                        "Failed to resolve TXT record for {txt_src}: {err}"
+                        "Failed to resolve TXT record for {hostname}: {err}"
                     )))
                 }
             }
@@ -174,27 +161,26 @@ impl Validator {
     /// Ensures that any existing ACME challenge records point to the delegation domain
     /// or that no conflicting records exist that would interfere with certificate issuance.
     async fn validate_no_txt_challenge(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        let txt_src = format!("{}.{domain}.", self.dns_config.acme_challenge_prefix);
+        let hostname = format!("_acme-challenge.{domain}.");
 
-        match self.resolver.lookup(&txt_src, RecordType::TXT).await {
+        match self.resolver.resolve(RecordType::TXT, &hostname).await {
             Ok(lookup) => {
                 // Check all records belong to delegation domain
                 lookup
-                    .record_iter()
-                    .all(|rec| {
-                        let name = rec.name().to_string().trim_end_matches('.').to_owned();
+                    .iter()
+                    .all(|(_, rec)| {
+                        let name = rec.trim_end_matches('.');
                         name.ends_with(&self.dns_config.delegation_domain)
                     })
                     .then_some(())
-                    .ok_or(ValidationError::ExistingDnsTxtChallenge { src: txt_src })
+                    .ok_or(ValidationError::ExistingDnsTxtChallenge { src: hostname })
             }
             Err(err) => {
-                let err_str = err.to_string();
-                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
+                if err.is_no_records_found() || err.is_nx_domain() {
                     Ok(())
                 } else {
                     Err(ValidationError::UnexpectedError(anyhow!(
-                        "Failed to resolve TXT record for {txt_src}: {err}",
+                        "Failed to resolve TXT record for {hostname}: {err}",
                     )))
                 }
             }
@@ -206,20 +192,19 @@ impl Validator {
     /// Checks that the ACME challenge subdomain has a CNAME record pointing
     /// to the corresponding delegation domain for certificate validation.
     async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        let cname_src = format!("{}.{domain}.", self.dns_config.acme_challenge_prefix);
+        let cname_src = format!("_acme-challenge.{domain}.");
         let cname_dst = format!(
-            "{}.{domain}.{}.",
-            self.dns_config.acme_challenge_prefix, self.dns_config.delegation_domain
+            "_acme-challenge.{domain}.{}.",
+            self.dns_config.delegation_domain
         );
 
         // Resolve CNAME record
         let records = self
             .resolver
-            .lookup(&cname_src, RecordType::CNAME)
+            .resolve(RecordType::CNAME, &cname_src)
             .await
             .map_err(|err| {
-                let err_str = err.to_string();
-                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
+                if err.is_no_records_found() || err.is_nx_domain() {
                     ValidationError::MissingDnsCname {
                         src: cname_src.clone(),
                         dst: cname_dst.clone(),
@@ -234,7 +219,7 @@ impl Validator {
         // Validate expected CNAME record exists
         records
             .iter()
-            .any(|record| record.to_string() == cname_dst)
+            .any(|(_, record)| record == &cname_dst)
             .then_some(())
             .ok_or(ValidationError::MissingDnsCname {
                 src: cname_src,
@@ -247,46 +232,40 @@ impl Validator {
     /// Looks for a TXT record at the canister ID prefix subdomain and validates
     /// that exactly one record exists containing a valid canister Principal.
     async fn validate_canister_mapping(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
-        let txt_src = format!("{}.{domain}", self.dns_config.canister_id_prefix);
+        let hostname = format!("_canister-id.{domain}");
 
         // Resolve TXT record
         let records = self
             .resolver
-            .lookup(&txt_src, RecordType::TXT)
+            .resolve(RecordType::TXT, &hostname)
             .await
             .map_err(|err| {
-                let err_str = err.to_string();
-                if err_str.contains("no records found") || err_str.contains("NXDOMAIN") {
+                if err.is_no_records_found() || err.is_nx_domain() {
                     ValidationError::MissingDnsTxtCanisterId {
-                        src: txt_src.clone(),
+                        src: hostname.clone(),
                     }
                 } else {
                     ValidationError::UnexpectedError(anyhow!(
-                        "Failed to resolve TXT record at {txt_src}: {err}",
+                        "Failed to resolve TXT record at {hostname}: {err}",
                     ))
                 }
             })?;
 
-        // Validate exactly one record exists
-        let mut record_iter = records.iter();
-        let first_record =
-            record_iter
-                .next()
-                .ok_or_else(|| ValidationError::MissingDnsTxtCanisterId {
-                    src: txt_src.clone(),
-                })?;
-
-        if record_iter.next().is_some() {
-            return Err(ValidationError::MultipleDnsTxtCanisterId { src: txt_src });
+        // Make sure there's exactly one record
+        if records.is_empty() {
+            return Err(ValidationError::MissingDnsTxtCanisterId { src: hostname });
         }
 
+        if records.len() > 1 {
+            return Err(ValidationError::MultipleDnsTxtCanisterId { src: hostname });
+        }
+
+        let (_, record) = &records[0];
+
         // Parse canister ID
-        let canister_id_str = first_record.to_string();
-        Principal::from_text(&canister_id_str).map_err(|_| {
-            ValidationError::InvalidDnsTxtCanisterId {
-                src: txt_src,
-                id: canister_id_str,
-            }
+        Principal::from_text(record).map_err(|_| ValidationError::InvalidDnsTxtCanisterId {
+            src: hostname,
+            id: record.clone(),
         })
     }
 }

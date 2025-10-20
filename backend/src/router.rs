@@ -42,7 +42,7 @@ pub fn create_router(
 
     // Use ic-bn-lib rate limiting middleware, with key by IP address.
     let create_rate_limiter = |limit: Option<u32>, response| {
-        option_layer(limit.map(|lim| layer_by_ip(lim, 2 * lim, response).unwrap()))
+        option_layer(limit.map(|lim| layer_by_ip(lim, 2 * lim, response, None).unwrap()))
     };
 
     let rl_get = create_rate_limiter(rate_limits.limit_get, response);
