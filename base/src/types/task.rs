@@ -58,11 +58,8 @@ pub struct ScheduledTask {
 pub struct TaskResult {
     /// The domain that was processed
     pub domain: FQDN,
+    /// Task outcome
     pub outcome: TaskOutcome,
-    /// Task output if successful
-    //pub output: Option<TaskOutput>,
-    /// Failure reason if unsuccessful
-    //pub failure: Option<TaskFailReason>,
     /// Unique task identifier
     pub task_id: UtcTimestamp,
     /// The type of task that was executed

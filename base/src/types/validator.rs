@@ -116,7 +116,10 @@ impl Validator {
             self.dns_config.delegation_domain
         );
 
-        let request = Request::new(Method::GET, Url::parse(&url).unwrap());
+        let request = Request::new(
+            Method::GET,
+            Url::parse(&url).map_err(|e| ValidationError::UnexpectedError(e.into()))?,
+        );
 
         let response = self
             .client

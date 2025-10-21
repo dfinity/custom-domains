@@ -96,6 +96,12 @@ impl AcmeClientConfig {
         self.dns_servers = dns_servers;
         self
     }
+
+    /// Sets the DNS timeout
+    pub fn with_dns_timeout(mut self, dns_timeout: Duration) -> Self {
+        self.dns_timeout = dns_timeout;
+        self
+    }
 }
 
 impl AcmeClientConfig {
@@ -111,6 +117,7 @@ impl AcmeClientConfig {
 
         // DNS resolver
         let mut resolver_opts = Options::default();
+        resolver_opts.cache_size = 0;
         resolver_opts.servers = self.dns_servers;
         resolver_opts.timeout = self.dns_timeout;
 
@@ -128,7 +135,7 @@ impl AcmeClientConfig {
                 .context("unable to load ACME account")?
         } else {
             let (builder, _) = builder
-                .create_account("mailto:test_account@testing.org")
+                .create_account("mailto:boundary-nodes@dfinity.org")
                 .await
                 .context("unable to create ACME account")?;
 

@@ -89,8 +89,6 @@ pub struct ScheduledTask {
 pub struct TaskResult {
     pub domain: String,
     pub outcome: TaskOutcome,
-    // pub output: Option<TaskOutput>,
-    // pub failure: Option<TaskFailReason>,
     pub task_id: TaskId,
     pub task_kind: TaskKind,
     pub duration_secs: u64,
