@@ -3,8 +3,8 @@ use std::time::Duration;
 use candid::Principal;
 use canister_api::{
     InputTask as ApiInputTask, IssueCertificateOutput as ApiIssueCertificateOutput,
-    TaskFailReason as ApiTaskFailReason, TaskKind as ApiTaskKind, TaskOutput as ApiTaskOutput,
-    TaskResult as ApiTaskResult,
+    TaskFailReason as ApiTaskFailReason, TaskKind as ApiTaskKind, TaskOutcome as ApiTaskOutcome,
+    TaskOutput as ApiTaskOutput, TaskResult as ApiTaskResult,
 };
 use derive_new::new;
 use fqdn::FQDN;
@@ -58,10 +58,11 @@ pub struct ScheduledTask {
 pub struct TaskResult {
     /// The domain that was processed
     pub domain: FQDN,
+    pub outcome: TaskOutcome,
     /// Task output if successful
-    pub output: Option<TaskOutput>,
+    //pub output: Option<TaskOutput>,
     /// Failure reason if unsuccessful
-    pub failure: Option<TaskFailReason>,
+    //pub failure: Option<TaskFailReason>,
     /// Unique task identifier
     pub task_id: UtcTimestamp,
     /// The type of task that was executed
@@ -80,8 +81,7 @@ impl TaskResult {
     ) -> Self {
         Self {
             domain,
-            output: Some(output),
-            failure: None,
+            outcome: TaskOutcome::Success(output),
             task_id,
             task_kind,
             duration: Duration::ZERO,
@@ -97,8 +97,7 @@ impl TaskResult {
     ) -> Self {
         Self {
             domain,
-            output: None,
-            failure: Some(failure),
+            outcome: TaskOutcome::Failure(failure),
             task_id,
             task_kind,
             duration: Duration::ZERO,
@@ -115,12 +114,28 @@ impl TaskResult {
 
     /// Checks if the task execution was successful
     pub fn is_success(&self) -> bool {
-        self.failure.is_none()
+        matches!(self.outcome, TaskOutcome::Success(_))
+    }
+}
+
+/// Outcome of a task execution
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskOutcome {
+    Success(TaskOutput),
+    Failure(TaskFailReason),
+}
+
+impl From<TaskOutcome> for ApiTaskOutcome {
+    fn from(value: TaskOutcome) -> Self {
+        match value {
+            TaskOutcome::Success(v) => ApiTaskOutcome::Success(v.into()),
+            TaskOutcome::Failure(v) => ApiTaskOutcome::Failure(v.into()),
+        }
     }
 }
 
 /// Output data from successful task execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskOutput {
     /// Certificate issuance output containing cert, key, and validity info
     Issue(IssueCertificateOutput),
@@ -145,7 +160,7 @@ pub enum TaskFailReason {
 }
 
 /// Output from successful certificate issuance containing all certificate data.
-#[derive(Debug, Clone, new)]
+#[derive(Debug, Clone, PartialEq, Eq, new)]
 pub struct IssueCertificateOutput {
     /// The canister ID this certificate is issued for
     pub canister_id: Principal,
@@ -216,8 +231,7 @@ impl From<TaskResult> for ApiTaskResult {
     fn from(task_result: TaskResult) -> Self {
         ApiTaskResult {
             domain: task_result.domain.to_string(),
-            output: task_result.output.map(ApiTaskOutput::from),
-            failure: task_result.failure.map(ApiTaskFailReason::from),
+            outcome: task_result.outcome.into(),
             task_id: task_result.task_id,
             task_kind: ApiTaskKind::from(task_result.task_kind),
             duration_secs: task_result.duration.as_secs(),

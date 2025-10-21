@@ -3,8 +3,8 @@ use canister_api::{
     CertificatesPage, DomainStatus, FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult,
     GetLastChangeTimeResult, HasNextTaskResult, InputTask, ListCertificatesPageInput,
     ListCertificatesPageResult, RegisteredDomain, RegistrationStatus, ScheduledTask,
-    SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutput, TaskResult,
-    TryAddTaskError, TryAddTaskResult, CERTIFICATE_VALIDITY_FRACTION,
+    SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutcome, TaskOutput,
+    TaskResult, TryAddTaskError, TryAddTaskResult, CERTIFICATE_VALIDITY_FRACTION,
     CERT_EXPIRATION_ALERT_THRESHOLD, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MAX_TASK_FAILURES,
     MIN_TASK_RETRY_DELAY, TASK_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
 };
@@ -455,7 +455,7 @@ impl CanisterState {
                 .inc();
 
             if result.is_ok() {
-                if let Some(error) = task_result.failure {
+                if let TaskOutcome::Failure(error) = task_result.outcome {
                     metrics
                         .task_failures
                         .with_label_values(&[task_kind, error.into()])
@@ -485,51 +485,55 @@ impl CanisterState {
             return Err(SubmitTaskError::NonExistingTaskSubmitted(task_id));
         }
 
-        // Handle task result based on the output or failure
-        if let Some(output) = task_result.output {
-            // Unset fields in case of task success
-            entry.task = None;
-            entry.taken_at = None;
-            entry.last_failure_reason = None;
-            entry.failures_count = 0;
-            entry.last_fail_time = None;
-            entry.rate_limit_failures_count = 0;
-            self.last_change.set(now);
-            entry.task_created_at = None;
-
-            match output {
-                TaskOutput::Issue(output) => {
-                    entry.canister_id = Some(output.canister_id);
-                    entry.enc_cert = Some(output.enc_cert);
-                    entry.enc_priv_key = Some(output.enc_priv_key);
-                    entry.not_before = Some(output.not_before);
-                    entry.not_after = Some(output.not_after);
-                }
-                TaskOutput::Delete => {
-                    self.domains.remove(&domain);
-                    return Ok(());
-                }
-                TaskOutput::Update(canister_id) => {
-                    entry.canister_id = Some(canister_id);
-                }
-            }
-        } else if let Some(failure) = task_result.failure {
-            // Note: rate-limited failures do not impact the retry limit, they are just counted
-            if failure == TaskFailReason::RateLimited {
-                entry.rate_limit_failures_count += 1;
-            } else {
-                entry.failures_count += 1;
-            }
-
-            entry.last_failure_reason = Some(failure);
-            entry.taken_at = None;
-            entry.last_fail_time = Some(now);
-            // To keep scheduling fair, update the task creation time on failure
-            entry.task_created_at = Some(now);
-
-            // Delete the task if the retry limit is reached
-            if entry.failures_count >= MAX_TASK_FAILURES {
+        // Handle task result based on the outcome
+        match task_result.outcome {
+            TaskOutcome::Success(output) => {
+                // Unset fields in case of task success
                 entry.task = None;
+                entry.taken_at = None;
+                entry.last_failure_reason = None;
+                entry.failures_count = 0;
+                entry.last_fail_time = None;
+                entry.rate_limit_failures_count = 0;
+                self.last_change.set(now);
+                entry.task_created_at = None;
+
+                match output {
+                    TaskOutput::Issue(output) => {
+                        entry.canister_id = Some(output.canister_id);
+                        entry.enc_cert = Some(output.enc_cert);
+                        entry.enc_priv_key = Some(output.enc_priv_key);
+                        entry.not_before = Some(output.not_before);
+                        entry.not_after = Some(output.not_after);
+                    }
+                    TaskOutput::Delete => {
+                        self.domains.remove(&domain);
+                        return Ok(());
+                    }
+                    TaskOutput::Update(canister_id) => {
+                        entry.canister_id = Some(canister_id);
+                    }
+                }
+            }
+
+            TaskOutcome::Failure(failure) => {
+                // Note: rate-limited failures do not impact the retry limit, they are just counted
+                if failure == TaskFailReason::RateLimited {
+                    entry.rate_limit_failures_count += 1;
+                } else {
+                    entry.failures_count += 1;
+                }
+
+                entry.last_failure_reason = Some(failure);
+                entry.taken_at = None;
+                entry.last_fail_time = Some(now);
+                // To keep scheduling fair, update the task creation time on failure
+                entry.task_created_at = Some(now);
+
+                // Delete the task if the retry limit is reached
+                if entry.failures_count >= MAX_TASK_FAILURES {
+                    entry.task = None;
+                }
             }
         }
 
@@ -1606,14 +1610,13 @@ mod tests {
             domain: "nonexistent.com".to_string(),
             task_id,
             task_kind: TaskKind::Issue,
-            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+            outcome: TaskOutcome::Success(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id: Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
                 enc_cert: b"certificate_data".to_vec(),
                 enc_priv_key: b"private_key_data".to_vec(),
                 not_before: 1000,
                 not_after: 2000,
             })),
-            failure: None,
             duration_secs: 30,
         };
 
@@ -1640,14 +1643,13 @@ mod tests {
             domain: "test.com".to_string(),
             task_id: wrong_task_id,
             task_kind: TaskKind::Issue,
-            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+            outcome: TaskOutcome::Success(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id: Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap(),
                 enc_cert: b"certificate_data".to_vec(),
                 enc_priv_key: b"private_key_data".to_vec(),
                 not_before: 1000,
                 not_after: 2000,
             })),
-            failure: None,
             duration_secs: 30,
         };
 
@@ -1684,14 +1686,13 @@ mod tests {
             domain: "test.com".to_string(),
             task_id,
             task_kind: TaskKind::Issue,
-            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+            outcome: TaskOutcome::Success(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id,
                 enc_cert: certificate_data.clone(),
                 enc_priv_key: private_key_data.clone(),
                 not_before,
                 not_after,
             })),
-            failure: None,
             duration_secs: 30,
         };
 
@@ -1736,8 +1737,7 @@ mod tests {
             domain: "test.com".to_string(),
             task_id,
             task_kind: TaskKind::Update,
-            output: Some(TaskOutput::Update(new_canister_id)),
-            failure: None,
+            outcome: TaskOutcome::Success(TaskOutput::Update(new_canister_id)),
             duration_secs: 30,
         };
 
@@ -1780,8 +1780,7 @@ mod tests {
             domain: "test.com".to_string(),
             task_id,
             task_kind: TaskKind::Delete,
-            output: Some(TaskOutput::Delete),
-            failure: None,
+            outcome: TaskOutcome::Success(TaskOutput::Delete),
             duration_secs: 30,
         };
 
@@ -1820,14 +1819,13 @@ mod tests {
             domain: "test.com".to_string(),
             task_id,
             task_kind: TaskKind::Renew,
-            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+            outcome: TaskOutcome::Success(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id,
                 enc_cert: new_certificate_data.clone(),
                 enc_priv_key: new_private_key_data.clone(),
                 not_before: new_not_before,
                 not_after: new_not_after,
             })),
-            failure: None,
             duration_secs: 45,
         };
 
@@ -1875,14 +1873,13 @@ mod tests {
             domain: "test.com".to_string(),
             task_id,
             task_kind: TaskKind::Issue,
-            output: Some(TaskOutput::Issue(IssueCertificateOutput {
+            outcome: TaskOutcome::Success(TaskOutput::Issue(IssueCertificateOutput {
                 canister_id,
                 enc_cert: certificate_data.clone(),
                 enc_priv_key: private_key_data.clone(),
                 not_before: 1000,
                 not_after: 2000,
             })),
-            failure: None,
             duration_secs: 40,
         };
 

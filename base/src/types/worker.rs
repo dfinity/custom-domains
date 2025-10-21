@@ -34,7 +34,8 @@ use crate::{
     helpers::{format_error_chain, retry_async},
     traits::{repository::Repository, time::UtcTimestamp, validation::ValidatesDomains},
     types::task::{
-        IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult,
+        IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutcome, TaskOutput,
+        TaskResult,
     },
 };
 
@@ -277,19 +278,23 @@ impl Worker {
             .with_duration(start.elapsed()),
         };
 
-        if task_result.output.is_some() {
-            info!(
-                domain = %domain,
-                task_kind = %task_kind,
-                "Task execution succeeded"
-            );
-        } else if let Some(ref err) = task_result.failure {
-            error!(
-                domain = %domain,
-                task_kind = %task_kind,
-                error = ?err,
-                "Task execution failed"
-            );
+        match task_result.outcome {
+            TaskOutcome::Success(_) => {
+                info!(
+                    domain = %domain,
+                    task_kind = %task_kind,
+                    "Task execution succeeded"
+                )
+            }
+
+            TaskOutcome::Failure(ref err) => {
+                error!(
+                    domain = %domain,
+                    task_kind = %task_kind,
+                    error = ?err,
+                    "Task execution failed"
+                );
+            }
         }
 
         task_result
@@ -432,11 +437,11 @@ impl Worker {
             "failure"
         };
 
-        let execution_failure = task_result
-            .failure
-            .as_ref()
-            .map(|err| err.into())
-            .unwrap_or("");
+        let execution_failure = if let TaskOutcome::Failure(ref v) = task_result.outcome {
+            v.into()
+        } else {
+            ""
+        };
 
         // Update metrics
         self.shared_metrics
@@ -821,8 +826,8 @@ mod tests {
         },
         types::{
             task::{
-                IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput,
-                TaskResult,
+                IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutcome,
+                TaskOutput, TaskResult,
             },
             worker::{Worker, WorkerConfig, WorkerMetrics, WorkerStopped},
         },
@@ -976,9 +981,12 @@ mod tests {
 
             // For Issue and Renew tasks, capture the issued certificate to pass it to Delete task
             if task_kind == TaskKind::Issue || task_kind == TaskKind::Renew {
-                certificate = match result.clone().output.unwrap() {
-                    TaskOutput::Issue(output) => Some(output.cert),
-                    _ => panic!("Expected certificate"),
+                certificate = match result.clone().outcome {
+                    TaskOutcome::Failure(_) => panic!("Expected success"),
+                    TaskOutcome::Success(v) => match v {
+                        TaskOutput::Issue(output) => Some(output.cert),
+                        _ => panic!("Expected certificate"),
+                    },
                 };
             }
 
@@ -988,8 +996,7 @@ mod tests {
             assert_eq!(result.task_id, task.task_id);
             assert_eq!(result.task_kind, task.kind);
             assert!(result.duration > Duration::ZERO);
-            assert!(result.output.is_some());
-            assert!(result.failure.is_none());
+            assert!(matches!(result.outcome, TaskOutcome::Success(_)));
         }
     }
 
@@ -1034,10 +1041,11 @@ mod tests {
         assert_eq!(result.task_id, task.task_id);
         assert_eq!(result.task_kind, task.kind);
         assert!(result.duration > Duration::ZERO);
-        assert!(result.output.is_none());
         assert_eq!(
-            result.failure.unwrap(),
-            TaskFailReason::ValidationFailed("Domain validation failed".to_string())
+            result.outcome,
+            TaskOutcome::Failure(TaskFailReason::ValidationFailed(
+                "Domain validation failed".to_string()
+            ))
         );
     }
 
@@ -1082,10 +1090,9 @@ mod tests {
         assert_eq!(result.task_id, task.task_id);
         assert_eq!(result.task_kind, task.kind);
         assert!(result.duration > Duration::ZERO);
-        assert!(result.output.is_none());
         assert_eq!(
-            result.failure.unwrap(),
-            TaskFailReason::Timeout { duration_secs: 0 }
+            result.outcome,
+            TaskOutcome::Failure(TaskFailReason::Timeout { duration_secs: 0 })
         );
     }
 

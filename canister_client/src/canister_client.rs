@@ -22,7 +22,7 @@ use base::{
     },
     types::{
         domain::{DomainStatus, RegisteredDomain},
-        task::{InputTask, ScheduledTask, TaskOutput, TaskResult},
+        task::{InputTask, ScheduledTask, TaskOutcome, TaskOutput, TaskResult},
     },
 };
 use candid::{CandidType, Decode, Deserialize, Encode, Principal};
@@ -244,7 +244,9 @@ impl Repository for CanisterClient {
 
     async fn submit_task_result(&self, mut task_result: TaskResult) -> Result<(), RepositoryError> {
         // We encrypt certificate and private_key and pass the result further to the canister.
-        if let Some(TaskOutput::Issue(issued_certificate)) = &mut task_result.output {
+        if let TaskOutcome::Success(TaskOutput::Issue(issued_certificate)) =
+            &mut task_result.outcome
+        {
             issued_certificate.cert =
                 self.encrypt_field("certificate", &issued_certificate.cert)?;
 

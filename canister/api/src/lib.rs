@@ -88,11 +88,18 @@ pub struct ScheduledTask {
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
 pub struct TaskResult {
     pub domain: String,
-    pub output: Option<TaskOutput>,
-    pub failure: Option<TaskFailReason>,
+    pub outcome: TaskOutcome,
+    // pub output: Option<TaskOutput>,
+    // pub failure: Option<TaskFailReason>,
     pub task_id: TaskId,
     pub task_kind: TaskKind,
     pub duration_secs: u64,
+}
+
+#[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
+pub enum TaskOutcome {
+    Success(TaskOutput),
+    Failure(TaskFailReason),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]

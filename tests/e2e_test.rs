@@ -186,7 +186,7 @@ async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetr
 
     let cipher = {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
-        let cipher = CertificateCipher::new_with_key(&key);
+        let cipher = CertificateCipher::new(&key);
         Arc::new(cipher)
     };
 
