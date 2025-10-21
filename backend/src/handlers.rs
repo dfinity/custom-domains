@@ -4,7 +4,7 @@ use crate::{
     backend_service::BackendService,
     models::{
         error_response, success_response, ApiError, CreateOrUpdateResponse, DeleteResponse,
-        ErrorResponse, FQDNDomain, GetStatusResponse, PostPayload, ValidateResponse,
+        ErrorResponse, GetStatusResponse, PostPayload, ValidateResponse,
     },
 };
 use axum::{
@@ -66,16 +66,11 @@ pub async fn create_handler(
     State(backend_service): State<BackendService>,
     Json(PostPayload { domain }): Json<PostPayload>,
 ) -> axum::response::Response {
-    let domain = domain.inner();
-
-    match backend_service
-        .submit_task(domain.clone(), TaskKind::Issue)
-        .await
-    {
+    match backend_service.submit_task(&domain, TaskKind::Issue).await {
         Ok(canister_id) => success_response(
             StatusCode::ACCEPTED,
             CreateOrUpdateResponse {
-                domain: domain.to_string(),
+                domain: domain.clone(),
                 canister_id,
             },
             Some(
@@ -84,10 +79,10 @@ pub async fn create_handler(
             ),
         ),
         Err(err) => {
-            log_error(&err, &domain.to_string(), "create_registration");
+            log_error(&err, &domain, "create_registration");
             error_response(
                 err,
-                ErrorResponse::new(domain.to_string()),
+                ErrorResponse::new(domain),
                 Some("Domain registration request failed".to_string()),
             )
         }
@@ -116,18 +111,13 @@ pub async fn create_handler(
 )]
 pub async fn update_handler(
     State(backend_service): State<BackendService>,
-    Path(domain): Path<FQDNDomain>,
+    Path(domain): Path<String>,
 ) -> axum::response::Response {
-    let domain = domain.inner();
-
-    match backend_service
-        .submit_task(domain.clone(), TaskKind::Update)
-        .await
-    {
+    match backend_service.submit_task(&domain, TaskKind::Update).await {
         Ok(canister_id) => success_response(
             StatusCode::ACCEPTED,
             CreateOrUpdateResponse {
-                domain: domain.to_string(),
+                domain: domain.clone(),
                 canister_id,
             },
             Some(
@@ -136,10 +126,10 @@ pub async fn update_handler(
             ),
         ),
         Err(err) => {
-            log_error(&err, &domain.to_string(), "update_registration");
+            log_error(&err, &domain, "update_registration");
             error_response(
                 err,
-                ErrorResponse::new(domain.to_string()),
+                ErrorResponse::new(domain),
                 Some("Update domain registration request failed".to_string()),
             )
         }
@@ -165,25 +155,23 @@ pub async fn update_handler(
 )]
 pub async fn get_handler(
     State(backend_service): State<BackendService>,
-    Path(domain): Path<FQDNDomain>,
+    Path(domain): Path<String>,
 ) -> axum::response::Response {
-    let domain = domain.inner();
-
     match backend_service.get_domain_status(&domain).await {
         Ok(domains_status) => success_response(
             StatusCode::OK,
             GetStatusResponse {
-                domain: domain.to_string(),
+                domain: domain.clone(),
                 canister_id: domains_status.canister_id,
                 registration_status: domains_status.status,
             },
             Some("Registration status of the domain".to_string()),
         ),
         Err(err) => {
-            log_error(&err, &domain.to_string(), "registration_status");
+            log_error(&err, &domain, "registration_status");
             error_response(
                 err,
-                ErrorResponse::new(domain.to_string()),
+                ErrorResponse::new(domain),
                 Some("Registration status request failed".to_string()),
             )
         }
@@ -210,25 +198,23 @@ pub async fn get_handler(
 )]
 pub async fn validate_handler(
     State(backend_service): State<BackendService>,
-    Path(domain): Path<FQDNDomain>,
+    Path(domain): Path<String>,
 ) -> axum::response::Response {
-    let domain = domain.inner();
-
     match backend_service.validate(&domain).await {
         Ok((canister_id, validation_status)) => success_response(
             StatusCode::OK,
             ValidateResponse {
-                domain: domain.to_string(),
+                domain: domain.clone(),
                 canister_id,
                 validation_status,
             },
             Some("Domain is eligible for registration: DNS records are valid and canister ownership is verified".to_string()),
         ),
         Err(err) => {
-            log_error(&err, &domain.to_string(), "validate_domain");
+            log_error(&err, &domain, "validate_domain");
             error_response(
                 err,
-            ErrorResponse::new(domain.to_string()),
+            ErrorResponse::new(domain),
                 Some("Failed to validate DNS records or verify canister ownership".to_string()),
             )
         }
@@ -256,15 +242,13 @@ pub async fn validate_handler(
 )]
 pub async fn delete_handler(
     State(backend_service): State<BackendService>,
-    Path(domain): Path<FQDNDomain>,
+    Path(domain): Path<String>,
 ) -> axum::response::Response {
-    let domain = domain.inner();
-
-    match backend_service.submit_delete_task(domain.clone()).await {
+    match backend_service.submit_delete_task(&domain).await {
         Ok(()) => success_response(
             StatusCode::ACCEPTED,
             DeleteResponse {
-                domain: domain.to_string(),
+                domain: domain.clone(),
             },
             Some(
                 "Delete domain registration request accepted and may take a few minutes to process"
@@ -272,10 +256,10 @@ pub async fn delete_handler(
             ),
         ),
         Err(err) => {
-            log_error(&err, &domain.to_string(), "delete_registration");
+            log_error(&err, &domain, "delete_registration");
             error_response(
                 err,
-                ErrorResponse::new(domain.to_string()),
+                ErrorResponse::new(domain),
                 Some("Delete domain registration request failed".to_string()),
             )
         }

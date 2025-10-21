@@ -1,5 +1,3 @@
-use std::{ops::Deref, str::FromStr};
-
 use base::{
     traits::{repository::RepositoryError, validation::ValidationError},
     types::domain::RegistrationStatus,
@@ -8,54 +6,11 @@ use base::{
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use candid::Principal;
 use derive_new::new;
-use fqdn::FQDN;
 use serde::{Deserialize, Serialize};
-use serde_with::{DeserializeFromStr, SerializeDisplay};
 use thiserror::Error;
 
 #[cfg(feature = "openapi")]
 use utoipa::ToSchema;
-
-/// FQDN wrapper to implement parsing from a string
-#[derive(Debug, Clone, DeserializeFromStr, SerializeDisplay)]
-pub struct FQDNDomain(FQDN);
-
-impl FromStr for FQDNDomain {
-    type Err = ApiError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.is_empty() {
-            return Err(ApiError::BadRequest("Domain cannot be empty".to_string()));
-        } else if s.len() > 255 {
-            return Err(ApiError::BadRequest("Domain is too long".to_string()));
-        }
-
-        Ok(Self(FQDN::from_str(s).map_err(|_| {
-            ApiError::BadRequest("Invalid domain format".to_string())
-        })?))
-    }
-}
-
-impl FQDNDomain {
-    /// Converts to FQDN
-    pub fn inner(self) -> FQDN {
-        self.0
-    }
-}
-
-impl std::fmt::Display for FQDNDomain {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Deref for FQDNDomain {
-    type Target = FQDN;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 /// Generic API response structure for all endpoints.
 #[derive(Serialize)]
@@ -226,6 +181,5 @@ pub enum ValidationStatus {
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct PostPayload {
-    #[cfg_attr(feature = "openapi", schema(value_type = String, example = "dfinity.org", nullable = false))]
-    pub domain: FQDNDomain,
+    pub domain: String,
 }
