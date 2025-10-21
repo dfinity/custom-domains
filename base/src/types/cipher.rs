@@ -14,7 +14,7 @@ const AUTH_TAG_LEN: usize = 16;
 const MIN_ENCRYPTED_DATA_LEN: usize = NONCE_LEN + AUTH_TAG_LEN + 1;
 
 /// A cryptographic cipher for encrypting and decrypting certificate data.
-pub struct CertificateCipher(pub XChaCha20Poly1305);
+pub struct CertificateCipher(XChaCha20Poly1305);
 
 // Custom Debug implementation to avoiding exposing any sensitive data.
 impl std::fmt::Debug for CertificateCipher {
@@ -25,7 +25,7 @@ impl std::fmt::Debug for CertificateCipher {
 
 impl CertificateCipher {
     /// Creates a new CertificateCipher.
-    pub fn new_with_key(key: &Key) -> Self {
+    pub fn new(key: &Key) -> Self {
         Self(XChaCha20Poly1305::new(key))
     }
 }
@@ -88,7 +88,7 @@ mod tests {
         /// Creates a new CertificateCipher with a randomly generated key.
         pub fn new_with_random_key() -> Self {
             let key = XChaCha20Poly1305::generate_key(&mut OsRng);
-            Self::new_with_key(&key)
+            Self::new(&key)
         }
     }
 

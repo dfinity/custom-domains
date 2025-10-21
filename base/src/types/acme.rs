@@ -1,6 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
+use hickory_resolver::config::CLOUDFLARE_IPS;
 use ic_bn_lib::{
     http::dns::{Options, Resolver},
     tls::acme::{
@@ -32,6 +33,10 @@ pub struct AcmeClientConfig {
     pub poll_order_timeout: Duration,
     /// Timeout for token polling, which verifies the dns record is correct
     pub poll_token_timeout: Duration,
+    /// DNS servers to use
+    pub dns_servers: Vec<IpAddr>,
+    /// DNS timeout
+    pub dns_timeout: Duration,
 }
 
 impl AcmeClientConfig {
@@ -45,6 +50,8 @@ impl AcmeClientConfig {
             insecure_tls: false,
             poll_order_timeout: DEFAULT_POLL_ORDER_TIMEOUT,
             poll_token_timeout: DEFAULT_POLL_TOKEN_TIMEOUT,
+            dns_servers: CLOUDFLARE_IPS.to_vec(),
+            dns_timeout: Duration::from_secs(10),
         }
     }
 
@@ -83,6 +90,12 @@ impl AcmeClientConfig {
         self.poll_token_timeout = timeout;
         self
     }
+
+    /// Sets the DNS servers to use
+    pub fn with_dns_servers(mut self, dns_servers: Vec<IpAddr>) -> Self {
+        self.dns_servers = dns_servers;
+        self
+    }
 }
 
 impl AcmeClientConfig {
@@ -97,7 +110,10 @@ impl AcmeClientConfig {
         )?);
 
         // DNS resolver
-        let resolver_opts = Options::default();
+        let mut resolver_opts = Options::default();
+        resolver_opts.servers = self.dns_servers;
+        resolver_opts.timeout = self.dns_timeout;
+
         let dns_resolver = Resolver::new(resolver_opts);
         let token_manager = Arc::new(TokenManagerDns::new(Arc::new(dns_resolver), cloudflare));
 
@@ -109,11 +125,13 @@ impl AcmeClientConfig {
             builder
                 .load_account(credentials)
                 .await
-                .with_context(|| "unable to load ACME account")?
+                .context("unable to load ACME account")?
         } else {
             let (builder, _) = builder
                 .create_account("mailto:test_account@testing.org")
-                .await?;
+                .await
+                .context("unable to create ACME account")?;
+
             builder
         };
 
@@ -121,7 +139,8 @@ impl AcmeClientConfig {
             .with_order_timeout(self.poll_order_timeout)
             .with_token_timeout(self.poll_token_timeout)
             .build()
-            .await?;
+            .await
+            .context("unable to build ACME client")?;
 
         Ok(client)
     }
