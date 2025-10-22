@@ -171,9 +171,10 @@ impl Validator {
                 // Check all records belong to delegation domain
                 lookup
                     .iter()
-                    .all(|(_, rec)| {
-                        let name = rec.trim_end_matches('.');
-                        name.ends_with(&self.dns_config.delegation_domain)
+                    .all(|rr| {
+                        let name = rr.to_string();
+                        name.trim_end_matches('.')
+                            .ends_with(&self.dns_config.delegation_domain)
                     })
                     .then_some(())
                     .ok_or(ValidationError::ExistingDnsTxtChallenge { src: hostname })
@@ -222,7 +223,7 @@ impl Validator {
         // Validate expected CNAME record exists
         records
             .iter()
-            .any(|(_, record)| record == &cname_dst)
+            .any(|rr| rr.to_string() == cname_dst)
             .then_some(())
             .ok_or(ValidationError::MissingDnsCname {
                 src: cname_src,
@@ -263,12 +264,12 @@ impl Validator {
             return Err(ValidationError::MultipleDnsTxtCanisterId { src: hostname });
         }
 
-        let (_, record) = &records[0];
+        let rr = records[0].to_string();
 
         // Parse canister ID
-        Principal::from_text(record).map_err(|_| ValidationError::InvalidDnsTxtCanisterId {
+        Principal::from_text(&rr).map_err(|_| ValidationError::InvalidDnsTxtCanisterId {
             src: hostname,
-            id: record.clone(),
+            id: rr,
         })
     }
 }
