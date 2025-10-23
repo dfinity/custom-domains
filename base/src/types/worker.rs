@@ -7,11 +7,13 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use async_trait::async_trait;
 use candid::Principal;
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::{
     rustls::pki_types::CertificateDer,
+    tasks::Run,
     tls::acme::{
         client::{AcmeCertificateClient, Error},
         instant_acme::{RevocationReason, RevocationRequest},
@@ -44,7 +46,7 @@ pub const TASK_DURATION_BUCKETS: &[f64] = &[5.0, 30.0, 60.0, 90.0, 120.0, 180.0,
 /// How long to wait between polling attempts when no tasks are available.
 const DEFAULT_POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(20);
 /// Maximum time a worker is allowed to spend processing a single task.
-const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(360);
+const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(6 * 60);
 /// Maximum time allowed to attempt submitting the result of a completed task.
 const DEFAULT_TASK_SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Interval to wait before retrying to submit a failed task result.
@@ -52,7 +54,7 @@ const DEFAULT_TASK_RESUBMIT_INTERVAL: Duration = Duration::from_secs(5);
 /// Interval to wait before retrying to fetch a new task if the previous fetch failed.
 const DEFAULT_TASK_FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 /// The time window over which each worker's utilization is measured.
-const WORKER_UTILIZATION_WINDOW: Duration = Duration::from_secs(180);
+const WORKER_UTILIZATION_WINDOW: Duration = Duration::from_secs(3 * 60);
 /// Delay before revoking an old certificate after a successful certificate renewal.
 const CERT_REVOCATION_DELAY_AFTER_RENEWAL: Duration = Duration::from_secs(10 * 60);
 
@@ -576,6 +578,14 @@ impl Worker {
     }
 }
 
+#[async_trait]
+impl Run for Worker {
+    async fn run(&self, _token: CancellationToken) -> Result<(), anyhow::Error> {
+        self.run().await;
+        Ok(())
+    }
+}
+
 async fn issue_task(
     domain: FQDN,
     validator: Arc<dyn ValidatesDomains>,
@@ -755,19 +765,19 @@ pub struct WorkerMetrics {
 }
 
 impl WorkerMetrics {
-    pub fn new(registry: Registry) -> Self {
+    pub fn new(registry: &Registry) -> Self {
         Self {
             task_executions: register_histogram_vec_with_registry!(
-                "task_execution_duration_seconds",
-                "Task execution durations in seconds",
+                "custom_domains_task_execution_duration_seconds",
+                "Custom Domains: Task execution durations in seconds",
                 &["worker_name", "task_kind", "status", "failure"],
                 TASK_DURATION_BUCKETS.to_vec(),
                 registry
             )
             .unwrap(),
             task_submissions: register_int_counter_vec_with_registry!(
-                "task_submission_with_retries",
-                "Total number of task submission (with retries)",
+                "custom_domains_task_submission_with_retries",
+                "Custom Domains: Total number of task submission (with retries)",
                 &[
                     "worker_name",
                     "task_kind",
@@ -779,22 +789,22 @@ impl WorkerMetrics {
             )
             .unwrap(),
             task_fetches: register_int_counter_vec_with_registry!(
-                "task_fetch",
-                "Total number of task fetching attempts",
+                "custom_domains_task_fetch",
+                "Custom Domains: Total number of task fetching attempts",
                 &["worker_name", "status", "failure"],
                 registry
             )
             .unwrap(),
             worker_utilization: register_gauge_vec_with_registry!(
-                "worker_utilization_percent",
-                "Worker utilization percentage",
+                "custom_domains_worker_utilization_percent",
+                "Custom Domains: Worker utilization percentage",
                 &["worker_name"],
                 registry
             )
             .unwrap(),
             certificate_revocations: register_int_counter_vec_with_registry!(
-                "certificate_revocation",
-                "Total number of certificate revocations by status",
+                "custom_domains_certificate_revocation",
+                "Custom Domains: Total number of certificate revocations by status",
                 &["status"],
                 registry
             )
@@ -907,7 +917,7 @@ mod tests {
 
         let token = CancellationToken::new();
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -948,7 +958,7 @@ mod tests {
             .expect_validate_deletion()
             .returning(|_| Box::pin(async { Ok(()) }));
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -1013,7 +1023,7 @@ mod tests {
             })
         });
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -1062,7 +1072,7 @@ mod tests {
             })
         });
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -1106,7 +1116,7 @@ mod tests {
             .returning(|_| Box::pin(async { Ok(()) }));
 
         let registry = Registry::new();
-        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
+        let metrics = Arc::new(WorkerMetrics::new(&registry));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
@@ -1197,7 +1207,7 @@ mod tests {
             .with_task_resubmit_interval(Duration::from_millis(10));
 
         let registry = Registry::new();
-        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
+        let metrics = Arc::new(WorkerMetrics::new(&registry));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
@@ -1274,7 +1284,7 @@ mod tests {
             .with_task_submit_timeout(Duration::from_millis(100)) // Some short timeout
             .with_task_resubmit_interval(Duration::from_millis(10));
 
-        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
+        let metrics = Arc::new(WorkerMetrics::new(&registry));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
@@ -1329,7 +1339,7 @@ mod tests {
         });
 
         let token = CancellationToken::new();
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),

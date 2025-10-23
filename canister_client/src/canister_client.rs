@@ -29,9 +29,9 @@ use candid::{CandidType, Decode, Deserialize, Encode, Principal};
 use canister_api::ListCertificatesPageInput;
 use derive_new::new;
 use fqdn::FQDN;
-use ic_agent::Agent;
 use ic_bn_lib::{
     custom_domains::{CustomDomain as IcBnCustomDomain, ProvidesCustomDomains},
+    ic_agent::Agent,
     tls::providers::{Pem, ProvidesCertificates},
 };
 

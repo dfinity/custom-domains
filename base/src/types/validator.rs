@@ -1,10 +1,10 @@
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use candid::Principal;
 use fqdn::FQDN;
-use hickory_resolver::{config::CLOUDFLARE_IPS, proto::rr::RecordType};
+use hickory_resolver::proto::rr::RecordType;
 use ic_bn_lib::http::{
     client::Options as HttpOptions,
     dns::{Options as DnsOptions, Resolver, Resolves},
@@ -23,7 +23,7 @@ const DEFAULT_DELEGATION_DOMAIN: &str = "icp2.io";
 pub struct Validator {
     client: Arc<dyn Client>,
     resolver: Arc<dyn Resolves>,
-    dns_config: DnsConfig,
+    delegation_domain: String,
 }
 
 #[async_trait]
@@ -41,52 +41,25 @@ impl ValidatesDomains for Validator {
     }
 }
 
-/// Configuration for DNS validation settings.
-pub struct DnsConfig {
-    /// The delegation domain (e.g., "icp2.io")
-    pub delegation_domain: String,
-    /// DNS servers to use
-    pub servers: Vec<IpAddr>,
-    /// DNS timeout (divided evenly between all DNS servers)
-    pub timeout: Duration,
-}
-
-impl Default for DnsConfig {
-    fn default() -> Self {
-        Self {
-            delegation_domain: DEFAULT_DELEGATION_DOMAIN.to_string(),
-            servers: CLOUDFLARE_IPS.to_vec(),
-            timeout: Duration::from_secs(10),
-        }
-    }
-}
-
 impl Default for Validator {
     fn default() -> Self {
-        Self::new(DnsConfig::default()).unwrap()
+        Self::new(DEFAULT_DELEGATION_DOMAIN.into(), DnsOptions::default()).unwrap()
     }
 }
 
 impl Validator {
     /// Create a new Validator
-    pub fn new(dns_config: DnsConfig) -> Result<Self, ValidationError> {
-        if dns_config.delegation_domain.is_empty() {
+    pub fn new(
+        delegation_domain: String,
+        mut dns_opts: DnsOptions,
+    ) -> Result<Self, ValidationError> {
+        if delegation_domain.is_empty() {
             return Err(ValidationError::UnexpectedError(anyhow!(
                 "Delegation domain cannot be empty"
             )));
         }
 
-        if dns_config.servers.is_empty() {
-            return Err(ValidationError::UnexpectedError(anyhow!(
-                "You need to specify DNS servers"
-            )));
-        }
-
-        let mut dns_opts = DnsOptions::default();
         dns_opts.cache_size = 0;
-        dns_opts.servers = dns_config.servers.clone();
-        dns_opts.timeout = dns_config.timeout;
-
         let resolver = Resolver::new(dns_opts);
 
         let http_opts = HttpOptions::default();
@@ -96,7 +69,7 @@ impl Validator {
         Ok(Self {
             client: Arc::new(client),
             resolver: Arc::new(resolver),
-            dns_config,
+            delegation_domain,
         })
     }
 
@@ -113,7 +86,7 @@ impl Validator {
         // TODO: verify ic-certification is handled already
         let url = format!(
             "https://{canister_id}.{}/.well-known/ic-domains",
-            self.dns_config.delegation_domain
+            self.delegation_domain
         );
 
         let request = Request::new(
@@ -174,7 +147,7 @@ impl Validator {
                     .all(|rr| {
                         let name = rr.to_string();
                         name.trim_end_matches('.')
-                            .ends_with(&self.dns_config.delegation_domain)
+                            .ends_with(&self.delegation_domain)
                     })
                     .then_some(())
                     .ok_or(ValidationError::ExistingDnsTxtChallenge { src: hostname })
@@ -197,10 +170,7 @@ impl Validator {
     /// to the corresponding delegation domain for certificate validation.
     async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
         let cname_src = format!("_acme-challenge.{domain}.");
-        let cname_dst = format!(
-            "_acme-challenge.{domain}.{}.",
-            self.dns_config.delegation_domain
-        );
+        let cname_dst = format!("_acme-challenge.{domain}.{}.", self.delegation_domain);
 
         // Resolve CNAME record
         let records = self

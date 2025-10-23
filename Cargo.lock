@@ -371,8 +371,11 @@ dependencies = [
  "axum-extra",
  "axum-server",
  "base",
+ "base64 0.22.1",
  "candid",
  "canister-client",
+ "chacha20poly1305",
+ "clap",
  "derive-new",
  "fqdn",
  "ic-bn-lib",
@@ -423,13 +426,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "candid",
  "canister-api",
  "chacha20poly1305",
  "chrono",
+ "clap",
  "derive-new",
  "fqdn",
  "hickory-resolver",
+ "humantime",
  "ic-bn-lib",
  "mockall",
  "pem 3.0.5",
@@ -694,7 +700,6 @@ dependencies = [
  "canister-api",
  "derive-new",
  "fqdn",
- "ic-agent 0.41.0",
  "ic-bn-lib",
  "pretty_assertions",
  "tokio",
@@ -1050,7 +1055,6 @@ dependencies = [
  "chacha20poly1305",
  "fqdn",
  "hex",
- "ic-agent 0.41.0",
  "ic-bn-lib",
  "pem 3.0.5",
  "pocket-ic",
@@ -2127,54 +2131,6 @@ dependencies = [
 
 [[package]]
 name = "ic-agent"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f0125ba06162d2626d80318cad1d3540426a92d2929c5a7a10edc0b0127cca"
-dependencies = [
- "arc-swap",
- "async-channel 1.9.0",
- "async-lock",
- "async-trait",
- "async-watch",
- "backoff",
- "cached",
- "candid",
- "der",
- "ecdsa",
- "ed25519-consensus",
- "elliptic-curve",
- "futures-util",
- "hex",
- "http",
- "http-body",
- "ic-certification",
- "ic-ed25519",
- "ic-transport-types 0.41.0",
- "ic-verify-bls-signature",
- "k256",
- "leb128",
- "p256",
- "pem 3.0.5",
- "pkcs8",
- "rand 0.8.5",
- "rangemap",
- "reqwest",
- "sec1",
- "serde",
- "serde_bytes",
- "serde_cbor",
- "serde_repr",
- "sha2 0.10.9",
- "stop-token",
- "thiserror 2.0.16",
- "time",
- "tokio",
- "tower-service",
- "url",
-]
-
-[[package]]
-name = "ic-agent"
 version = "0.42.0"
 source = "git+https://github.com/dfinity/agent-rs?rev=f34acedb5539838ffdbd4cf49a0832303977293f#f34acedb5539838ffdbd4cf49a0832303977293f"
 dependencies = [
@@ -2226,7 +2182,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.1.0"
-source = "git+https://github.com/dfinity/ic-bn-lib?rev=de3f10a565e6f7e226bff00e08e30f93199f78a9#de3f10a565e6f7e226bff00e08e30f93199f78a9"
+source = "git+https://github.com/dfinity/ic-bn-lib?rev=48fa43ebf1d546059bdcba4edf468bb0e5518cae#48fa43ebf1d546059bdcba4edf468bb0e5518cae"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2257,7 +2213,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "ic-agent 0.42.0",
+ "ic-agent",
  "indoc",
  "instant-acme",
  "itertools 0.14.0",
@@ -2414,24 +2370,6 @@ name = "ic-transport-types"
 version = "0.40.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2e7706e55836e8104c98149ec0796d20d5213fef972ac01b544657d410f1883"
-dependencies = [
- "candid",
- "hex",
- "ic-certification",
- "leb128",
- "serde",
- "serde_bytes",
- "serde_cbor",
- "serde_repr",
- "sha2 0.10.9",
- "thiserror 2.0.16",
-]
-
-[[package]]
-name = "ic-transport-types"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5527e1eed0407cf4aa8ced1bc22181c2ae09f8385a00d270f146310b9379c6ad"
 dependencies = [
  "candid",
  "hex",

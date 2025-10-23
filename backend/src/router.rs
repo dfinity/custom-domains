@@ -33,7 +33,7 @@ pub struct RateLimitConfig {
 pub fn create_router(
     repository: Arc<dyn Repository>,
     validator: Arc<dyn ValidatesDomains>,
-    registry: Registry,
+    metrics_registry: Registry,
     rate_limits: RateLimitConfig,
     with_metrics_endpoint: bool,
 ) -> Router {
@@ -62,7 +62,7 @@ pub fn create_router(
         )
         .fallback(|| async { (StatusCode::NOT_FOUND, "path not found") })
         .layer(from_fn_with_state(
-            Arc::new(HttpMetrics::new(registry.clone())),
+            Arc::new(HttpMetrics::new(metrics_registry.clone())),
             metrics_middleware,
         ))
         .layer(from_fn(logging_middleware))
@@ -72,7 +72,7 @@ pub fn create_router(
     let metrics_router = if with_metrics_endpoint {
         Router::new()
             .route("/metrics", get(metrics_handler))
-            .with_state(registry)
+            .with_state(metrics_registry)
     } else {
         Router::new()
     };

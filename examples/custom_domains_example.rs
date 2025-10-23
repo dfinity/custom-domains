@@ -9,7 +9,7 @@ use base::types::{
 };
 use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
-use ic_agent::Agent;
+use ic_bn_lib::ic_agent::Agent;
 use prometheus::Registry;
 use tokio::spawn;
 use tokio_util::sync::CancellationToken;
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     let token = CancellationToken::new();
     let acme_client = Arc::new(AcmeClientConfig::new(cloudflare_api_token).build().await?);
     let registry = Registry::new_custom(Some("custom_domains".into()), None)?;
-    let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
+    let metrics = Arc::new(WorkerMetrics::new(&registry));
     let worker = Worker::new(
         "worker_1".to_string(),
         repository.clone(),

@@ -1,9 +1,8 @@
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
-use hickory_resolver::config::CLOUDFLARE_IPS;
 use ic_bn_lib::{
-    http::dns::{Options, Resolver},
+    http::dns::{Options as DnsOptions, Resolver},
     tls::acme::{
         client::{Client, ClientBuilder},
         dns::{cloudflare::Cloudflare, TokenManagerDns},
@@ -33,10 +32,8 @@ pub struct AcmeClientConfig {
     pub poll_order_timeout: Duration,
     /// Timeout for token polling, which verifies the dns record is correct
     pub poll_token_timeout: Duration,
-    /// DNS servers to use
-    pub dns_servers: Vec<IpAddr>,
-    /// DNS timeout
-    pub dns_timeout: Duration,
+    /// DNS options
+    pub dns_options: DnsOptions,
 }
 
 impl AcmeClientConfig {
@@ -50,8 +47,7 @@ impl AcmeClientConfig {
             insecure_tls: false,
             poll_order_timeout: DEFAULT_POLL_ORDER_TIMEOUT,
             poll_token_timeout: DEFAULT_POLL_TOKEN_TIMEOUT,
-            dns_servers: CLOUDFLARE_IPS.to_vec(),
-            dns_timeout: Duration::from_secs(10),
+            dns_options: DnsOptions::default(),
         }
     }
 
@@ -91,15 +87,9 @@ impl AcmeClientConfig {
         self
     }
 
-    /// Sets the DNS servers to use
-    pub fn with_dns_servers(mut self, dns_servers: Vec<IpAddr>) -> Self {
-        self.dns_servers = dns_servers;
-        self
-    }
-
-    /// Sets the DNS timeout
-    pub fn with_dns_timeout(mut self, dns_timeout: Duration) -> Self {
-        self.dns_timeout = dns_timeout;
+    /// Sets the DNS options to use
+    pub fn with_dns_options(mut self, dns_options: DnsOptions) -> Self {
+        self.dns_options = dns_options;
         self
     }
 }
@@ -109,19 +99,15 @@ impl AcmeClientConfig {
     ///
     /// Creates the necessary DNS resolver, Cloudflare integration, and ACME account.
     /// If no credentials are provided, a new account will be created.
-    pub async fn build(self) -> anyhow::Result<Client> {
+    pub async fn build(mut self) -> anyhow::Result<Client> {
         let cloudflare = Arc::new(Cloudflare::new(
             self.cloudflare_url,
             self.cloudflare_api_token,
         )?);
 
         // DNS resolver
-        let mut resolver_opts = Options::default();
-        resolver_opts.cache_size = 0;
-        resolver_opts.servers = self.dns_servers;
-        resolver_opts.timeout = self.dns_timeout;
-
-        let dns_resolver = Resolver::new(resolver_opts);
+        self.dns_options.cache_size = 0;
+        let dns_resolver = Resolver::new(self.dns_options);
         let token_manager = Arc::new(TokenManagerDns::new(Arc::new(dns_resolver), cloudflare));
 
         let builder = ClientBuilder::new(self.insecure_tls)
