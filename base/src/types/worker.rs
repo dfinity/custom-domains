@@ -1155,8 +1155,8 @@ mod tests {
         let metric_families = registry.gather();
         let submission_metric = metric_families
             .iter()
-            .find(|family| family.name() == "task_submission_with_retries")
-            .expect("task_submission_with_retries metric should exist");
+            .find(|family| family.name() == "custom_domains_task_submission_with_retries")
+            .expect("custom_domains_task_submission_with_retries metric should exist");
         let metric = submission_metric
             .get_metric()
             .iter()
@@ -1240,8 +1240,8 @@ mod tests {
         let metric_families = registry.gather();
         let submission_metric = metric_families
             .iter()
-            .find(|family| family.name() == "task_submission_with_retries")
-            .expect("task_submission_with_retries metric should exist");
+            .find(|family| family.name() == "custom_domains_task_submission_with_retries")
+            .expect("custom_domains_task_submission_with_retries metric should exist");
         let metric = submission_metric
             .get_metric()
             .iter()
