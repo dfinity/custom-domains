@@ -30,7 +30,7 @@ use canister_api::ListCertificatesPageInput;
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::{
-    custom_domains::{CustomDomain as IcBnCustomDomain, ProvidesCustomDomains},
+    custom_domains::{CustomDomain, ProvidesCustomDomains},
     ic_agent::Agent,
     tls::providers::{Pem, ProvidesCertificates},
 };
@@ -40,41 +40,42 @@ pub struct CanisterClient {
     agent: Agent,
     canister_id: Principal,
     certificate_cipher: Arc<dyn CiphersCertificates>,
-    #[new(value = "AtomicU64::new(0)")]
+    #[new(default)]
     last_change_time: AtomicU64,
-    #[new(value = "ArcSwap::from_pointee(Vec::new())")]
+    #[new(default)]
     certificates: ArcSwap<Vec<Pem>>,
-    #[new(value = "ArcSwap::from_pointee(Vec::new())")]
-    custom_domains: ArcSwap<Vec<IcBnCustomDomain>>,
+    #[new(default)]
+    custom_domains: ArcSwap<Vec<CustomDomain>>,
 }
 
 impl CanisterClient {
     /// Method to fetch and cache registrations if changes happened.
     async fn maybe_update_cache(&self) -> Result<(), anyhow::Error> {
         let last_change = self.get_last_change_time().await?;
-        let cached_timestamp = self.last_change_time.load(Ordering::Relaxed);
+        let cached_timestamp = self.last_change_time.load(Ordering::SeqCst);
 
-        if last_change != cached_timestamp {
-            // Certificates have changed, fetch new ones
-            let registered_domains = self.all_registrations().await?;
-
-            let mut pems = Vec::with_capacity(registered_domains.len());
-            let mut domains = Vec::with_capacity(registered_domains.len());
-
-            for domain in registered_domains {
-                pems.push(Pem([domain.cert, domain.priv_key].concat()));
-
-                domains.push(IcBnCustomDomain {
-                    name: domain.domain,
-                    canister_id: domain.canister_id,
-                });
-            }
-
-            // Update cache
-            self.certificates.store(Arc::new(pems));
-            self.custom_domains.store(Arc::new(domains));
-            self.last_change_time.store(last_change, Ordering::Relaxed);
+        if last_change == cached_timestamp {
+            return Ok(());
         }
+
+        // Certificates have changed, fetch new ones
+        let domains = self.all_registrations().await?;
+
+        let mut certificates = Vec::with_capacity(domains.len());
+        let mut custom_domains = Vec::with_capacity(domains.len());
+
+        for d in domains {
+            certificates.push(Pem([d.cert, d.priv_key].concat()));
+            custom_domains.push(CustomDomain {
+                name: d.domain,
+                canister_id: d.canister_id,
+            });
+        }
+
+        // Update cache
+        self.certificates.store(Arc::new(certificates));
+        self.custom_domains.store(Arc::new(custom_domains));
+        self.last_change_time.store(last_change, Ordering::SeqCst);
 
         Ok(())
     }
@@ -338,7 +339,7 @@ impl ProvidesCertificates for CanisterClient {
 
 #[async_trait]
 impl ProvidesCustomDomains for CanisterClient {
-    async fn get_custom_domains(&self) -> Result<Vec<IcBnCustomDomain>, anyhow::Error> {
+    async fn get_custom_domains(&self) -> Result<Vec<CustomDomain>, anyhow::Error> {
         self.maybe_update_cache().await?;
         Ok(self.custom_domains.load().as_ref().clone())
     }

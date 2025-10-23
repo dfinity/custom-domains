@@ -41,6 +41,7 @@ impl CiphersCertificates for CertificateCipher {
 
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
+        #[allow(deprecated)]
         let nonce = XNonce::from_slice(&nonce_bytes);
 
         let encrypted_data = self
@@ -67,6 +68,7 @@ impl CiphersCertificates for CertificateCipher {
 
         // Check above ensures this split won't panic
         let (nonce_bytes, ciphertext) = encrypted_data.split_at(NONCE_LEN);
+        #[allow(deprecated)]
         let nonce = XNonce::from_slice(nonce_bytes);
 
         let decrypted_data = self

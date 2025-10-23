@@ -35,14 +35,14 @@ use tokio_util::sync::CancellationToken;
 use crate::router::{create_router, RateLimitConfig};
 
 /// Sets up everything required to run Custom Domains.
-/// Returns Worker & Axum Router.
+/// Returns Worker, Axum Router and a CanisterClient to access data.
 pub async fn setup(
     cli: &CustomDomainsCli,
     dns_opts: DnsOptions,
     token: CancellationToken,
     hostname: &str,
     metrics_registry: Registry,
-) -> Result<(Worker, Router), anyhow::Error> {
+) -> Result<(Worker, Router, Arc<CanisterClient>), anyhow::Error> {
     let cipher = {
         let key = BASE64_STANDARD
             .decode(&cli.custom_domains_encryption_key)
@@ -52,6 +52,7 @@ pub async fn setup(
             return Err(anyhow!("encryption key must be exactly 32 bytes long"));
         }
 
+        #[allow(deprecated)]
         let key = Key::from_slice(&key);
         let cipher = CertificateCipher::new(key);
         Arc::new(cipher)
@@ -121,12 +122,12 @@ pub async fn setup(
     );
 
     let router = create_router(
-        repository,
+        repository.clone(),
         validator,
         metrics_registry,
         RateLimitConfig::default(),
         true,
     );
 
-    Ok((worker, router))
+    Ok((worker, router, repository))
 }
