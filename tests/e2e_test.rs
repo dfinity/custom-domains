@@ -28,7 +28,6 @@ use ic_bn_lib::{
 };
 use pem::parse_many;
 use prometheus::Registry;
-use serde_json::json;
 use tokio::{spawn, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -308,12 +307,10 @@ async fn submit_domains_for_registration(ctx: &TestContext) -> anyhow::Result<Ve
         let handle = spawn(async move {
             client_cloned
                 .post(format!(
-                    "http://{}:{}/v1/domains",
+                    "http://{}:{}/v1/domains/{domain}",
                     api_addr.ip(),
                     api_addr.port()
                 ))
-                .header("Content-Type", "application/json")
-                .json(&json!({"domain": domain}))
                 .send()
                 .await
                 .unwrap()
