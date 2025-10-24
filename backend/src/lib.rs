@@ -126,7 +126,7 @@ pub async fn setup(
         validator,
         metrics_registry,
         RateLimitConfig::default(),
-        true,
+        false,
     );
 
     Ok((worker, router, repository))

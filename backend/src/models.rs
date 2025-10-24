@@ -176,10 +176,3 @@ pub enum ValidationStatus {
     /// Domain validation failed with error details
     Invalid(String),
 }
-
-/// Request payload for domain registration endpoints.
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct PostPayload {
-    pub domain: String,
-}

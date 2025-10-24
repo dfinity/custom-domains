@@ -6,14 +6,14 @@ use fqdn::FQDN;
 use ic_bn_lib::tls::acme::AcmeUrl;
 use reqwest::Url;
 
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct CustomDomainsCli {
     /// URL of the IC to use to access the canister
     #[clap(env, long, default_value = "https://ic0.app")]
     pub custom_domains_ic_url: Url,
 
     /// Path to an IC identity file (PEM-encoded)
-    #[clap(env, long)]
+    #[clap(env, long, required = false)]
     pub custom_domains_ic_identity: PathBuf,
 
     /// Path to an IC root key.
@@ -22,7 +22,7 @@ pub struct CustomDomainsCli {
     pub custom_domains_ic_root_key: Option<PathBuf>,
 
     /// ID of the management canister
-    #[clap(env, long)]
+    #[clap(env, long, required = false)]
     pub custom_domains_canister_id: Principal,
 
     /// Cloudflare API URL
@@ -30,12 +30,12 @@ pub struct CustomDomainsCli {
     pub custom_domains_cloudflare_url: Url,
 
     /// Token to access Cloudflare API
-    #[clap(env, long)]
+    #[clap(env, long, required = false)]
     pub custom_domains_cloudflare_token: String,
 
     /// Encryption key to encrypt/decrypt certificates in the canister storage.
     /// Must be exactly 256 bits / 32 bytes and Base64-encoded.
-    #[clap(env, long)]
+    #[clap(env, long, required = false)]
     pub custom_domains_encryption_key: String,
 
     /// Domain that the clients delegate their entries (ACME & canister) to
@@ -48,6 +48,6 @@ pub struct CustomDomainsCli {
     pub custom_domains_acme_url: AcmeUrl,
 
     /// Path to a JSON file with ACME account data.
-    #[clap(env, long)]
+    #[clap(env, long, required = false)]
     pub custom_domains_acme_account: PathBuf,
 }

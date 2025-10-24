@@ -83,21 +83,17 @@ http://127.0.0.1:3000/swagger-ui
 ## API Endpoints (Examples)
 ### Register a New Domain
 ```http
-POST /v1/domains
-Content-Type: application/json
-{
-  "domain": "example.com"
-}
+POST /v1/example.com
 ```
 
 ### Check Domain Status
 ```http
-GET /v1/domains/example.com
+GET /v1/example.com
 ```
 
 ### Validate Domain Eligibility
 ```http
-GET /v1/domains/example.com/validate
+GET /v1/example.com/validate
 ```
 
 ### Response Format

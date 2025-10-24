@@ -389,7 +389,7 @@ async fn delete_half_domains(
     for domain in domains_to_delete.clone() {
         let response = client
             .delete(format!(
-                "http://{}:{}/v1/domains/{}",
+                "http://{}:{}/v1/{}",
                 ctx.api_server_addr.ip(),
                 ctx.api_server_addr.port(),
                 domain
