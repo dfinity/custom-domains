@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Context;
 use ic_bn_lib::{
     http::dns::{Options as DnsOptions, Resolver},
+    reqwest::Url,
     tls::acme::{
         client::{Client, ClientBuilder},
         dns::{cloudflare::Cloudflare, TokenManagerDns},
@@ -10,7 +11,6 @@ use ic_bn_lib::{
         AcmeUrl,
     },
 };
-use reqwest::Url;
 
 const DEFAULT_POLL_ORDER_TIMEOUT: Duration = Duration::from_secs(140);
 const DEFAULT_POLL_TOKEN_TIMEOUT: Duration = Duration::from_secs(140);

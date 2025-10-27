@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use candid::Principal;
 use clap::Args;
 use fqdn::FQDN;
-use ic_bn_lib::tls::acme::AcmeUrl;
-use reqwest::Url;
+use ic_bn_lib::{reqwest::Url, tls::acme::AcmeUrl};
 
 #[derive(Debug, Args)]
 pub struct CustomDomainsCli {

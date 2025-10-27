@@ -7,9 +7,8 @@ use axum::{
 };
 use axum_extra::middleware::option_layer;
 use base::traits::{repository::Repository, validation::ValidatesDomains};
-use ic_bn_lib::http::middleware::rate_limiter::layer_by_ip;
+use ic_bn_lib::{http::middleware::rate_limiter::layer_by_ip, reqwest::StatusCode};
 use prometheus::Registry;
-use reqwest::StatusCode;
 
 use crate::{
     backend_service::BackendService,

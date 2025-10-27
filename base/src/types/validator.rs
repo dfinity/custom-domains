@@ -5,12 +5,14 @@ use async_trait::async_trait;
 use candid::Principal;
 use fqdn::FQDN;
 use hickory_resolver::proto::rr::RecordType;
-use ic_bn_lib::http::{
-    client::Options as HttpOptions,
-    dns::{Options as DnsOptions, Resolver, Resolves},
-    Client, ReqwestClient,
+use ic_bn_lib::{
+    http::{
+        client::Options as HttpOptions,
+        dns::{Options as DnsOptions, Resolver, Resolves},
+        Client, ReqwestClient,
+    },
+    reqwest::{Method, Request, Url},
 };
-use reqwest::{Method, Request, Url};
 
 use crate::traits::validation::{ValidatesDomains, ValidationError};
 

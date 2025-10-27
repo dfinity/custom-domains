@@ -7,11 +7,11 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use ic_bn_lib::reqwest::StatusCode;
 use prometheus::{
     register_histogram_vec_with_registry, register_int_counter_vec_with_registry, Encoder,
     HistogramVec, IntCounterVec, Registry, TextEncoder,
 };
-use reqwest::StatusCode;
 pub const HTTP_DURATION_BUCKETS: &[f64] = &[0.05, 0.2, 1.0, 2.0];
 
 #[derive(Clone)]

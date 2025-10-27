@@ -23,7 +23,6 @@ ic-bn-lib = { workspace = true }
 mockall = { workspace = true }
 pem = { workspace = true }
 prometheus = { workspace = true }
-reqwest = { workspace = true }
 serde = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
