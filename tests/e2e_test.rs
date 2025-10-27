@@ -307,7 +307,7 @@ async fn submit_domains_for_registration(ctx: &TestContext) -> anyhow::Result<Ve
         let handle = spawn(async move {
             client_cloned
                 .post(format!(
-                    "http://{}:{}/v1/domains/{domain}",
+                    "http://{}:{}/v1/{domain}",
                     api_addr.ip(),
                     api_addr.port()
                 ))

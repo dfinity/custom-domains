@@ -69,6 +69,7 @@ impl CanisterClient {
             custom_domains.push(CustomDomain {
                 name: d.domain,
                 canister_id: d.canister_id,
+                timestamp: 0,
             });
         }
 
