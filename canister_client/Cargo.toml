@@ -16,5 +16,4 @@ ic-bn-lib = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
 tokio = { workspace = true }

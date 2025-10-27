@@ -56,7 +56,6 @@ ic-stable-structures = "0.7.0"
 mockall = "0.13.1"
 pem = "3.0.5"
 pocket-ic = "=9.0.2"
-pretty_assertions = "1.4.1"
 prometheus = "0.14.0"
 rcgen = { version = "0.14" }
 serde = { version = "1.0.219", features = ["derive"] }
