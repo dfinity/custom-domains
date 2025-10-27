@@ -149,7 +149,7 @@ mod tests {
         )
     }
 
-    /// Helper function to make a POST request to /v1/domains
+    /// Helper function to make a POST request to /v1/{domain}
     async fn post_domain_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
         let request = Request::builder()
             .method("POST")

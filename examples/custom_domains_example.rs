@@ -20,9 +20,7 @@ use tracing::info;
 // 2. Set the CLOUDFLARE_API_TOKEN environment variable
 // 3. Run the example with `cargo run --example custom_domains_example`
 // 4. Submit a domain registration request via the API:
-// curl -v -X POST http://127.0.0.1:3000/v1/domains \
-// -H "Content-Type: application/json" \
-// -d '{"domain": "custom_domain.com"}' | jq
+// curl -v -X POST http://127.0.0.1:3000/v1/example.org | jq
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
