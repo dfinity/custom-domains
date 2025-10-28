@@ -26,6 +26,8 @@ pub struct AcmeClientConfig {
     pub acme_url: AcmeUrl,
     /// ACME account credentials
     pub acme_credentials: Option<AccountCredentials>,
+    /// Delegation domain to use
+    pub delegation_domain: Option<String>,
     /// Whether to allow insecure TLS connections
     pub insecure_tls: bool,
     /// Timeout for polling ACME order status
@@ -44,6 +46,7 @@ impl AcmeClientConfig {
             cloudflare_url: Url::parse(DEFAULT_CLOUDFLARE_URL).unwrap(),
             acme_url: AcmeUrl::LetsEncryptStaging,
             acme_credentials: None,
+            delegation_domain: None,
             insecure_tls: false,
             poll_order_timeout: DEFAULT_POLL_ORDER_TIMEOUT,
             poll_token_timeout: DEFAULT_POLL_TOKEN_TIMEOUT,
@@ -60,6 +63,12 @@ impl AcmeClientConfig {
     /// Sets the ACME provider URL (e.g., Let's Encrypt production/staging).
     pub fn with_acme_url(mut self, acme_url: AcmeUrl) -> Self {
         self.acme_url = acme_url;
+        self
+    }
+
+    /// Sets the delegation domain
+    pub fn with_delegation_domain(mut self, delegation_domain: String) -> Self {
+        self.delegation_domain = Some(delegation_domain);
         self
     }
 
@@ -108,7 +117,11 @@ impl AcmeClientConfig {
         // DNS resolver
         self.dns_options.cache_size = 0;
         let dns_resolver = Resolver::new(self.dns_options);
-        let token_manager = Arc::new(TokenManagerDns::new(Arc::new(dns_resolver), cloudflare));
+        let token_manager = Arc::new(TokenManagerDns::new(
+            Arc::new(dns_resolver),
+            cloudflare,
+            self.delegation_domain,
+        ));
 
         let builder = ClientBuilder::new(self.insecure_tls)
             .with_acme_url(self.acme_url.clone())

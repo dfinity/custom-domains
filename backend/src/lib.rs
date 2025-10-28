@@ -119,6 +119,7 @@ pub async fn setup(
             .with_acme_url(cli.custom_domains_acme_url.clone())
             .with_credentials(creds)
             .with_cloudflare_url(cli.custom_domains_cloudflare_url.clone())
+            .with_delegation_domain(cli.custom_domains_delegation_domain.to_string())
             .with_dns_options(dns_opts);
 
         Arc::new(cfg.build().await.context("unable to build ACME client")?)
