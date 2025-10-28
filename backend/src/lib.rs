@@ -6,7 +6,10 @@ mod models;
 mod openapi;
 pub mod router;
 
-use std::sync::Arc;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Context};
 use axum::Router;
@@ -16,6 +19,7 @@ use chacha20poly1305::Key;
 use ic_bn_lib::{
     http::dns::Options as DnsOptions,
     ic_agent::{identity::Secp256k1Identity, Agent},
+    reqwest,
     tls::acme::instant_acme::AccountCredentials,
 };
 use prometheus::Registry;
@@ -65,9 +69,18 @@ pub async fn setup(
         let identity =
             Secp256k1Identity::from_pem(key.as_slice()).context("failed to create IC identity")?;
 
+        let client = reqwest::ClientBuilder::new()
+            .resolve(
+                &cli.custom_domains_ic_domain.to_string(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            )
+            .build()
+            .context("unable to build Reqwest client")?;
+
         let agent = Agent::builder()
             .with_identity(identity)
-            .with_url(cli.custom_domains_ic_url.to_string())
+            .with_url(format!("https://{}", cli.custom_domains_ic_domain))
+            .with_arc_http_middleware(Arc::new(client))
             .build()?;
 
         if let Some(path) = &cli.custom_domains_ic_root_key {
@@ -81,7 +94,9 @@ pub async fn setup(
     let validator = {
         Arc::new(
             Validator::new(
-                cli.custom_domains_delegation_domain.to_string(),
+                cli.custom_domains_delegation_domain.clone(),
+                cli.custom_domains_ic_domain.clone(),
+                true,
                 dns_opts.clone(),
             )
             .context("unable to create validator")?,

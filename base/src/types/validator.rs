@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use candid::Principal;
-use fqdn::FQDN;
+use fqdn::{fqdn, FQDN};
 use hickory_resolver::proto::rr::RecordType;
 use ic_bn_lib::{
     http::{
@@ -16,8 +19,6 @@ use ic_bn_lib::{
 
 use crate::traits::validation::{ValidatesDomains, ValidationError};
 
-const DEFAULT_DELEGATION_DOMAIN: &str = "icp2.io";
-
 /// DNS validator for custom domain registration.
 ///
 /// Validates that a domain is properly configured for custom domain registration
@@ -25,7 +26,8 @@ const DEFAULT_DELEGATION_DOMAIN: &str = "icp2.io";
 pub struct Validator {
     client: Arc<dyn Client>,
     resolver: Arc<dyn Resolves>,
-    delegation_domain: String,
+    delegation_domain: FQDN,
+    validation_domain: FQDN,
 }
 
 #[async_trait]
@@ -45,17 +47,25 @@ impl ValidatesDomains for Validator {
 
 impl Default for Validator {
     fn default() -> Self {
-        Self::new(DEFAULT_DELEGATION_DOMAIN.into(), DnsOptions::default()).unwrap()
+        Self::new(
+            fqdn!("icp2.io"),
+            fqdn!("icp0.io"),
+            false,
+            DnsOptions::default(),
+        )
+        .unwrap()
     }
 }
 
 impl Validator {
     /// Create a new Validator
     pub fn new(
-        delegation_domain: String,
+        delegation_domain: FQDN,
+        validation_domain: FQDN,
+        use_localhost: bool,
         mut dns_opts: DnsOptions,
     ) -> Result<Self, ValidationError> {
-        if delegation_domain.is_empty() {
+        if delegation_domain.is_root() {
             return Err(ValidationError::UnexpectedError(anyhow!(
                 "Delegation domain cannot be empty"
             )));
@@ -64,7 +74,14 @@ impl Validator {
         dns_opts.cache_size = 0;
         let resolver = Resolver::new(dns_opts);
 
-        let http_opts = HttpOptions::default();
+        let mut http_opts = HttpOptions::default();
+        if use_localhost {
+            http_opts.dns_overrides = vec![(
+                validation_domain.to_string(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            )];
+        }
+
         let client = ReqwestClient::new(http_opts, Some(resolver.clone()))
             .context("unable to create HTTP client")?;
 
@@ -72,6 +89,7 @@ impl Validator {
             client: Arc::new(client),
             resolver: Arc::new(resolver),
             delegation_domain,
+            validation_domain,
         })
     }
 
@@ -88,7 +106,7 @@ impl Validator {
         // TODO: verify ic-certification is handled already
         let url = format!(
             "https://{canister_id}.{}/.well-known/ic-domains",
-            self.delegation_domain
+            self.validation_domain
         );
 
         let request = Request::new(
@@ -100,8 +118,9 @@ impl Validator {
             .client
             .execute(request)
             .await
-            .map_err(|_| ValidationError::KnownDomainsUnavailable {
+            .map_err(|e| ValidationError::KnownDomainsUnavailable {
                 id: canister_id.to_string(),
+                error: e.to_string(),
             })?
             .text()
             .await
@@ -143,17 +162,20 @@ impl Validator {
 
         match self.resolver.resolve(RecordType::TXT, &hostname).await {
             Ok(lookup) => {
-                // Check all records belong to delegation domain
-                lookup
-                    .iter()
-                    .all(|rr| {
-                        let name = rr.to_string();
-                        name.trim_end_matches('.')
-                            .ends_with(&self.delegation_domain)
-                    })
-                    .then_some(())
-                    .ok_or(ValidationError::ExistingDnsTxtChallenge { src: hostname })
+                // If there are records - check that all of them belong to the delegation domain
+                for rr in lookup {
+                    let name = rr.to_string();
+                    let name = FQDN::from_ascii_str(&rr.to_string())
+                        .context(format!("unable to parse '{name}' as FQDN"))?;
+
+                    if !name.is_subdomain_of(&self.delegation_domain) {
+                        return Err(ValidationError::ExistingDnsTxtChallenge { src: hostname });
+                    }
+                }
+
+                Ok(())
             }
+
             Err(err) => {
                 if err.is_no_records_found() || err.is_nx_domain() {
                     Ok(())

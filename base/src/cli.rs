@@ -7,9 +7,11 @@ use ic_bn_lib::{reqwest::Url, tls::acme::AcmeUrl};
 
 #[derive(Debug, Args)]
 pub struct CustomDomainsCli {
-    /// URL of the IC to use to access the canister
-    #[clap(env, long, default_value = "https://ic0.app")]
-    pub custom_domains_ic_url: Url,
+    /// Domain name to access the IC.
+    /// It is used to interact with the Custom Domains management canister and
+    /// also to perform domain validation by accessing https://<canister-id>.<hostname>/.well-known/ic-domains
+    #[clap(env, long, default_value = "icp0.io")]
+    pub custom_domains_ic_domain: FQDN,
 
     /// Path to an IC identity file (PEM-encoded)
     #[clap(env, long, required = false)]
