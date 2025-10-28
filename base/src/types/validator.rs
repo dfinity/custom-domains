@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr},
     sync::Arc,
 };
 
@@ -11,7 +11,7 @@ use hickory_resolver::proto::rr::RecordType;
 use ic_bn_lib::{
     http::{
         client::Options as HttpOptions,
-        dns::{Options as DnsOptions, Resolver, Resolves},
+        dns::{Options as DnsOptions, Resolver, Resolves, SingleResolver},
         Client, ReqwestClient,
     },
     reqwest::{Method, Request, Url},
@@ -47,13 +47,7 @@ impl ValidatesDomains for Validator {
 
 impl Default for Validator {
     fn default() -> Self {
-        Self::new(
-            fqdn!("icp2.io"),
-            fqdn!("icp0.io"),
-            false,
-            DnsOptions::default(),
-        )
-        .unwrap()
+        Self::new(fqdn!("icp2.io"), fqdn!("icp0.io"), DnsOptions::default()).unwrap()
     }
 }
 
@@ -62,7 +56,6 @@ impl Validator {
     pub fn new(
         delegation_domain: FQDN,
         validation_domain: FQDN,
-        use_localhost: bool,
         mut dns_opts: DnsOptions,
     ) -> Result<Self, ValidationError> {
         if delegation_domain.is_root() {
@@ -74,15 +67,9 @@ impl Validator {
         dns_opts.cache_size = 0;
         let resolver = Resolver::new(dns_opts);
 
-        let mut http_opts = HttpOptions::default();
-        if use_localhost {
-            http_opts.dns_overrides = vec![(
-                validation_domain.to_string(),
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            )];
-        }
-
-        let client = ReqwestClient::new(http_opts, Some(resolver.clone()))
+        let http_opts = HttpOptions::default();
+        let http_resolver = SingleResolver::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        let client = ReqwestClient::new(http_opts, Some(http_resolver))
             .context("unable to create HTTP client")?;
 
         Ok(Self {

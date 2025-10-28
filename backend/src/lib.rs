@@ -96,7 +96,6 @@ pub async fn setup(
             Validator::new(
                 cli.custom_domains_delegation_domain.clone(),
                 cli.custom_domains_ic_domain.clone(),
-                true,
                 dns_opts.clone(),
             )
             .context("unable to create validator")?,
