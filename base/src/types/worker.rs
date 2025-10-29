@@ -142,6 +142,12 @@ pub struct Worker {
     pub task_tracker: TaskTracker,
 }
 
+impl std::fmt::Display for Worker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
 impl Worker {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -173,15 +179,17 @@ impl Worker {
         // Use a child token to allow cancelling revocation tasks independently of the worker
         // Not used at the moment, but could be useful in the future (or as a precaution)
         let token = self.token.child_token();
+        let worker = self.to_string();
 
         self.task_tracker.spawn(async move {
             if delay.is_zero() {
-                info!(domain = %domain, "Certificate revocation starts now");
+                info!(domain = %domain, worker, "CustomDomains: Certificate revocation starts now");
             } else {
                 info!(
                     domain = %domain,
+                    worker,
                     delay_secs = delay.as_secs(),
-                    "Certificate revocation scheduled"
+                    "CustomDomains: Certificate revocation scheduled"
                 );
             }
 
@@ -189,8 +197,9 @@ impl Worker {
                 _ = sleep(delay) => {
                     revoke_certificate_with_metrics_update(domain, &cert, acme_client, &metrics).await;
                 }
+
                 _ = token.cancelled() => {
-                    warn!(domain = %domain, "Certificate revocation cancelled externally");
+                    warn!(domain = %domain, worker, "CustomDomains: Certificate revocation cancelled externally");
                 }
             }
         });
@@ -212,8 +221,9 @@ impl Worker {
 
         info!(
             domain = %domain,
+            worker = %self,
             task_kind = %task.kind,
-            "Task execution started"
+            "CustomDomains: Task execution started"
         );
 
         let task_result = match time::timeout(self.config.task_timeout, async {
@@ -230,6 +240,7 @@ impl Worker {
                     )
                     .await
                 }
+
                 TaskKind::Renew => {
                     // - Issue a new certificate.
                     // - If successful, schedule revocation of the old one.
@@ -257,9 +268,11 @@ impl Worker {
 
                     result
                 }
+
                 TaskKind::Update => {
                     update_task(domain, self.validator.clone(), task_id, task_kind).await
                 }
+
                 TaskKind::Delete => {
                     self.delete_task(domain, task_id, task_kind, certificate)
                         .await
@@ -284,17 +297,19 @@ impl Worker {
             TaskOutcome::Success(_) => {
                 info!(
                     domain = %domain,
+                    worker = %self,
                     task_kind = %task_kind,
-                    "Task execution succeeded"
+                    "CustomDomains: Task execution succeeded"
                 )
             }
 
             TaskOutcome::Failure(ref err) => {
                 error!(
                     domain = %domain,
+                    worker = %self,
                     task_kind = %task_kind,
                     error = ?err,
-                    "Task execution failed"
+                    "CustomDomains: Task execution failed"
                 );
             }
         }
@@ -345,12 +360,14 @@ impl Worker {
     /// The worker will keep running until the cancellation token is triggered.
     /// Each cycle fetches a task from the repository, processes it, and updates metrics.
     pub async fn run(&self) {
+        info!(worker = %self, "CustomDomains: started");
+
         loop {
             let cycle_start = Instant::now();
 
             // Check for cancellation before proceeding
             if self.token.is_cancelled() {
-                warn!("Worker {} stopped due to cancellation", self.name);
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation");
                 break;
             }
 
@@ -366,9 +383,9 @@ impl Worker {
             self.maybe_update_utilization_metric();
         }
 
-        info!("Worker {} is shutting down ...", self.name);
+        info!(worker = %self, "CustomDomains: shutting down");
         self.shutdown_revocation_tasks().await;
-        info!("Worker {} shutdown complete", self.name);
+        info!(worker = %self, "CustomDomains: shutdown complete");
     }
 
     /// Fetches the next task and processes it, returning whether the worker should continue running
@@ -387,19 +404,20 @@ impl Worker {
                 error!(
                     error = ?err,
                     duration_secs = self.config.task_fetch_retry_interval.as_secs(),
-                    "Failed to fetch pending task for worker {}, sleeping before retry",
-                    self.name
+                    "Worker {self}: Failed to fetch pending task for worker, sleeping before retry"
                 );
                 self.shared_metrics
                     .task_fetches
                     .with_label_values(&[self.name.as_str(), "failure", err.into()])
                     .inc();
                 sleep(self.config.task_fetch_retry_interval).await;
+
                 // Update worker idle time for utilization metric
                 self.idle_sec_since_reset.fetch_add(
                     self.config.task_fetch_retry_interval.as_secs(),
                     Ordering::Relaxed,
                 );
+
                 return Ok(());
             }
         };
@@ -417,10 +435,7 @@ impl Worker {
         // Execute the task with a timeout
         let task_result = select! {
             _ = self.token.cancelled() => {
-                warn!(
-                    "Worker {} stopped due to cancellation during task processing",
-                    self.name
-                );
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation during task processing");
                 return Err(WorkerStopped);
             }
 
@@ -473,9 +488,10 @@ impl Worker {
 
         select! {
             _ = self.token.cancelled() => {
-                warn!("Worker {} stopped due to cancellation during submission", self.name);
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation during submission");
                 return Err(WorkerStopped);
             }
+
             result = retry_async(
                 None,
                 None,
@@ -487,16 +503,15 @@ impl Worker {
                     Ok((attempt, _)) => (attempt.to_string(), "success", ""),
                     Err(err) => {
                         let attempts = err.attempts.to_string();
-                        let error = format!(
-                            "Failed to submit task result for worker={} after {attempts} attempts: {err:?}",
-                            self.name,
-                        );
+
                         error!(
                             domain = %task.domain,
+                            worker = %self,
                             task_kind = %task.kind,
                             duration_secs = self.config.task_submit_timeout.as_secs(),
-                            error = %error,
+                            "CustomDomains: Failed to submit task result after {attempts} attempts: {err:?}",
                         );
+
                         (err.attempts.to_string(), "failure", err.last_error.into())
                     }
                 };
@@ -520,16 +535,14 @@ impl Worker {
     /// Handles no available tasks, returning whether the worker should continue running
     async fn handle_no_tasks(&self) -> Result<(), WorkerStopped> {
         debug!(
+            worker = %self,
             duration_secs = self.config.polling_interval_no_tasks.as_secs(),
-            "No pending tasks found for worker {}, sleeping", self.name
+            "CustomDomains: No pending tasks found, sleeping"
         );
 
         select! {
             _ = self.token.cancelled() => {
-                warn!(
-                    "Worker {} stopped due to cancellation during idle",
-                    self.name
-                );
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation during idle");
                 return Err(WorkerStopped);
             }
 
@@ -564,11 +577,11 @@ impl Worker {
         let utilization = (active * 1000.0 / total).round() / 10.0;
 
         debug!(
-            worker = %self.name,
+            worker = %self,
             active_secs = total - idle,
             total_secs = total,
             utilization = utilization,
-            "Worker utilization metric published"
+            "CustomDomains: utilization metric published"
         );
 
         self.shared_metrics
