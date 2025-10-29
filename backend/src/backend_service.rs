@@ -25,31 +25,34 @@ pub struct BackendService {
 }
 
 impl BackendService {
-    /// Validates domain configuration and submits a task for further processing.
+    /// Validates domain configuration and submits a task for further processing
     pub async fn submit_task(&self, domain: &str, task: TaskKind) -> Result<Principal, ApiError> {
         let fqdn = parse_domain(domain)?;
         let canister_id = self.validator.validate(&fqdn).await?;
         let task = InputTask::new(task, fqdn);
+
         match self.repository.try_add_task(task).await {
             Ok(()) => Ok(canister_id),
             Err(err) => Err(err.into()),
         }
     }
 
-    /// Validates domain can be deleted and submits a delete task.
+    /// Validates domain can be deleted and submits a delete task
     pub async fn submit_delete_task(&self, domain: &str) -> Result<(), ApiError> {
         let fqdn = parse_domain(domain)?;
         self.validator.validate_deletion(&fqdn).await?;
         let task = InputTask::new(TaskKind::Delete, fqdn);
+
         match self.repository.try_add_task(task).await {
             Ok(()) => Ok(()),
             Err(err) => Err(err.into()),
         }
     }
 
-    /// Retrieves the current status of a domain registration.
+    /// Retrieves the current status of a domain registration
     pub async fn get_domain_status(&self, domain: &str) -> Result<DomainStatus, ApiError> {
         let fqdn = parse_domain(domain)?;
+
         match self.repository.get_domain_status(&fqdn).await {
             Ok(Some(entry)) => Ok(entry),
             Ok(None) => Err(ApiError::NotFound(format!("Domain {domain} not found"))),
@@ -57,9 +60,10 @@ impl BackendService {
         }
     }
 
-    /// Validates a domain is eligible for registration without submitting a task.
+    /// Validates that the domain is eligible for registration without submitting a task
     pub async fn validate(&self, domain: &str) -> Result<(Principal, ValidationStatus), ApiError> {
         let fqdn = parse_domain(domain)?;
+
         match self.validator.validate(&fqdn).await {
             Ok(canister_id) => Ok((canister_id, ValidationStatus::Valid)),
             Err(err) => Err(ApiError::UnprocessableEntity(err.to_string())),
@@ -67,12 +71,14 @@ impl BackendService {
     }
 }
 
-/// Parses a domain string into a validated FQDN.
+/// Parses a domain string into a validated FQDN
 fn parse_domain(domain: &str) -> Result<FQDN, ApiError> {
     if domain.is_empty() {
         return Err(ApiError::BadRequest("Domain cannot be empty".to_string()));
     } else if domain.len() > 255 {
         return Err(ApiError::BadRequest("Domain is too long".to_string()));
     }
-    FQDN::from_str(domain).map_err(|_| ApiError::BadRequest("Invalid domain format".to_string()))
+
+    FQDN::from_str(domain)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid domain format: {e:#}")))
 }
