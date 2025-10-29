@@ -17,10 +17,9 @@ use candid::Principal;
 use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
 use fqdn::FQDN;
-use ic_agent::identity::BasicIdentity;
-use ic_agent::{Agent, Identity};
-use ic_bn_lib::reqwest::{self, Url};
 use ic_bn_lib::{
+    ic_agent::{identity::BasicIdentity, Agent, Identity},
+    reqwest::{self, Url},
     tests::pebble::{dns::TokenManagerPebble, Env},
     tls::acme::{
         client::{AcmeCertificateClient, ClientBuilder},
@@ -29,7 +28,6 @@ use ic_bn_lib::{
 };
 use pem::parse_many;
 use prometheus::Registry;
-use serde_json::json;
 use tokio::{spawn, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -186,7 +184,7 @@ async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetr
 
     let cipher = {
         let key = XChaCha20Poly1305::generate_key(&mut OsRng);
-        let cipher = CertificateCipher::new_with_key(&key);
+        let cipher = CertificateCipher::new(&key);
         Arc::new(cipher)
     };
 
@@ -198,7 +196,7 @@ async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetr
 
     let prometheus_registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
 
-    let workers_metrics = Arc::new(WorkerMetrics::new(prometheus_registry.clone()));
+    let workers_metrics = Arc::new(WorkerMetrics::new(&prometheus_registry));
 
     let validator = Arc::new(MockValidator);
 
@@ -309,12 +307,10 @@ async fn submit_domains_for_registration(ctx: &TestContext) -> anyhow::Result<Ve
         let handle = spawn(async move {
             client_cloned
                 .post(format!(
-                    "http://{}:{}/v1/domains",
+                    "http://{}:{}/v1/{domain}",
                     api_addr.ip(),
                     api_addr.port()
                 ))
-                .header("Content-Type", "application/json")
-                .json(&json!({"domain": domain}))
                 .send()
                 .await
                 .unwrap()
@@ -390,7 +386,7 @@ async fn delete_half_domains(
     for domain in domains_to_delete.clone() {
         let response = client
             .delete(format!(
-                "http://{}:{}/v1/domains/{}",
+                "http://{}:{}/v1/{}",
                 ctx.api_server_addr.ip(),
                 ctx.api_server_addr.port(),
                 domain

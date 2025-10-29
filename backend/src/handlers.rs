@@ -4,7 +4,7 @@ use crate::{
     backend_service::BackendService,
     models::{
         error_response, success_response, ApiError, CreateOrUpdateResponse, DeleteResponse,
-        ErrorResponse, GetStatusResponse, PostPayload, ValidateResponse,
+        ErrorResponse, GetStatusResponse, ValidateResponse,
     },
 };
 use axum::{
@@ -12,7 +12,6 @@ use axum::{
     http::StatusCode,
     middleware::Next,
     response::Response,
-    Json,
 };
 use tracing::{error, info};
 
@@ -52,8 +51,10 @@ fn log_error(err: &ApiError, domain: &str, operation: &str) {
     feature = "openapi",
     utoipa::path(
         post,
-        path = "/v1/domains",
-        request_body = PostPayload,
+        path = "/v1/{id}",
+        params(
+            ("id" = String, Path, description = "Domain name to register")
+        ),
         responses(
             (status = 202, description = "Domain registration request accepted", body = crate::models::ApiResponse<CreateOrUpdateResponse>),
             (status = 400, description = "Invalid request data", body = crate::models::ApiResponse<ErrorResponse>),
@@ -64,7 +65,7 @@ fn log_error(err: &ApiError, domain: &str, operation: &str) {
 )]
 pub async fn create_handler(
     State(backend_service): State<BackendService>,
-    Json(PostPayload { domain }): Json<PostPayload>,
+    Path(domain): Path<String>,
 ) -> axum::response::Response {
     match backend_service.submit_task(&domain, TaskKind::Issue).await {
         Ok(canister_id) => success_response(
@@ -96,7 +97,7 @@ pub async fn create_handler(
     feature = "openapi",
     utoipa::path(
         patch,
-        path = "/v1/domains/{id}",
+        path = "/v1/{id}",
         params(
             ("id" = String, Path, description = "Domain name to update")
         ),
@@ -141,7 +142,7 @@ pub async fn update_handler(
     feature = "openapi",
     utoipa::path(
         get,
-        path = "/v1/domains/{id}",
+        path = "/v1/{id}",
         params(
             ("id" = String, Path, description = "Domain name to get registration status for")
         ),
@@ -185,7 +186,7 @@ pub async fn get_handler(
     feature = "openapi",
     utoipa::path(
         get,
-        path = "/v1/domains/{id}/validate",
+        path = "/v1/{id}/validate",
         params(
             ("id" = String, Path, description = "Domain name to validate")
         ),
@@ -228,7 +229,7 @@ pub async fn validate_handler(
     feature = "openapi",
     utoipa::path(
         delete,
-        path = "/v1/domains/{id}",
+        path = "/v1/{id}",
         params(
             ("id" = String, Path, description = "Domain name to delete")
         ),

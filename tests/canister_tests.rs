@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use candid::{Decode, Encode, Principal};
 use canister_api::{
     DomainStatus, HasNextTaskError, HasNextTaskResult, IssueCertificateOutput, RegistrationStatus,
-    ScheduledTask, SubmitTaskError, TaskFailReason, TaskKind, TaskOutput, TaskResult,
+    ScheduledTask, SubmitTaskError, TaskFailReason, TaskKind, TaskOutcome, TaskOutput, TaskResult,
     CERTIFICATE_VALIDITY_FRACTION, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
     STALE_DOMAINS_CLEANUP_INTERVAL, TASK_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
 };
@@ -380,14 +380,13 @@ fn create_successful_task_result(
 ) -> TaskResult {
     TaskResult {
         domain: task.domain.clone(),
-        output: Some(TaskOutput::Issue(IssueCertificateOutput {
+        outcome: TaskOutcome::Success(TaskOutput::Issue(IssueCertificateOutput {
             canister_id,
             enc_cert: b"certificate_data".to_vec(),
             enc_priv_key: b"private_key_data".to_vec(),
             not_before: now,
             not_after: now + CERTIFICATE_VALIDITY_DURATION_SECS,
         })),
-        failure: None,
         task_id: task.id,
         task_kind: task.kind,
         duration_secs: 60,
@@ -426,14 +425,13 @@ async fn simulate_task_timeout_and_rescheduling(
 
     let expired_task_result = TaskResult {
         domain: task.domain.clone(),
-        output: Some(TaskOutput::Issue(IssueCertificateOutput {
+        outcome: TaskOutcome::Success(TaskOutput::Issue(IssueCertificateOutput {
             canister_id,
             enc_cert: b"certificate_data".to_vec(),
             enc_priv_key: b"private_key_data".to_vec(),
             not_before: now,
             not_after: now + CERTIFICATE_VALIDITY_DURATION_SECS,
         })),
-        failure: None,
         task_id: task.id, // Submitting result for the old (expired) task ID
         task_kind: task.kind,
         duration_secs: 60,
@@ -512,8 +510,7 @@ fn create_failure_task_result(
 ) -> TaskResult {
     TaskResult {
         domain: task.domain.clone(),
-        output: None,
-        failure: Some(failure_reason),
+        outcome: TaskOutcome::Failure(failure_reason),
         task_id: task.id,
         task_kind: task.kind,
         duration_secs: 45,

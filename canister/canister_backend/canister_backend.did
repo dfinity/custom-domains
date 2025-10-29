@@ -49,6 +49,14 @@ type TaskOutput = variant {
   Delete;
 };
 
+// Task execution outcome
+type TaskOutcome = variant {
+  // Successful execution
+  Success: TaskOutput;
+  // Failure
+  Failure: TaskFailReason;
+};
+
 // Output data for certificate issuance
 type IssueCertificateOutput = record {
   // ID of the canister that custom domains points to
@@ -67,10 +75,8 @@ type IssueCertificateOutput = record {
 type TaskResult = record {
   // Domain this task was performed on
   domain: text;
-  // Task output (present only on success)
-  output: opt TaskOutput;
-  // Failure reason (present only on failure)
-  failure: opt TaskFailReason;
+  // Task execution outcome
+  outcome: TaskOutcome;
   // ID of the completed task
   task_id: TaskId;
   // Task kind

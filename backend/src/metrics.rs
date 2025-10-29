@@ -7,11 +7,11 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use ic_bn_lib::reqwest::StatusCode;
 use prometheus::{
     register_histogram_vec_with_registry, register_int_counter_vec_with_registry, Encoder,
     HistogramVec, IntCounterVec, Registry, TextEncoder,
 };
-use reqwest::StatusCode;
 pub const HTTP_DURATION_BUCKETS: &[f64] = &[0.05, 0.2, 1.0, 2.0];
 
 #[derive(Clone)]
@@ -24,15 +24,15 @@ impl HttpMetrics {
     pub fn new(registry: Registry) -> Self {
         Self {
             requests: register_int_counter_vec_with_registry!(
-                format!("http_requests_total"),
-                format!("Total number of HTTP requests"),
+                format!("custom_domains_http_requests_total"),
+                format!("Custom Domains: Total number of HTTP requests"),
                 &["method", "endpoint", "status"],
                 registry
             )
             .unwrap(),
             duration: register_histogram_vec_with_registry!(
-                format!("http_request_duration_seconds"),
-                format!("HTTP request latency in seconds"),
+                format!("custom_domains_http_request_duration_seconds"),
+                format!("Custom Domains: HTTP request latency in seconds"),
                 &["method", "endpoint"],
                 HTTP_DURATION_BUCKETS.to_vec(),
                 registry

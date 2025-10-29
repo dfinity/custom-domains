@@ -7,11 +7,14 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use async_trait::async_trait;
 use candid::Principal;
+use chrono::{DateTime, Utc};
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::{
     rustls::pki_types::CertificateDer,
+    tasks::Run,
     tls::acme::{
         client::{AcmeCertificateClient, Error},
         instant_acme::{RevocationReason, RevocationRequest},
@@ -34,7 +37,8 @@ use crate::{
     helpers::{format_error_chain, retry_async},
     traits::{repository::Repository, time::UtcTimestamp, validation::ValidatesDomains},
     types::task::{
-        IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput, TaskResult,
+        IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutcome, TaskOutput,
+        TaskResult,
     },
 };
 
@@ -43,7 +47,7 @@ pub const TASK_DURATION_BUCKETS: &[f64] = &[5.0, 30.0, 60.0, 90.0, 120.0, 180.0,
 /// How long to wait between polling attempts when no tasks are available.
 const DEFAULT_POLLING_INTERVAL_NO_TASKS: Duration = Duration::from_secs(20);
 /// Maximum time a worker is allowed to spend processing a single task.
-const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(360);
+const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(6 * 60);
 /// Maximum time allowed to attempt submitting the result of a completed task.
 const DEFAULT_TASK_SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Interval to wait before retrying to submit a failed task result.
@@ -51,7 +55,7 @@ const DEFAULT_TASK_RESUBMIT_INTERVAL: Duration = Duration::from_secs(5);
 /// Interval to wait before retrying to fetch a new task if the previous fetch failed.
 const DEFAULT_TASK_FETCH_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 /// The time window over which each worker's utilization is measured.
-const WORKER_UTILIZATION_WINDOW: Duration = Duration::from_secs(180);
+const WORKER_UTILIZATION_WINDOW: Duration = Duration::from_secs(3 * 60);
 /// Delay before revoking an old certificate after a successful certificate renewal.
 const CERT_REVOCATION_DELAY_AFTER_RENEWAL: Duration = Duration::from_secs(10 * 60);
 
@@ -139,6 +143,12 @@ pub struct Worker {
     pub task_tracker: TaskTracker,
 }
 
+impl std::fmt::Display for Worker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
 impl Worker {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -170,15 +180,17 @@ impl Worker {
         // Use a child token to allow cancelling revocation tasks independently of the worker
         // Not used at the moment, but could be useful in the future (or as a precaution)
         let token = self.token.child_token();
+        let worker = self.to_string();
 
         self.task_tracker.spawn(async move {
             if delay.is_zero() {
-                info!(domain = %domain, "Certificate revocation starts now");
+                info!(domain = %domain, worker, "CustomDomains: Certificate revocation starts now");
             } else {
                 info!(
                     domain = %domain,
+                    worker,
                     delay_secs = delay.as_secs(),
-                    "Certificate revocation scheduled"
+                    "CustomDomains: Certificate revocation scheduled"
                 );
             }
 
@@ -186,8 +198,9 @@ impl Worker {
                 _ = sleep(delay) => {
                     revoke_certificate_with_metrics_update(domain, &cert, acme_client, &metrics).await;
                 }
+
                 _ = token.cancelled() => {
-                    warn!(domain = %domain, "Certificate revocation cancelled externally");
+                    warn!(domain = %domain, worker, "CustomDomains: Certificate revocation cancelled externally");
                 }
             }
         });
@@ -209,8 +222,9 @@ impl Worker {
 
         info!(
             domain = %domain,
+            worker = %self,
             task_kind = %task.kind,
-            "Task execution started"
+            "CustomDomains: Task execution started"
         );
 
         let task_result = match time::timeout(self.config.task_timeout, async {
@@ -227,6 +241,7 @@ impl Worker {
                     )
                     .await
                 }
+
                 TaskKind::Renew => {
                     // - Issue a new certificate.
                     // - If successful, schedule revocation of the old one.
@@ -254,9 +269,11 @@ impl Worker {
 
                     result
                 }
+
                 TaskKind::Update => {
                     update_task(domain, self.validator.clone(), task_id, task_kind).await
                 }
+
                 TaskKind::Delete => {
                     self.delete_task(domain, task_id, task_kind, certificate)
                         .await
@@ -277,19 +294,45 @@ impl Worker {
             .with_duration(start.elapsed()),
         };
 
-        if task_result.output.is_some() {
-            info!(
-                domain = %domain,
-                task_kind = %task_kind,
-                "Task execution succeeded"
-            );
-        } else if let Some(ref err) = task_result.failure {
-            error!(
-                domain = %domain,
-                task_kind = %task_kind,
-                error = ?err,
-                "Task execution failed"
-            );
+        match &task_result.outcome {
+            TaskOutcome::Success(v) => {
+                let (validity, canister_id) = match v {
+                    TaskOutput::Issue(v) => {
+                        let not_before = DateTime::<Utc>::from_timestamp_secs(v.not_before as i64)
+                            .unwrap_or_default();
+                        let not_after = DateTime::<Utc>::from_timestamp_secs(v.not_after as i64)
+                            .unwrap_or_default();
+
+                        (
+                            Some((not_before.to_string(), not_after.to_string())),
+                            Some(v.canister_id.to_string()),
+                        )
+                    }
+
+                    TaskOutput::Update(v) => (None, Some(v.to_string())),
+                    TaskOutput::Delete => (None, None),
+                };
+
+                info!(
+                    domain = %domain,
+                    worker = %self,
+                    task_kind = %task_kind,
+                    not_before = validity.as_ref().map(|x| &x.0),
+                    not_after = validity.as_ref().map(|x| &x.1),
+                    canister_id,
+                    "CustomDomains: Task execution succeeded"
+                )
+            }
+
+            TaskOutcome::Failure(ref err) => {
+                error!(
+                    domain = %domain,
+                    worker = %self,
+                    task_kind = %task_kind,
+                    error = ?err,
+                    "CustomDomains: Task execution failed"
+                );
+            }
         }
 
         task_result
@@ -338,12 +381,14 @@ impl Worker {
     /// The worker will keep running until the cancellation token is triggered.
     /// Each cycle fetches a task from the repository, processes it, and updates metrics.
     pub async fn run(&self) {
+        info!(worker = %self, "CustomDomains: started");
+
         loop {
             let cycle_start = Instant::now();
 
             // Check for cancellation before proceeding
             if self.token.is_cancelled() {
-                warn!("Worker {} stopped due to cancellation", self.name);
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation");
                 break;
             }
 
@@ -359,9 +404,9 @@ impl Worker {
             self.maybe_update_utilization_metric();
         }
 
-        info!("Worker {} is shutting down ...", self.name);
+        info!(worker = %self, "CustomDomains: shutting down");
         self.shutdown_revocation_tasks().await;
-        info!("Worker {} shutdown complete", self.name);
+        info!(worker = %self, "CustomDomains: shutdown complete");
     }
 
     /// Fetches the next task and processes it, returning whether the worker should continue running
@@ -380,19 +425,20 @@ impl Worker {
                 error!(
                     error = ?err,
                     duration_secs = self.config.task_fetch_retry_interval.as_secs(),
-                    "Failed to fetch pending task for worker {}, sleeping before retry",
-                    self.name
+                    "Worker {self}: Failed to fetch pending task for worker, sleeping before retry"
                 );
                 self.shared_metrics
                     .task_fetches
                     .with_label_values(&[self.name.as_str(), "failure", err.into()])
                     .inc();
                 sleep(self.config.task_fetch_retry_interval).await;
+
                 // Update worker idle time for utilization metric
                 self.idle_sec_since_reset.fetch_add(
                     self.config.task_fetch_retry_interval.as_secs(),
                     Ordering::Relaxed,
                 );
+
                 return Ok(());
             }
         };
@@ -410,10 +456,7 @@ impl Worker {
         // Execute the task with a timeout
         let task_result = select! {
             _ = self.token.cancelled() => {
-                warn!(
-                    "Worker {} stopped due to cancellation during task processing",
-                    self.name
-                );
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation during task processing");
                 return Err(WorkerStopped);
             }
 
@@ -432,11 +475,11 @@ impl Worker {
             "failure"
         };
 
-        let execution_failure = task_result
-            .failure
-            .as_ref()
-            .map(|err| err.into())
-            .unwrap_or("");
+        let execution_failure = if let TaskOutcome::Failure(ref v) = task_result.outcome {
+            v.into()
+        } else {
+            ""
+        };
 
         // Update metrics
         self.shared_metrics
@@ -461,14 +504,17 @@ impl Worker {
         let closure = || async {
             let repository = self.repository.clone();
             let task_result = task_result.clone();
-            repository.submit_task_result(task_result).await
+            let r = repository.submit_task_result(task_result).await;
+            warn!("CustomDomains: Task submission result: {r:?}");
+            r
         };
 
         select! {
             _ = self.token.cancelled() => {
-                warn!("Worker {} stopped due to cancellation during submission", self.name);
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation during submission");
                 return Err(WorkerStopped);
             }
+
             result = retry_async(
                 None,
                 None,
@@ -477,19 +523,27 @@ impl Worker {
                 closure,
             ) => {
                 let (attempt, status, failure) = match result {
-                    Ok((attempt, _)) => (attempt.to_string(), "success", ""),
+                    Ok((attempt, _)) => {
+                        info!(
+                            domain = %task.domain,
+                            worker = %self,
+                            task_kind = %task.kind,
+                            "CustomDomains: Task result submitted successfully",
+                        );
+
+                        (attempt.to_string(), "success", "")
+                    },
                     Err(err) => {
                         let attempts = err.attempts.to_string();
-                        let error = format!(
-                            "Failed to submit task result for worker={} after {attempts} attempts: {err:?}",
-                            self.name,
-                        );
+
                         error!(
                             domain = %task.domain,
+                            worker = %self,
                             task_kind = %task.kind,
                             duration_secs = self.config.task_submit_timeout.as_secs(),
-                            error = %error,
+                            "CustomDomains: Failed to submit task result after {attempts} attempts: {err:?}",
                         );
+
                         (err.attempts.to_string(), "failure", err.last_error.into())
                     }
                 };
@@ -513,16 +567,14 @@ impl Worker {
     /// Handles no available tasks, returning whether the worker should continue running
     async fn handle_no_tasks(&self) -> Result<(), WorkerStopped> {
         debug!(
+            worker = %self,
             duration_secs = self.config.polling_interval_no_tasks.as_secs(),
-            "No pending tasks found for worker {}, sleeping", self.name
+            "CustomDomains: No pending tasks found, sleeping"
         );
 
         select! {
             _ = self.token.cancelled() => {
-                warn!(
-                    "Worker {} stopped due to cancellation during idle",
-                    self.name
-                );
+                warn!(worker = %self, "CustomDomains: stopped due to cancellation during idle");
                 return Err(WorkerStopped);
             }
 
@@ -557,17 +609,25 @@ impl Worker {
         let utilization = (active * 1000.0 / total).round() / 10.0;
 
         debug!(
-            worker = %self.name,
+            worker = %self,
             active_secs = total - idle,
             total_secs = total,
             utilization = utilization,
-            "Worker utilization metric published"
+            "CustomDomains: utilization metric published"
         );
 
         self.shared_metrics
             .worker_utilization
             .with_label_values(&[self.name.as_str()])
             .set(utilization);
+    }
+}
+
+#[async_trait]
+impl Run for Worker {
+    async fn run(&self, _token: CancellationToken) -> Result<(), anyhow::Error> {
+        self.run().await;
+        Ok(())
     }
 }
 
@@ -750,19 +810,19 @@ pub struct WorkerMetrics {
 }
 
 impl WorkerMetrics {
-    pub fn new(registry: Registry) -> Self {
+    pub fn new(registry: &Registry) -> Self {
         Self {
             task_executions: register_histogram_vec_with_registry!(
-                "task_execution_duration_seconds",
-                "Task execution durations in seconds",
+                "custom_domains_task_execution_duration_seconds",
+                "Custom Domains: Task execution durations in seconds",
                 &["worker_name", "task_kind", "status", "failure"],
                 TASK_DURATION_BUCKETS.to_vec(),
                 registry
             )
             .unwrap(),
             task_submissions: register_int_counter_vec_with_registry!(
-                "task_submission_with_retries",
-                "Total number of task submission (with retries)",
+                "custom_domains_task_submission_with_retries",
+                "Custom Domains: Total number of task submission (with retries)",
                 &[
                     "worker_name",
                     "task_kind",
@@ -774,22 +834,22 @@ impl WorkerMetrics {
             )
             .unwrap(),
             task_fetches: register_int_counter_vec_with_registry!(
-                "task_fetch",
-                "Total number of task fetching attempts",
+                "custom_domains_task_fetch",
+                "Custom Domains: Total number of task fetching attempts",
                 &["worker_name", "status", "failure"],
                 registry
             )
             .unwrap(),
             worker_utilization: register_gauge_vec_with_registry!(
-                "worker_utilization_percent",
-                "Worker utilization percentage",
+                "custom_domains_worker_utilization_percent",
+                "Custom Domains: Worker utilization percentage",
                 &["worker_name"],
                 registry
             )
             .unwrap(),
             certificate_revocations: register_int_counter_vec_with_registry!(
-                "certificate_revocation",
-                "Total number of certificate revocations by status",
+                "custom_domains_certificate_revocation",
+                "Custom Domains: Total number of certificate revocations by status",
                 &["status"],
                 registry
             )
@@ -821,8 +881,8 @@ mod tests {
         },
         types::{
             task::{
-                IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutput,
-                TaskResult,
+                IssueCertificateOutput, ScheduledTask, TaskFailReason, TaskKind, TaskOutcome,
+                TaskOutput, TaskResult,
             },
             worker::{Worker, WorkerConfig, WorkerMetrics, WorkerStopped},
         },
@@ -902,7 +962,7 @@ mod tests {
 
         let token = CancellationToken::new();
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -943,7 +1003,7 @@ mod tests {
             .expect_validate_deletion()
             .returning(|_| Box::pin(async { Ok(()) }));
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -976,9 +1036,12 @@ mod tests {
 
             // For Issue and Renew tasks, capture the issued certificate to pass it to Delete task
             if task_kind == TaskKind::Issue || task_kind == TaskKind::Renew {
-                certificate = match result.clone().output.unwrap() {
-                    TaskOutput::Issue(output) => Some(output.cert),
-                    _ => panic!("Expected certificate"),
+                certificate = match result.clone().outcome {
+                    TaskOutcome::Failure(_) => panic!("Expected success"),
+                    TaskOutcome::Success(v) => match v {
+                        TaskOutput::Issue(output) => Some(output.cert),
+                        _ => panic!("Expected certificate"),
+                    },
                 };
             }
 
@@ -988,8 +1051,7 @@ mod tests {
             assert_eq!(result.task_id, task.task_id);
             assert_eq!(result.task_kind, task.kind);
             assert!(result.duration > Duration::ZERO);
-            assert!(result.output.is_some());
-            assert!(result.failure.is_none());
+            assert!(matches!(result.outcome, TaskOutcome::Success(_)));
         }
     }
 
@@ -1006,7 +1068,7 @@ mod tests {
             })
         });
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -1034,10 +1096,11 @@ mod tests {
         assert_eq!(result.task_id, task.task_id);
         assert_eq!(result.task_kind, task.kind);
         assert!(result.duration > Duration::ZERO);
-        assert!(result.output.is_none());
         assert_eq!(
-            result.failure.unwrap(),
-            TaskFailReason::ValidationFailed("Domain validation failed".to_string())
+            result.outcome,
+            TaskOutcome::Failure(TaskFailReason::ValidationFailed(
+                "Domain validation failed".to_string()
+            ))
         );
     }
 
@@ -1054,7 +1117,7 @@ mod tests {
             })
         });
 
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
 
         let worker = Worker::new(
             "test_worker".to_string(),
@@ -1082,10 +1145,9 @@ mod tests {
         assert_eq!(result.task_id, task.task_id);
         assert_eq!(result.task_kind, task.kind);
         assert!(result.duration > Duration::ZERO);
-        assert!(result.output.is_none());
         assert_eq!(
-            result.failure.unwrap(),
-            TaskFailReason::Timeout { duration_secs: 0 }
+            result.outcome,
+            TaskOutcome::Failure(TaskFailReason::Timeout { duration_secs: 0 })
         );
     }
 
@@ -1099,7 +1161,7 @@ mod tests {
             .returning(|_| Box::pin(async { Ok(()) }));
 
         let registry = Registry::new();
-        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
+        let metrics = Arc::new(WorkerMetrics::new(&registry));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
@@ -1138,8 +1200,8 @@ mod tests {
         let metric_families = registry.gather();
         let submission_metric = metric_families
             .iter()
-            .find(|family| family.name() == "task_submission_with_retries")
-            .expect("task_submission_with_retries metric should exist");
+            .find(|family| family.name() == "custom_domains_task_submission_with_retries")
+            .expect("custom_domains_task_submission_with_retries metric should exist");
         let metric = submission_metric
             .get_metric()
             .iter()
@@ -1190,7 +1252,7 @@ mod tests {
             .with_task_resubmit_interval(Duration::from_millis(10));
 
         let registry = Registry::new();
-        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
+        let metrics = Arc::new(WorkerMetrics::new(&registry));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
@@ -1223,8 +1285,8 @@ mod tests {
         let metric_families = registry.gather();
         let submission_metric = metric_families
             .iter()
-            .find(|family| family.name() == "task_submission_with_retries")
-            .expect("task_submission_with_retries metric should exist");
+            .find(|family| family.name() == "custom_domains_task_submission_with_retries")
+            .expect("custom_domains_task_submission_with_retries metric should exist");
         let metric = submission_metric
             .get_metric()
             .iter()
@@ -1267,7 +1329,7 @@ mod tests {
             .with_task_submit_timeout(Duration::from_millis(100)) // Some short timeout
             .with_task_resubmit_interval(Duration::from_millis(10));
 
-        let metrics = Arc::new(WorkerMetrics::new(registry.clone()));
+        let metrics = Arc::new(WorkerMetrics::new(&registry));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),
@@ -1322,7 +1384,7 @@ mod tests {
         });
 
         let token = CancellationToken::new();
-        let metrics = Arc::new(WorkerMetrics::new(Registry::new()));
+        let metrics = Arc::new(WorkerMetrics::new(&Registry::new()));
         let worker = Worker::new(
             "test_worker".to_string(),
             Arc::new(repository),

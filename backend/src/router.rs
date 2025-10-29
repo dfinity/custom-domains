@@ -7,9 +7,8 @@ use axum::{
 };
 use axum_extra::middleware::option_layer;
 use base::traits::{repository::Repository, validation::ValidatesDomains};
-use ic_bn_lib::http::middleware::rate_limiter::layer_by_ip;
+use ic_bn_lib::{http::middleware::rate_limiter::layer_by_ip, reqwest::StatusCode};
 use prometheus::Registry;
-use reqwest::StatusCode;
 
 use crate::{
     backend_service::BackendService,
@@ -33,7 +32,7 @@ pub struct RateLimitConfig {
 pub fn create_router(
     repository: Arc<dyn Repository>,
     validator: Arc<dyn ValidatesDomains>,
-    registry: Registry,
+    metrics_registry: Registry,
     rate_limits: RateLimitConfig,
     with_metrics_endpoint: bool,
 ) -> Router {
@@ -42,7 +41,7 @@ pub fn create_router(
 
     // Use ic-bn-lib rate limiting middleware, with key by IP address.
     let create_rate_limiter = |limit: Option<u32>, response| {
-        option_layer(limit.map(|lim| layer_by_ip(lim, 2 * lim, response).unwrap()))
+        option_layer(limit.map(|lim| layer_by_ip(lim, 2 * lim, response, None).unwrap()))
     };
 
     let rl_get = create_rate_limiter(rate_limits.limit_get, response);
@@ -52,17 +51,16 @@ pub fn create_router(
     let rl_validate = create_rate_limiter(rate_limits.limit_validate, response);
 
     let api_router = Router::new()
-        .route("/v1/domains", post(create_handler).layer(rl_create))
-        .route("/v1/domains/{:id}", get(get_handler).layer(rl_get))
-        .route("/v1/domains/{:id}", patch(update_handler).layer(rl_patch))
-        .route("/v1/domains/{:id}", delete(delete_handler).layer(rl_delete))
+        .route("/v1/{:id}", post(create_handler).layer(rl_create))
+        .route("/v1/{:id}", get(get_handler).layer(rl_get))
+        .route("/v1/{:id}", patch(update_handler).layer(rl_patch))
+        .route("/v1/{:id}", delete(delete_handler).layer(rl_delete))
         .route(
-            "/v1/domains/{:id}/validate",
+            "/v1/{:id}/validate",
             get(validate_handler).layer(rl_validate),
         )
-        .fallback(|| async { (StatusCode::NOT_FOUND, "path not found") })
         .layer(from_fn_with_state(
-            Arc::new(HttpMetrics::new(registry.clone())),
+            Arc::new(HttpMetrics::new(metrics_registry.clone())),
             metrics_middleware,
         ))
         .layer(from_fn(logging_middleware))
@@ -72,7 +70,7 @@ pub fn create_router(
     let metrics_router = if with_metrics_endpoint {
         Router::new()
             .route("/metrics", get(metrics_handler))
-            .with_state(registry)
+            .with_state(metrics_registry)
     } else {
         Router::new()
     };
@@ -113,7 +111,7 @@ mod tests {
     use candid::Principal;
     use fqdn::FQDN;
     use prometheus::Registry;
-    use serde_json::{json, Value};
+    use serde_json::Value;
     use tower::{util::ServiceExt, Service};
 
     use crate::router::{create_router, RateLimitConfig};
@@ -150,14 +148,12 @@ mod tests {
         )
     }
 
-    /// Helper function to make a POST request to /v1/domains
+    /// Helper function to make a POST request to /v1/{domain}
     async fn post_domain_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
-        let body = json!({"domain": domain});
         let request = Request::builder()
             .method("POST")
-            .uri("/v1/domains")
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string()))
+            .uri(format!("/v1/{domain}"))
+            .body(Body::empty())
             .unwrap();
 
         let response = router.oneshot(request).await.unwrap();
@@ -369,71 +365,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_post_domain_malformed_json() {
-        // Arrange
-        let mock_validator = MockValidatesDomains::new();
-        let mock_repository = MockRepository::new();
-        let router = create_test_router(mock_repository, mock_validator);
-
-        // Act
-        let request = Request::builder()
-            .method("POST")
-            .uri("/v1/domains")
-            .header("content-type", "application/json")
-            .body(Body::from("{invalid json"))
-            .unwrap();
-
-        let response = router.oneshot(request).await.unwrap();
-
-        // Assert
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn test_post_domain_missing_content_type() {
-        // Arrange
-        let mock_validator = MockValidatesDomains::new();
-        let mock_repository = MockRepository::new();
-        let router = create_test_router(mock_repository, mock_validator);
-
-        // Act
-        let body = json!({"domain": "example.org"});
-        let request = Request::builder()
-            .method("POST")
-            .uri("/v1/domains")
-            // No content-type header
-            .body(Body::from(body.to_string()))
-            .unwrap();
-
-        let response = router.oneshot(request).await.unwrap();
-
-        // Assert
-        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    }
-
-    #[tokio::test]
-    async fn test_post_domain_missing_domain_field() {
-        // Arrange
-        let mock_validator = MockValidatesDomains::new();
-        let mock_repository = MockRepository::new();
-        let router = create_test_router(mock_repository, mock_validator);
-
-        // Act
-        let body = json!({"not_domain": "example.org"});
-        let request = Request::builder()
-            .method("POST")
-            .uri("/v1/domains")
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string()))
-            .unwrap();
-
-        let response = router.oneshot(request).await.unwrap();
-
-        // Assert: returns UnprocessableEntity for missing required "domain" field
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    #[tokio::test]
     async fn test_post_domain_very_long_domain() {
         // Arrange
         let mock_validator = MockValidatesDomains::new();
@@ -450,30 +381,9 @@ mod tests {
         assert_eq!(response_json["errors"], "bad_request: Domain is too long");
     }
 
-    #[tokio::test]
-    async fn test_post_domain_wrong_http_method() {
-        // Arrange
-        let mock_validator = MockValidatesDomains::new();
-        let mock_repository = MockRepository::new();
-        let router = create_test_router(mock_repository, mock_validator);
-
-        // Act: use GET instead of POST
-        let request = Request::builder()
-            .method("GET")
-            .uri("/v1/domains")
-            .header("content-type", "application/json")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = router.oneshot(request).await.unwrap();
-
-        // Assert
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-    }
-
-    /// Helper function to make a GET request to /v1/domains/{domain}/status
+    /// Helper function to make a GET request to /v1/{domain}/status
     async fn get_domain_status_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
-        let uri = format!("/v1/domains/{domain}");
+        let uri = format!("/v1/{domain}");
         let request = Request::builder()
             .method("GET")
             .uri(uri)
@@ -649,7 +559,7 @@ mod tests {
         let router = create_test_router(mock_repository, mock_validator);
 
         // Act
-        let uri = "/v1/domains/".to_string(); // Missing domain
+        let uri = "/v1/".to_string(); // Missing domain
         let request = Request::builder()
             .method("GET")
             .uri(uri)
@@ -731,7 +641,7 @@ mod tests {
         // Act: request with wrong path
         let request = Request::builder()
             .method("GET")
-            .uri("/v1/domains/example.org/wrong-path")
+            .uri("/v1/example.org/wrong-path")
             .header("content-type", "application/json")
             .body(Body::empty())
             .unwrap();
@@ -742,12 +652,12 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-    /// Helper function to make a GET request to /v1/domains/{domain}/validate
+    /// Helper function to make a GET request to /v1/{domain}/validate
     async fn get_domain_validate_request(
         router: axum::Router,
         domain: &str,
     ) -> (StatusCode, Value) {
-        let uri = format!("/v1/domains/{domain}/validate");
+        let uri = format!("/v1/{domain}/validate");
         let request = Request::builder()
             .method("GET")
             .uri(uri)
@@ -830,9 +740,9 @@ mod tests {
         );
     }
 
-    /// Helper function to make a POST request to /v1/domains/{domain}/update
+    /// Helper function to make a PATCH request to /v1/{domain}
     async fn domain_update_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
-        let uri = format!("/v1/domains/{domain}");
+        let uri = format!("/v1/{domain}");
         let request = Request::builder()
             .method("PATCH")
             .uri(uri)
@@ -931,9 +841,9 @@ mod tests {
         assert_eq!(response_json["errors"].as_str().unwrap(), "bad_request: Cannot update domain-to-canister mapping: no valid certificate found for domain example.org.");
     }
 
-    /// Helper function to make a DELETE request to /v1/domains/{domain}
+    /// Helper function to make a DELETE request to /v1/{domain}
     async fn delete_domain_request(router: axum::Router, domain: &str) -> (StatusCode, Value) {
-        let uri = format!("/v1/domains/{domain}");
+        let uri = format!("/v1/{domain}");
         let request = Request::builder()
             .method("DELETE")
             .uri(uri)
@@ -1065,27 +975,24 @@ mod tests {
 
         let request1 = Request::builder()
             .method("POST")
-            .uri("/v1/domains")
-            .header("content-type", "application/json")
+            .uri("/v1/example1.org")
             .header("x-real-ip", test_ip)
-            .body(Body::from(json!({"domain": "example1.org"}).to_string()))
+            .body(Body::empty())
             .unwrap();
 
         let request2 = Request::builder()
             .method("POST")
-            .uri("/v1/domains")
-            .header("content-type", "application/json")
+            .uri("/v1/example2.org")
             .header("x-real-ip", test_ip)
-            .body(Body::from(json!({"domain": "example2.org"}).to_string()))
+            .body(Body::empty())
             .unwrap();
 
         // Should be rate-limited, as it's 3nd request from the same IP
         let request3 = Request::builder()
             .method("POST")
-            .uri("/v1/domains")
-            .header("content-type", "application/json")
+            .uri("/v1/example3.org")
             .header("x-real-ip", test_ip)
-            .body(Body::from(json!({"domain": "example3.org"}).to_string()))
+            .body(Body::empty())
             .unwrap();
 
         // Act

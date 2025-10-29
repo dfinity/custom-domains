@@ -22,16 +22,16 @@ use base::{
     },
     types::{
         domain::{DomainStatus, RegisteredDomain},
-        task::{InputTask, ScheduledTask, TaskOutput, TaskResult},
+        task::{InputTask, ScheduledTask, TaskOutcome, TaskOutput, TaskResult},
     },
 };
 use candid::{CandidType, Decode, Deserialize, Encode, Principal};
 use canister_api::ListCertificatesPageInput;
 use derive_new::new;
 use fqdn::FQDN;
-use ic_agent::Agent;
 use ic_bn_lib::{
-    custom_domains::{CustomDomain as IcBnCustomDomain, ProvidesCustomDomains},
+    custom_domains::{CustomDomain, ProvidesCustomDomains},
+    ic_agent::Agent,
     tls::providers::{Pem, ProvidesCertificates},
 };
 
@@ -40,41 +40,43 @@ pub struct CanisterClient {
     agent: Agent,
     canister_id: Principal,
     certificate_cipher: Arc<dyn CiphersCertificates>,
-    #[new(value = "AtomicU64::new(0)")]
+    #[new(default)]
     last_change_time: AtomicU64,
-    #[new(value = "ArcSwap::from_pointee(Vec::new())")]
+    #[new(default)]
     certificates: ArcSwap<Vec<Pem>>,
-    #[new(value = "ArcSwap::from_pointee(Vec::new())")]
-    custom_domains: ArcSwap<Vec<IcBnCustomDomain>>,
+    #[new(default)]
+    custom_domains: ArcSwap<Vec<CustomDomain>>,
 }
 
 impl CanisterClient {
     /// Method to fetch and cache registrations if changes happened.
     async fn maybe_update_cache(&self) -> Result<(), anyhow::Error> {
         let last_change = self.get_last_change_time().await?;
-        let cached_timestamp = self.last_change_time.load(Ordering::Relaxed);
+        let cached_timestamp = self.last_change_time.load(Ordering::SeqCst);
 
-        if last_change != cached_timestamp {
-            // Certificates have changed, fetch new ones
-            let registered_domains = self.all_registrations().await?;
-
-            let mut pems = Vec::with_capacity(registered_domains.len());
-            let mut domains = Vec::with_capacity(registered_domains.len());
-
-            for domain in registered_domains {
-                pems.push(Pem([domain.cert, domain.priv_key].concat()));
-
-                domains.push(IcBnCustomDomain {
-                    name: domain.domain,
-                    canister_id: domain.canister_id,
-                });
-            }
-
-            // Update cache
-            self.certificates.store(Arc::new(pems));
-            self.custom_domains.store(Arc::new(domains));
-            self.last_change_time.store(last_change, Ordering::Relaxed);
+        if last_change == cached_timestamp {
+            return Ok(());
         }
+
+        // Certificates have changed, fetch new ones
+        let domains = self.all_registrations().await?;
+
+        let mut certificates = Vec::with_capacity(domains.len());
+        let mut custom_domains = Vec::with_capacity(domains.len());
+
+        for d in domains {
+            certificates.push(Pem([d.cert, d.priv_key].concat()));
+            custom_domains.push(CustomDomain {
+                name: d.domain,
+                canister_id: d.canister_id,
+                timestamp: 0,
+            });
+        }
+
+        // Update cache
+        self.certificates.store(Arc::new(certificates));
+        self.custom_domains.store(Arc::new(custom_domains));
+        self.last_change_time.store(last_change, Ordering::SeqCst);
 
         Ok(())
     }
@@ -136,7 +138,7 @@ impl CanisterClient {
     async fn update<T, R, E>(&self, method: &str, args: &T) -> Result<R, RepositoryError>
     where
         T: CandidType,
-        R: for<'de> Deserialize<'de> + CandidType,
+        R: for<'de> Deserialize<'de> + CandidType + std::fmt::Debug,
         E: for<'de> Deserialize<'de> + CandidType + std::fmt::Debug,
         RepositoryError: TryFrom<E>,
     {
@@ -244,7 +246,9 @@ impl Repository for CanisterClient {
 
     async fn submit_task_result(&self, mut task_result: TaskResult) -> Result<(), RepositoryError> {
         // We encrypt certificate and private_key and pass the result further to the canister.
-        if let Some(TaskOutput::Issue(issued_certificate)) = &mut task_result.output {
+        if let TaskOutcome::Success(TaskOutput::Issue(issued_certificate)) =
+            &mut task_result.outcome
+        {
             issued_certificate.cert =
                 self.encrypt_field("certificate", &issued_certificate.cert)?;
 
@@ -256,9 +260,7 @@ impl Repository for CanisterClient {
             "submit_task_result",
             &canister_api::TaskResult::from(task_result),
         )
-        .await?;
-
-        Ok(())
+        .await
     }
 
     async fn try_add_task(&self, input_task: InputTask) -> Result<(), RepositoryError> {
@@ -336,7 +338,7 @@ impl ProvidesCertificates for CanisterClient {
 
 #[async_trait]
 impl ProvidesCustomDomains for CanisterClient {
-    async fn get_custom_domains(&self) -> Result<Vec<IcBnCustomDomain>, anyhow::Error> {
+    async fn get_custom_domains(&self) -> Result<Vec<CustomDomain>, anyhow::Error> {
         self.maybe_update_cache().await?;
         Ok(self.custom_domains.load().as_ref().clone())
     }

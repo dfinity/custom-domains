@@ -7,7 +7,7 @@ use canister_api::{
     InputTask, SubmitTaskResult, TaskKind, TaskResult, TryAddTaskResult,
 };
 use hex::encode;
-use ic_agent::export::Principal;
+use ic_bn_lib::ic_agent::export::Principal;
 use pocket_ic::{nonblocking::PocketIc, PocketIcBuilder};
 use tracing::info;
 

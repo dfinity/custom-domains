@@ -33,16 +33,18 @@ async-trait = "0.1.89"
 axum = "0.8.4"
 axum-extra = "0.10.1"
 axum-server = "0.7.2"
+base64 = "0.22.1"
 candid = "0.10.16"
 candid_parser = "0.2.1"
 chacha20poly1305 = "0.10.1"
 chrono = "0.4"
+clap = { version = "4.5.20", features = ["derive", "string", "env"] }
 derive-new = "0.7.0"
 fqdn = "0.4.6"
 hex = "0.4.3"
 hickory-resolver = "0.25"
-ic-agent = "0.41.0"
-ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", features = [
+humantime = "2.2.0"
+ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", rev = "a635d5c3c0525faccd9831a5280c9a08ef89d0e9", features = [
     "acme-dns",
     "cert-providers",
     "custom-domains",
@@ -54,10 +56,8 @@ ic-stable-structures = "0.7.0"
 mockall = "0.13.1"
 pem = "3.0.5"
 pocket-ic = "=9.0.2"
-pretty_assertions = "1.4.1"
 prometheus = "0.14.0"
 rcgen = { version = "0.14" }
-reqwest = { version = "0.12.22" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_cbor = "0.11.2"
 serde_json = "1.0.140"
@@ -85,7 +85,6 @@ canister-client = { path = "./canister_client" }
 chacha20poly1305 = { workspace = true }
 fqdn = { workspace = true }
 hex = { workspace = true }
-ic-agent = { workspace = true }
 ic-bn-lib = { workspace = true }
 pem = { workspace = true }
 pocket-ic = { workspace = true }
