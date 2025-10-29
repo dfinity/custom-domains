@@ -9,6 +9,7 @@ use std::{
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use candid::Principal;
+use chrono::{DateTime, Utc};
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::{
@@ -293,12 +294,32 @@ impl Worker {
             .with_duration(start.elapsed()),
         };
 
-        match task_result.outcome {
-            TaskOutcome::Success(_) => {
+        match &task_result.outcome {
+            TaskOutcome::Success(v) => {
+                let (validity, canister_id) = match v {
+                    TaskOutput::Issue(v) => {
+                        let not_before = DateTime::<Utc>::from_timestamp_secs(v.not_before as i64)
+                            .unwrap_or_default();
+                        let not_after = DateTime::<Utc>::from_timestamp_secs(v.not_after as i64)
+                            .unwrap_or_default();
+
+                        (
+                            Some((not_before.to_string(), not_after.to_string())),
+                            Some(v.canister_id.to_string()),
+                        )
+                    }
+
+                    TaskOutput::Update(v) => (None, Some(v.to_string())),
+                    TaskOutput::Delete => (None, None),
+                };
+
                 info!(
                     domain = %domain,
                     worker = %self,
                     task_kind = %task_kind,
+                    not_before = validity.as_ref().map(|x| &x.0),
+                    not_after = validity.as_ref().map(|x| &x.1),
+                    canister_id,
                     "CustomDomains: Task execution succeeded"
                 )
             }
@@ -483,7 +504,9 @@ impl Worker {
         let closure = || async {
             let repository = self.repository.clone();
             let task_result = task_result.clone();
-            repository.submit_task_result(task_result).await
+            let r = repository.submit_task_result(task_result).await;
+            warn!("CustomDomains: Task submission result: {r:?}");
+            r
         };
 
         select! {
@@ -500,7 +523,16 @@ impl Worker {
                 closure,
             ) => {
                 let (attempt, status, failure) = match result {
-                    Ok((attempt, _)) => (attempt.to_string(), "success", ""),
+                    Ok((attempt, _)) => {
+                        info!(
+                            domain = %task.domain,
+                            worker = %self,
+                            task_kind = %task.kind,
+                            "CustomDomains: Task result submitted successfully",
+                        );
+
+                        (attempt.to_string(), "success", "")
+                    },
                     Err(err) => {
                         let attempts = err.attempts.to_string();
 

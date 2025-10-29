@@ -138,7 +138,7 @@ impl CanisterClient {
     async fn update<T, R, E>(&self, method: &str, args: &T) -> Result<R, RepositoryError>
     where
         T: CandidType,
-        R: for<'de> Deserialize<'de> + CandidType,
+        R: for<'de> Deserialize<'de> + CandidType + std::fmt::Debug,
         E: for<'de> Deserialize<'de> + CandidType + std::fmt::Debug,
         RepositoryError: TryFrom<E>,
     {
@@ -260,9 +260,7 @@ impl Repository for CanisterClient {
             "submit_task_result",
             &canister_api::TaskResult::from(task_result),
         )
-        .await?;
-
-        Ok(())
+        .await
     }
 
     async fn try_add_task(&self, input_task: InputTask) -> Result<(), RepositoryError> {

@@ -266,7 +266,7 @@ impl Validator {
         }
 
         let rr = records[0].to_string();
-        debug!("CustomDomains: Validator: {domain}: got RR: {rr}");
+        debug!("CustomDomains: Validator: {domain}: got RR: '{rr}'");
 
         // Parse canister ID
         Principal::from_text(&rr).map_err(|_| ValidationError::InvalidDnsTxtCanisterId {
