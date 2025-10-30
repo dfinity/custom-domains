@@ -16,7 +16,7 @@ use ic_bn_lib::{
     },
     reqwest::{Method, Request, Url},
 };
-use tracing::{debug, info};
+use tracing::{debug, info, instrument, Span};
 
 use crate::traits::validation::{ValidatesDomains, ValidationError};
 
@@ -31,22 +31,31 @@ pub struct Validator {
     validation_domain: FQDN,
 }
 
+impl std::fmt::Debug for Validator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Validator")
+    }
+}
+
 #[async_trait]
 impl ValidatesDomains for Validator {
+    #[instrument(level = "info", skip_all, fields(domain = %domain, canister_id))]
     async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
-        info!("CustomDomains: Validator: {domain}: beginning validation");
+        info!("Beginning validation");
         self.validate_no_txt_challenge(domain).await?;
         self.validate_cname_delegation(domain).await?;
         let canister_id = self.validate_canister_mapping(domain).await?;
+        Span::current().record("canister_id", canister_id.to_string());
         self.validate_canister_owner(canister_id, domain).await?;
-        info!("CustomDomains: Validator: {domain}: validation succeeded");
+        info!("Validation succeeded");
         Ok(canister_id)
     }
 
+    #[instrument(level = "info", skip_all, fields(domain = %domain))]
     async fn validate_deletion(&self, domain: &FQDN) -> Result<(), ValidationError> {
-        info!("CustomDomains: Validator: {domain}: beginning deletion validation");
+        info!("Beginning deletion validation");
         self.validate_no_canister_id_record(domain).await?;
-        info!("CustomDomains: Validator: {domain}: deletion validation succeeded");
+        info!("Deletion validation succeeded");
         Ok(())
     }
 }
@@ -102,7 +111,7 @@ impl Validator {
             self.validation_domain
         );
 
-        debug!("CustomDomains: Validator: {domain}: checking canister owner, calling '{url}'");
+        debug!("checking canister owner, calling '{url}'");
 
         let request = Request::new(
             Method::GET,
@@ -133,7 +142,7 @@ impl Validator {
     /// This check ensures the domain can be safely deleted or is not already registered.
     async fn validate_no_canister_id_record(&self, domain: &FQDN) -> Result<(), ValidationError> {
         let hostname = format!("_canister-id.{domain}.");
-        debug!("CustomDomains: Validator: {domain}: checking there's no canister ID record, resolving '{hostname}'");
+        debug!("checking there's no canister ID record, resolving '{hostname}'");
 
         match self.resolver.resolve(RecordType::TXT, &hostname).await {
             Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: hostname }),
@@ -155,14 +164,14 @@ impl Validator {
     /// or that no conflicting records exist that would interfere with certificate issuance.
     async fn validate_no_txt_challenge(&self, domain: &FQDN) -> Result<(), ValidationError> {
         let hostname = format!("_acme-challenge.{domain}.");
-        debug!("CustomDomains: Validator: {domain}: checking there are no conflicting ACME challenge records, resolving '{hostname}'");
+        debug!("checking there are no conflicting ACME challenge records, resolving '{hostname}'");
 
         match self.resolver.resolve(RecordType::TXT, &hostname).await {
             Ok(lookup) => {
                 // If there are records - check that all of them belong to the delegation domain
                 for rr in lookup {
                     let name = rr.to_string();
-                    debug!("CustomDomains: Validator: {domain}: got RR: '{name}'");
+                    debug!("got RR: '{name}'");
 
                     let name = FQDN::from_ascii_str(&name)
                         .context(format!("unable to parse '{name}' as FQDN"))?;
@@ -194,9 +203,7 @@ impl Validator {
     async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
         let cname_src = format!("_acme-challenge.{domain}.");
         let cname_dst = format!("_acme-challenge.{domain}.{}.", self.delegation_domain);
-        debug!(
-            "CustomDomains: Validator: {domain}: checking CNAME delegation '{cname_src}' -> '{cname_dst}'"
-        );
+        debug!("checking CNAME delegation '{cname_src}' -> '{cname_dst}'");
 
         // Resolve CNAME record
         let records = self
@@ -221,7 +228,7 @@ impl Validator {
             .iter()
             .any(|rr| {
                 let name = rr.to_string();
-                debug!("CustomDomains: Validator: {domain}: got RR: '{name}'");
+                debug!("got RR: '{name}'");
                 name == cname_dst
             })
             .then_some(())
@@ -237,7 +244,7 @@ impl Validator {
     /// that exactly one record exists containing a valid canister Principal.
     async fn validate_canister_mapping(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
         let hostname = format!("_canister-id.{domain}");
-        debug!("CustomDomains: Validator: {domain}: checking canister ID mapping, resolving '{hostname}'");
+        debug!("checking canister ID mapping, resolving '{hostname}'");
 
         // Resolve TXT record
         let records = self
@@ -266,7 +273,7 @@ impl Validator {
         }
 
         let rr = records[0].to_string();
-        debug!("CustomDomains: Validator: {domain}: got RR: '{rr}'");
+        debug!("got RR: '{rr}'");
 
         // Parse canister ID
         Principal::from_text(&rr).map_err(|_| ValidationError::InvalidDnsTxtCanisterId {

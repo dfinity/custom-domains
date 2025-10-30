@@ -106,6 +106,7 @@ pub async fn setup(
         agent,
         cli.custom_domains_canister_id,
         cipher,
+        cli.custom_domains_canister_poll_interval,
     ));
 
     let acme_client = {

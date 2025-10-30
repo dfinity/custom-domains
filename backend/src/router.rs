@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use axum::{
-    middleware::{from_fn, from_fn_with_state},
+    extract::Request,
+    middleware::from_fn_with_state,
     routing::{delete, get, patch, post},
     Router,
 };
@@ -9,13 +10,15 @@ use axum_extra::middleware::option_layer;
 use base::traits::{repository::Repository, validation::ValidatesDomains};
 use ic_bn_lib::{http::middleware::rate_limiter::layer_by_ip, reqwest::StatusCode};
 use prometheus::Registry;
+use tower_http::{
+    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+    LatencyUnit,
+};
+use tracing::Level;
 
 use crate::{
     backend_service::BackendService,
-    handlers::{
-        create_handler, delete_handler, get_handler, logging_middleware, update_handler,
-        validate_handler,
-    },
+    handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
     metrics::{metrics_handler, metrics_middleware, HttpMetrics},
 };
 
@@ -63,7 +66,24 @@ pub fn create_router(
             Arc::new(HttpMetrics::new(metrics_registry.clone())),
             metrics_middleware,
         ))
-        .layer(from_fn(logging_middleware))
+        //.layer(from_fn(logging_middleware))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &Request| {
+                    tracing::info_span!(
+                        "custom_domains",
+                        method = %req.method(),
+                        url = %req.uri(),
+                        http = ?req.version(),
+                    )
+                })
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(
+                    DefaultOnResponse::new()
+                        .level(Level::INFO)
+                        .latency_unit(LatencyUnit::Seconds),
+                ),
+        )
         .with_state(backend_service);
 
     // Optionally add /metrics endpoint

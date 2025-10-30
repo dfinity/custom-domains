@@ -66,7 +66,8 @@ thiserror = "2.0.12"
 tokio = { version = "1.45.1" }
 tokio-util = "0.7.15"
 tower = "0.5.2"
-tracing = "0.1.41"
+tower-http = {version = "0.6.6", features = ["trace"] }
+tracing = {version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = "0.3.19"
 utoipa = { version = "5.4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }

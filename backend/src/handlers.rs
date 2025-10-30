@@ -8,33 +8,10 @@ use crate::{
     },
 };
 use axum::{
-    extract::{Path, Request, State},
+    extract::{Path, State},
     http::StatusCode,
-    middleware::Next,
-    response::Response,
 };
-use tracing::{error, info};
-
-/// Logging middleware that logs incoming requests and their responses
-pub async fn logging_middleware(request: Request, next: Next) -> Response {
-    let method = request.method().to_string();
-    let uri = request.uri().path().to_string();
-    let start = std::time::Instant::now();
-
-    let response = next.run(request).await;
-    let duration = start.elapsed();
-    let status_code = response.status().as_u16();
-
-    info!(
-        method,
-        uri,
-        status_code,
-        duration_ms = duration.as_millis(),
-        "http_request"
-    );
-
-    response
-}
+use tracing::error;
 
 fn log_error(err: &ApiError, domain: &str, operation: &str) {
     error!(

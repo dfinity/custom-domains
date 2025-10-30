@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use candid::Principal;
 use clap::Args;
 use fqdn::FQDN;
+use humantime::parse_duration;
 use ic_bn_lib::{reqwest::Url, tls::acme::AcmeUrl};
 
 #[derive(Debug, Args)]
@@ -25,6 +26,10 @@ pub struct CustomDomainsCli {
     /// ID of the management canister
     #[clap(env, long, required = false)]
     pub custom_domains_canister_id: Principal,
+
+    /// How frequently the canister client would poll it for the changes to the data.
+    #[clap(env, long, value_parser = parse_duration, default_value = "5s")]
+    pub custom_domains_canister_poll_interval: Duration,
 
     /// Cloudflare API URL
     #[clap(env, long, default_value = "https://api.cloudflare.com/client/v4/")]

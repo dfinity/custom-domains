@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use backend::router::{create_router, RateLimitConfig};
 use base::types::{
@@ -39,7 +39,12 @@ async fn main() -> anyhow::Result<()> {
     };
     let agent = Agent::builder().with_url("https://ic0.app").build()?;
     let canister_id = canister_id.parse().expect("Invalid CANISTER_ID format");
-    let repository = Arc::new(CanisterClient::new(agent, canister_id, cipher));
+    let repository = Arc::new(CanisterClient::new(
+        agent,
+        canister_id,
+        cipher,
+        Duration::ZERO,
+    ));
     let validator = Arc::new(Validator::default());
 
     info!("starting worker, which peforms all tasks ...");

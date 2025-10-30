@@ -376,6 +376,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "utoipa",
@@ -674,6 +675,7 @@ dependencies = [
  "fqdn",
  "ic-bn-lib",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -4988,6 +4990,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]

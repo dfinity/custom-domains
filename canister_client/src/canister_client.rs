@@ -9,6 +9,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use anyhow::anyhow;
@@ -32,14 +33,22 @@ use fqdn::FQDN;
 use ic_bn_lib::{
     custom_domains::{CustomDomain, ProvidesCustomDomains},
     ic_agent::Agent,
+    tasks::Run,
     tls::providers::{Pem, ProvidesCertificates},
 };
+use tokio::{
+    select,
+    time::{interval, sleep},
+};
+use tokio_util::sync::CancellationToken;
+use tracing::{info, instrument, warn};
 
-#[derive(Debug, new)]
+#[derive(new)]
 pub struct CanisterClient {
     agent: Agent,
     canister_id: Principal,
     certificate_cipher: Arc<dyn CiphersCertificates>,
+    poll_interval: Duration,
     #[new(default)]
     last_change_time: AtomicU64,
     #[new(default)]
@@ -48,9 +57,15 @@ pub struct CanisterClient {
     custom_domains: ArcSwap<Vec<CustomDomain>>,
 }
 
+impl std::fmt::Debug for CanisterClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CanisterClient({})", self.canister_id)
+    }
+}
+
 impl CanisterClient {
     /// Method to fetch and cache registrations if changes happened.
-    async fn maybe_update_cache(&self) -> Result<(), anyhow::Error> {
+    async fn update_cache(&self) -> Result<(), anyhow::Error> {
         let last_change = self.get_last_change_time().await?;
         let cached_timestamp = self.last_change_time.load(Ordering::SeqCst);
 
@@ -78,6 +93,7 @@ impl CanisterClient {
         self.custom_domains.store(Arc::new(custom_domains));
         self.last_change_time.store(last_change, Ordering::SeqCst);
 
+        info!("Cache updated: {} certs", self.certificates.load().len());
         Ok(())
     }
 
@@ -331,7 +347,6 @@ impl Repository for CanisterClient {
 #[async_trait]
 impl ProvidesCertificates for CanisterClient {
     async fn get_certificates(&self) -> Result<Vec<Pem>, anyhow::Error> {
-        self.maybe_update_cache().await?;
         Ok(self.certificates.load().as_ref().clone())
     }
 }
@@ -339,7 +354,38 @@ impl ProvidesCertificates for CanisterClient {
 #[async_trait]
 impl ProvidesCustomDomains for CanisterClient {
     async fn get_custom_domains(&self) -> Result<Vec<CustomDomain>, anyhow::Error> {
-        self.maybe_update_cache().await?;
         Ok(self.custom_domains.load().as_ref().clone())
+    }
+}
+
+#[async_trait]
+impl Run for CanisterClient {
+    #[instrument(skip_all, name = "canister_client")]
+    async fn run(&self, token: CancellationToken) -> Result<(), anyhow::Error> {
+        // Wait a bit until the rest is initialized
+        sleep(Duration::from_secs(15)).await;
+
+        let mut interval = interval(self.poll_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        warn!(
+            "Started polling every {}s",
+            self.poll_interval.as_secs_f64()
+        );
+
+        loop {
+            select! {
+                () = token.cancelled() => {
+                    warn!("{self:?}: stopping");
+                    return Ok(())
+                },
+
+                _ = interval.tick() => {
+                    if let Err(e) = self.update_cache().await {
+                        warn!("Unable to update cache: {e:#}");
+                    }
+                }
+            }
+        }
     }
 }

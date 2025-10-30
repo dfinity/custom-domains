@@ -192,6 +192,7 @@ async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetr
         agent,
         pocket_ic_env.canister_id,
         cipher,
+        Duration::ZERO,
     ));
 
     let prometheus_registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
