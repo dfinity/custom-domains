@@ -44,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
         canister_id,
         cipher,
         Duration::ZERO,
+        Duration::ZERO,
     ));
     let validator = Arc::new(Validator::default());
 

@@ -107,6 +107,7 @@ pub async fn setup(
         cli.custom_domains_canister_id,
         cipher,
         cli.custom_domains_canister_poll_interval,
+        cli.custom_domains_canister_refresh_interval,
     ));
 
     let acme_client = {

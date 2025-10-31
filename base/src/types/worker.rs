@@ -774,7 +774,7 @@ async fn revoke_certificate_with_metrics_update(
         }
 
         Err(err) => {
-            error!(rror = ?err, "Certificate revocation failed");
+            error!(error = %err, "Certificate revocation failed");
             metrics
                 .certificate_revocations
                 .with_label_values(&["failure"])

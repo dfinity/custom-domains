@@ -61,7 +61,10 @@ pub trait Repository: Send + Sync {
     /// Retrieves the timestamp of the last change accross all registration records.
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError>;
     /// Fetches all registered domains with valid certificates.
-    async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError>;
+    async fn all_registrations(
+        &self,
+        use_update: bool,
+    ) -> Result<Vec<RegisteredDomain>, RepositoryError>;
 }
 
 impl TryFrom<ApiSubmitTaskError> for RepositoryError {

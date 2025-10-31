@@ -193,6 +193,7 @@ async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetr
         pocket_ic_env.canister_id,
         cipher,
         Duration::ZERO,
+        Duration::ZERO,
     ));
 
     let prometheus_registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
@@ -365,7 +366,7 @@ async fn download_certificates_and_validate(
     ctx: &TestContext,
     domains: Vec<String>,
 ) -> anyhow::Result<()> {
-    let registered_domains = ctx.canister_repository.all_registrations().await?;
+    let registered_domains = ctx.canister_repository.all_registrations(false).await?;
     let mut domains_set: HashSet<String> = HashSet::from_iter(domains);
     for registered_domain in registered_domains {
         let domain = extract_domain_from_cert(registered_domain.cert)?;

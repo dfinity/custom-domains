@@ -11,10 +11,10 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use tracing::error;
+use tracing::warn;
 
 fn log_error(err: &ApiError, domain: &str, operation: &str) {
-    error!(
+    warn!(
         domain = %domain,
         operation = %operation,
         error = %err,

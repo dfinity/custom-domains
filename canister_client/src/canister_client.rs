@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use base::{
@@ -27,7 +27,12 @@ use base::{
     },
 };
 use candid::{CandidType, Decode, Deserialize, Encode, Principal};
-use canister_api::ListCertificatesPageInput;
+use canister_api::{
+    CertificatesPage, DomainStatus as DomainStatusApi, FetchTaskError, GetDomainStatusError,
+    GetLastChangeTimeError, HasNextTaskError, InputTask as InputTaskApi, ListCertificatesPageError,
+    ListCertificatesPageInput, ScheduledTask as ScheduledTaskApi, SubmitTaskError,
+    TaskResult as TaskResultApi,
+};
 use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::{
@@ -49,6 +54,7 @@ pub struct CanisterClient {
     canister_id: Principal,
     certificate_cipher: Arc<dyn CiphersCertificates>,
     poll_interval: Duration,
+    refresh_interval: Duration,
     #[new(default)]
     last_change_time: AtomicU64,
     #[new(default)]
@@ -64,8 +70,8 @@ impl std::fmt::Debug for CanisterClient {
 }
 
 impl CanisterClient {
-    /// Method to fetch and cache registrations if changes happened.
-    async fn update_cache(&self) -> Result<(), anyhow::Error> {
+    /// Fetch and cache registrations if changes happened
+    async fn update_cache_conditional(&self) -> Result<(), anyhow::Error> {
         let last_change = self.get_last_change_time().await?;
         let cached_timestamp = self.last_change_time.load(Ordering::SeqCst);
 
@@ -73,8 +79,42 @@ impl CanisterClient {
             return Ok(());
         }
 
-        // Certificates have changed, fetch new ones
-        let domains = self.all_registrations().await?;
+        self.update_cache(Some(last_change), true).await
+    }
+
+    /// Fetch and cache registrations
+    async fn update_cache(
+        &self,
+        last_change: Option<u64>,
+        use_update: bool,
+    ) -> Result<(), anyhow::Error> {
+        // TODO update canister to send last change together with domains?
+        let last_change = if let Some(v) = last_change {
+            v
+        } else {
+            self.get_last_change_time().await?
+        };
+
+        let (certificates, custom_domains) = self
+            .fetch_data(use_update)
+            .await
+            .context("unable to fetch registrations data")?;
+
+        // Update cache
+        self.certificates.store(Arc::new(certificates));
+        self.custom_domains.store(Arc::new(custom_domains));
+        self.last_change_time.store(last_change, Ordering::SeqCst);
+
+        info!("Cache updated: {} certs", self.certificates.load().len());
+        Ok(())
+    }
+
+    /// Fetch & convert registrations
+    async fn fetch_data(
+        &self,
+        use_update: bool,
+    ) -> Result<(Vec<Pem>, Vec<CustomDomain>), anyhow::Error> {
+        let domains = self.all_registrations(use_update).await?;
 
         let mut certificates = Vec::with_capacity(domains.len());
         let mut custom_domains = Vec::with_capacity(domains.len());
@@ -88,13 +128,7 @@ impl CanisterClient {
             });
         }
 
-        // Update cache
-        self.certificates.store(Arc::new(certificates));
-        self.custom_domains.store(Arc::new(custom_domains));
-        self.last_change_time.store(last_change, Ordering::SeqCst);
-
-        info!("Cache updated: {} certs", self.certificates.load().len());
-        Ok(())
+        Ok((certificates, custom_domains))
     }
 
     /// Encrypts sensitive data before sending it to canister
@@ -197,9 +231,9 @@ impl Repository for CanisterClient {
         domain: &FQDN,
     ) -> Result<Option<DomainStatus>, RepositoryError> {
         let response = self
-            .query::<String, Option<canister_api::DomainStatus>, canister_api::GetDomainStatusError>(
-                "get_domain_status", 
-                &domain.to_string()
+            .query::<String, Option<DomainStatusApi>, GetDomainStatusError>(
+                "get_domain_status",
+                &domain.to_string(),
             )
             .await?;
 
@@ -218,7 +252,7 @@ impl Repository for CanisterClient {
 
     async fn has_next_task(&self) -> Result<bool, RepositoryError> {
         let response = self
-            .query::<(), bool, canister_api::HasNextTaskError>("has_next_task", &())
+            .query::<(), bool, HasNextTaskError>("has_next_task", &())
             .await?;
 
         Ok(response)
@@ -226,7 +260,7 @@ impl Repository for CanisterClient {
 
     async fn fetch_next_task(&self) -> Result<Option<ScheduledTask>, RepositoryError> {
         let has_next_task = self
-            .query::<(), bool, canister_api::HasNextTaskError>("has_next_task", &())
+            .query::<(), bool, HasNextTaskError>("has_next_task", &())
             .await?;
 
         if !has_next_task {
@@ -234,10 +268,7 @@ impl Repository for CanisterClient {
         }
 
         let response = self
-            .update::<(), Option<canister_api::ScheduledTask>, canister_api::FetchTaskError>(
-                "fetch_next_task",
-                &(),
-            )
+            .update::<(), Option<ScheduledTaskApi>, FetchTaskError>("fetch_next_task", &())
             .await?;
 
         match response {
@@ -272,18 +303,18 @@ impl Repository for CanisterClient {
                 self.encrypt_field("private key", &issued_certificate.priv_key)?;
         }
 
-        self.update::<canister_api::TaskResult, (), canister_api::SubmitTaskError>(
+        self.update::<TaskResultApi, (), SubmitTaskError>(
             "submit_task_result",
-            &canister_api::TaskResult::from(task_result),
+            &TaskResultApi::from(task_result),
         )
         .await
     }
 
     async fn try_add_task(&self, input_task: InputTask) -> Result<(), RepositoryError> {
         let response = self
-            .update::<canister_api::InputTask, (), canister_api::TryAddTaskError>(
+            .update::<InputTaskApi, (), canister_api::TryAddTaskError>(
                 "try_add_task",
-                &canister_api::InputTask::from(input_task),
+                &InputTaskApi::from(input_task),
             )
             .await;
 
@@ -294,29 +325,39 @@ impl Repository for CanisterClient {
 
     async fn get_last_change_time(&self) -> Result<UtcTimestamp, RepositoryError> {
         let response = self
-            .query::<(), UtcTimestamp, canister_api::GetLastChangeTimeError>(
-                "get_last_change_time",
-                &(),
-            )
+            .query::<(), UtcTimestamp, GetLastChangeTimeError>("get_last_change_time", &())
             .await?;
 
         Ok(response)
     }
 
-    async fn all_registrations(&self) -> Result<Vec<RegisteredDomain>, RepositoryError> {
+    async fn all_registrations(
+        &self,
+        use_update: bool,
+    ) -> Result<Vec<RegisteredDomain>, RepositoryError> {
         let mut registered_domains = vec![];
         let mut start_key = None;
 
         loop {
-            let response = self
-            .query::<ListCertificatesPageInput, canister_api::CertificatesPage, canister_api::ListCertificatesPageError>(
-                "list_certificates_page",
-                &ListCertificatesPageInput {
-                    start_key,
-                    limit: None,
-                },
-            )
-            .await?;
+            let response = if use_update {
+                self.update::<ListCertificatesPageInput, CertificatesPage, ListCertificatesPageError>(
+                    "list_certificates_page",
+                    &ListCertificatesPageInput {
+                        start_key,
+                        limit: None,
+                    },
+                )
+                .await?
+            } else {
+                self.query::<ListCertificatesPageInput, CertificatesPage, ListCertificatesPageError>(
+                        "list_certificates_page",
+                        &ListCertificatesPageInput {
+                            start_key,
+                            limit: None,
+                        },
+                    )
+                    .await?
+            };
 
             let registrations = response
                 .items
@@ -324,6 +365,7 @@ impl Repository for CanisterClient {
                 .map(|mut reg| {
                     reg.enc_cert = self.decrypt_field(&reg.enc_cert)?;
                     reg.enc_priv_key = self.decrypt_field(&reg.enc_priv_key)?;
+
                     RegisteredDomain::try_from(reg).map_err(|err| {
                         RepositoryError::InternalError(anyhow!(
                             "Failed to convert RegisteredDomain: {err}"
@@ -365,24 +407,35 @@ impl Run for CanisterClient {
         // Wait a bit until the rest is initialized
         sleep(Duration::from_secs(15)).await;
 
-        let mut interval = interval(self.poll_interval);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut interval_poll = interval(self.poll_interval);
+        interval_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut interval_refresh = interval(self.refresh_interval);
+        interval_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         warn!(
-            "Started polling every {}s",
-            self.poll_interval.as_secs_f64()
+            "Started polling every {}s, full refresh every {}s",
+            self.poll_interval.as_secs_f64(),
+            self.refresh_interval.as_secs_f64()
         );
 
         loop {
             select! {
+                biased;
+
                 () = token.cancelled() => {
                     warn!("{self:?}: stopping");
                     return Ok(())
                 },
 
-                _ = interval.tick() => {
-                    if let Err(e) = self.update_cache().await {
-                        warn!("Unable to update cache: {e:#}");
+                _ = interval_refresh.tick() => {
+                    if let Err(e) = self.update_cache(None, false).await {
+                        warn!("Unable to refresh data: {e:#}");
+                    }
+                }
+
+                _ = interval_poll.tick() => {
+                    if let Err(e) = self.update_cache_conditional().await {
+                        warn!("Unable to poll for changes: {e:#}");
                     }
                 }
             }

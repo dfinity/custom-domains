@@ -27,9 +27,14 @@ pub struct CustomDomainsCli {
     #[clap(env, long, required = false)]
     pub custom_domains_canister_id: Principal,
 
-    /// How frequently the canister client would poll it for the changes to the data.
+    /// How frequently the canister client would poll it for changes to the data.
     #[clap(env, long, value_parser = parse_duration, default_value = "5s")]
     pub custom_domains_canister_poll_interval: Duration,
+
+    /// How frequently to perform the full sync of the certificates from the canister irrespecive
+    /// of the the changes timestamp.
+    #[clap(env, long, value_parser = parse_duration, default_value = "5m")]
+    pub custom_domains_canister_refresh_interval: Duration,
 
     /// Cloudflare API URL
     #[clap(env, long, default_value = "https://api.cloudflare.com/client/v4/")]
