@@ -46,7 +46,7 @@ pub async fn setup(
     token: CancellationToken,
     hostname: &str,
     metrics_registry: Registry,
-) -> Result<(Worker, Router, Arc<CanisterClient>), anyhow::Error> {
+) -> Result<(Vec<Worker>, Router, Arc<CanisterClient>), anyhow::Error> {
     let cipher = {
         let key = BASE64_STANDARD
             .decode(&cli.custom_domains_encryption_key)
@@ -128,15 +128,21 @@ pub async fn setup(
     };
 
     let metrics = Arc::new(WorkerMetrics::new(&metrics_registry));
-    let worker = Worker::new(
-        hostname.to_string(),
-        repository.clone(),
-        validator.clone(),
-        acme_client,
-        WorkerConfig::default(),
-        metrics,
-        token,
-    );
+    let mut workers = vec![];
+
+    for i in 0..cli.custom_domains_workers_count {
+        let worker = Worker::new(
+            format!("{hostname}-{i}"),
+            repository.clone(),
+            validator.clone(),
+            acme_client.clone(),
+            WorkerConfig::default(),
+            metrics.clone(),
+            token.clone(),
+        );
+
+        workers.push(worker);
+    }
 
     let router = create_router(
         repository.clone(),
@@ -146,5 +152,5 @@ pub async fn setup(
         false,
     );
 
-    Ok((worker, router, repository))
+    Ok((workers, router, repository))
 }

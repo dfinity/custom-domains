@@ -42,8 +42,8 @@ impl ValidatesDomains for Validator {
     #[instrument(level = "info", skip_all, fields(domain = %domain, canister_id))]
     async fn validate(&self, domain: &FQDN) -> Result<Principal, ValidationError> {
         info!("Beginning validation");
-        self.validate_no_txt_challenge(domain).await?;
         self.validate_cname_delegation(domain).await?;
+        self.validate_no_txt_challenge(domain).await?;
         let canister_id = self.validate_canister_mapping(domain).await?;
         Span::current().record("canister_id", canister_id.to_string());
         self.validate_canister_owner(canister_id, domain).await?;
@@ -167,10 +167,10 @@ impl Validator {
         debug!("checking there are no conflicting ACME challenge records, resolving '{hostname}'");
 
         match self.resolver.resolve(RecordType::TXT, &hostname).await {
-            Ok(lookup) => {
+            Ok(v) => {
                 // If there are records - check that all of them belong to the delegation domain
-                for rr in lookup {
-                    let name = rr.to_string();
+                for rr in v {
+                    let name = rr.name().to_lowercase().to_ascii();
                     debug!("got RR: '{name}'");
 
                     let name = FQDN::from_ascii_str(&name)
@@ -202,8 +202,8 @@ impl Validator {
     /// to the corresponding delegation domain for certificate validation.
     async fn validate_cname_delegation(&self, domain: &FQDN) -> Result<(), ValidationError> {
         let cname_src = format!("_acme-challenge.{domain}.");
-        let cname_dst = format!("_acme-challenge.{domain}.{}.", self.delegation_domain);
-        debug!("checking CNAME delegation '{cname_src}' -> '{cname_dst}'");
+        let expected_cname_dst = format!("_acme-challenge.{domain}.{}.", self.delegation_domain);
+        debug!("checking CNAME delegation '{cname_src}' -> '{expected_cname_dst}'");
 
         // Resolve CNAME record
         let records = self
@@ -214,7 +214,7 @@ impl Validator {
                 if err.is_no_records_found() || err.is_nx_domain() {
                     ValidationError::MissingDnsCname {
                         src: cname_src.clone(),
-                        dst: cname_dst.clone(),
+                        dst: expected_cname_dst.clone(),
                     }
                 } else {
                     ValidationError::UnexpectedError(anyhow!(
@@ -227,14 +227,14 @@ impl Validator {
         records
             .iter()
             .any(|rr| {
-                let name = rr.to_string();
-                debug!("got RR: '{name}'");
-                name == cname_dst
+                let cname_dst = rr.data().to_string();
+                debug!("got CNAME dst: '{cname_dst}'");
+                cname_dst == expected_cname_dst
             })
             .then_some(())
             .ok_or(ValidationError::MissingDnsCname {
                 src: cname_src,
-                dst: cname_dst,
+                dst: expected_cname_dst,
             })
     }
 
@@ -272,13 +272,13 @@ impl Validator {
             return Err(ValidationError::MultipleDnsTxtCanisterId { src: hostname });
         }
 
-        let rr = records[0].to_string();
-        debug!("got RR: '{rr}'");
+        let canister_id = records[0].data().to_string();
+        debug!("got canister ID: '{canister_id}'");
 
         // Parse canister ID
-        Principal::from_text(&rr).map_err(|_| ValidationError::InvalidDnsTxtCanisterId {
+        Principal::from_text(&canister_id).map_err(|_| ValidationError::InvalidDnsTxtCanisterId {
             src: hostname,
-            id: rr,
+            id: canister_id,
         })
     }
 }

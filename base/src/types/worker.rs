@@ -289,28 +289,23 @@ impl Worker {
 
         match &task_result.outcome {
             TaskOutcome::Success(v) => {
-                let (validity, canister_id) = match v {
+                let validity = match v {
                     TaskOutput::Issue(v) => {
                         let not_before = DateTime::<Utc>::from_timestamp_secs(v.not_before as i64)
                             .unwrap_or_default();
                         let not_after = DateTime::<Utc>::from_timestamp_secs(v.not_after as i64)
                             .unwrap_or_default();
 
-                        (
-                            Some((not_before.to_string(), not_after.to_string())),
-                            Some(v.canister_id.to_string()),
-                        )
+                        Some((not_before.to_string(), not_after.to_string()))
                     }
 
-                    TaskOutput::Update(v) => (None, Some(v.to_string())),
-                    TaskOutput::Delete => (None, None),
+                    _ => None,
                 };
 
                 info!(
                     duration = task_result.duration.as_secs(),
                     not_before = validity.as_ref().map(|x| &x.0),
                     not_after = validity.as_ref().map(|x| &x.1),
-                    canister_id,
                     "Task execution succeeded"
                 )
             }
@@ -716,6 +711,7 @@ async fn update_task(
 ) -> TaskResult {
     match validator.validate(&domain).await {
         Ok(canister_id) => {
+            Span::current().record("canister_id", canister_id.to_string());
             TaskResult::success(domain, TaskOutput::Update(canister_id), task_id, task_kind)
         }
 

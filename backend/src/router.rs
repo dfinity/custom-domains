@@ -66,7 +66,6 @@ pub fn create_router(
             Arc::new(HttpMetrics::new(metrics_registry.clone())),
             metrics_middleware,
         ))
-        //.layer(from_fn(logging_middleware))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|req: &Request| {
