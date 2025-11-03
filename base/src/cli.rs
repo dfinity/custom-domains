@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use candid::Principal;
 use clap::Args;
 use fqdn::FQDN;
+use humantime::parse_duration;
 use ic_bn_lib::{reqwest::Url, tls::acme::AcmeUrl};
 
 #[derive(Debug, Args)]
@@ -26,6 +27,15 @@ pub struct CustomDomainsCli {
     #[clap(env, long, required = false)]
     pub custom_domains_canister_id: Principal,
 
+    /// How frequently the canister client would poll it for changes to the data.
+    #[clap(env, long, value_parser = parse_duration, default_value = "5s")]
+    pub custom_domains_canister_poll_interval: Duration,
+
+    /// How frequently to perform the full sync of the certificates from the canister irrespecive
+    /// of the the changes timestamp
+    #[clap(env, long, value_parser = parse_duration, default_value = "5m")]
+    pub custom_domains_canister_refresh_interval: Duration,
+
     /// Cloudflare API URL
     #[clap(env, long, default_value = "https://api.cloudflare.com/client/v4/")]
     pub custom_domains_cloudflare_url: Url,
@@ -48,7 +58,11 @@ pub struct CustomDomainsCli {
     #[clap(env, long, default_value = "le_stag")]
     pub custom_domains_acme_url: AcmeUrl,
 
-    /// Path to a JSON file with ACME account data.
+    /// Path to a JSON file with ACME account data
     #[clap(env, long, required = false)]
     pub custom_domains_acme_account: PathBuf,
+
+    /// How many worker tasks to spawn
+    #[clap(env, long, default_value = "1")]
+    pub custom_domains_workers_count: usize,
 }

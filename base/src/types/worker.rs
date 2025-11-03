@@ -30,7 +30,7 @@ use tokio::{
     time::{self, sleep},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
 use x509_parser::{parse_x509_certificate, prelude::GeneralName};
 
 use crate::{
@@ -145,7 +145,7 @@ pub struct Worker {
 
 impl std::fmt::Display for Worker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "CustomDomainsWorker({})", self.name)
     }
 }
 
@@ -174,23 +174,21 @@ impl Worker {
         }
     }
 
+    #[instrument(skip_all, fields(domain = %domain))]
     pub fn schedule_revocation_with_delay(&self, domain: FQDN, cert: Vec<u8>, delay: Duration) {
         let acme_client = self.acme_client.clone();
         let metrics = self.shared_metrics.clone();
         // Use a child token to allow cancelling revocation tasks independently of the worker
         // Not used at the moment, but could be useful in the future (or as a precaution)
         let token = self.token.child_token();
-        let worker = self.to_string();
 
         self.task_tracker.spawn(async move {
             if delay.is_zero() {
-                info!(domain = %domain, worker, "CustomDomains: Certificate revocation starts now");
+                info!("Certificate revocation starts now");
             } else {
                 info!(
-                    domain = %domain,
-                    worker,
                     delay_secs = delay.as_secs(),
-                    "CustomDomains: Certificate revocation scheduled"
+                    "Certificate revocation scheduled"
                 );
             }
 
@@ -200,7 +198,7 @@ impl Worker {
                 }
 
                 _ = token.cancelled() => {
-                    warn!(domain = %domain, worker, "CustomDomains: Certificate revocation cancelled externally");
+                    warn!("Certificate revocation cancelled externally");
                 }
             }
         });
@@ -220,12 +218,7 @@ impl Worker {
         let task_kind = task.kind;
         let certificate = task.cert;
 
-        info!(
-            domain = %domain,
-            worker = %self,
-            task_kind = %task.kind,
-            "CustomDomains: Task execution started"
-        );
+        info!("Task execution started");
 
         let task_result = match time::timeout(self.config.task_timeout, async {
             let domain = domain.clone();
@@ -263,7 +256,7 @@ impl Worker {
                                 self.config.cert_revocation_delay,
                             );
                         } else {
-                            warn!(domain = %domain, "No old certificate provided for renewal task");
+                            warn!("No old certificate provided for renewal task");
                         }
                     }
 
@@ -296,41 +289,32 @@ impl Worker {
 
         match &task_result.outcome {
             TaskOutcome::Success(v) => {
-                let (validity, canister_id) = match v {
+                let validity = match v {
                     TaskOutput::Issue(v) => {
                         let not_before = DateTime::<Utc>::from_timestamp_secs(v.not_before as i64)
                             .unwrap_or_default();
                         let not_after = DateTime::<Utc>::from_timestamp_secs(v.not_after as i64)
                             .unwrap_or_default();
 
-                        (
-                            Some((not_before.to_string(), not_after.to_string())),
-                            Some(v.canister_id.to_string()),
-                        )
+                        Some((not_before.to_string(), not_after.to_string()))
                     }
 
-                    TaskOutput::Update(v) => (None, Some(v.to_string())),
-                    TaskOutput::Delete => (None, None),
+                    _ => None,
                 };
 
                 info!(
-                    domain = %domain,
-                    worker = %self,
-                    task_kind = %task_kind,
+                    duration = task_result.duration.as_secs(),
                     not_before = validity.as_ref().map(|x| &x.0),
                     not_after = validity.as_ref().map(|x| &x.1),
-                    canister_id,
-                    "CustomDomains: Task execution succeeded"
+                    "Task execution succeeded"
                 )
             }
 
             TaskOutcome::Failure(ref err) => {
                 error!(
-                    domain = %domain,
-                    worker = %self,
-                    task_kind = %task_kind,
+                    duration = task_result.duration.as_secs(),
                     error = ?err,
-                    "CustomDomains: Task execution failed"
+                    "Task execution failed"
                 );
             }
         }
@@ -381,14 +365,14 @@ impl Worker {
     /// The worker will keep running until the cancellation token is triggered.
     /// Each cycle fetches a task from the repository, processes it, and updates metrics.
     pub async fn run(&self) {
-        info!(worker = %self, "CustomDomains: started");
+        info!("Started");
 
         loop {
             let cycle_start = Instant::now();
 
             // Check for cancellation before proceeding
             if self.token.is_cancelled() {
-                warn!(worker = %self, "CustomDomains: stopped due to cancellation");
+                warn!("Stopped due to cancellation");
                 break;
             }
 
@@ -400,13 +384,13 @@ impl Worker {
             // Publish worker utilization metric if a time window has passed
             let cycle_duration = cycle_start.elapsed().as_secs();
             self.total_sec_since_reset
-                .fetch_add(cycle_duration, Ordering::Relaxed);
+                .fetch_add(cycle_duration, Ordering::SeqCst);
             self.maybe_update_utilization_metric();
         }
 
-        info!(worker = %self, "CustomDomains: shutting down");
+        info!("Shutting down");
         self.shutdown_revocation_tasks().await;
-        info!(worker = %self, "CustomDomains: shutdown complete");
+        info!("Shutdown complete");
     }
 
     /// Fetches the next task and processes it, returning whether the worker should continue running
@@ -421,11 +405,12 @@ impl Worker {
                     .inc();
                 task
             }
+
             Err(err) => {
                 error!(
                     error = ?err,
                     duration_secs = self.config.task_fetch_retry_interval.as_secs(),
-                    "Worker {self}: Failed to fetch pending task for worker, sleeping before retry"
+                    "Failed to fetch pending task, sleeping before retry"
                 );
                 self.shared_metrics
                     .task_fetches
@@ -436,7 +421,7 @@ impl Worker {
                 // Update worker idle time for utilization metric
                 self.idle_sec_since_reset.fetch_add(
                     self.config.task_fetch_retry_interval.as_secs(),
-                    Ordering::Relaxed,
+                    Ordering::SeqCst,
                 );
 
                 return Ok(());
@@ -450,13 +435,14 @@ impl Worker {
     }
 
     /// Processes a single task with execution and submission, returning whether the worker should continue running
+    #[instrument(skip_all, fields(domain = %task.domain, task_id = task.task_id, task_kind = %task.kind, canister_id))]
     async fn process_task(&self, task: ScheduledTask) -> Result<(), WorkerStopped> {
         let task_start = Instant::now();
 
         // Execute the task with a timeout
         let task_result = select! {
             _ = self.token.cancelled() => {
-                warn!(worker = %self, "CustomDomains: stopped due to cancellation during task processing");
+                warn!("Stopped due to cancellation during task processing");
                 return Err(WorkerStopped);
             }
 
@@ -504,14 +490,12 @@ impl Worker {
         let closure = || async {
             let repository = self.repository.clone();
             let task_result = task_result.clone();
-            let r = repository.submit_task_result(task_result).await;
-            warn!("CustomDomains: Task submission result: {r:?}");
-            r
+            repository.submit_task_result(task_result).await
         };
 
         select! {
             _ = self.token.cancelled() => {
-                warn!(worker = %self, "CustomDomains: stopped due to cancellation during submission");
+                warn!("Stopped due to cancellation during submission");
                 return Err(WorkerStopped);
             }
 
@@ -524,24 +508,16 @@ impl Worker {
             ) => {
                 let (attempt, status, failure) = match result {
                     Ok((attempt, _)) => {
-                        info!(
-                            domain = %task.domain,
-                            worker = %self,
-                            task_kind = %task.kind,
-                            "CustomDomains: Task result submitted successfully",
-                        );
-
+                        info!("Task result submitted successfully");
                         (attempt.to_string(), "success", "")
                     },
+
                     Err(err) => {
                         let attempts = err.attempts.to_string();
 
                         error!(
-                            domain = %task.domain,
-                            worker = %self,
-                            task_kind = %task.kind,
                             duration_secs = self.config.task_submit_timeout.as_secs(),
-                            "CustomDomains: Failed to submit task result after {attempts} attempts: {err:?}",
+                            "Failed to submit task result after {attempts} attempts: {err:?}",
                         );
 
                         (err.attempts.to_string(), "failure", err.last_error.into())
@@ -567,14 +543,13 @@ impl Worker {
     /// Handles no available tasks, returning whether the worker should continue running
     async fn handle_no_tasks(&self) -> Result<(), WorkerStopped> {
         debug!(
-            worker = %self,
             duration_secs = self.config.polling_interval_no_tasks.as_secs(),
-            "CustomDomains: No pending tasks found, sleeping"
+            "No pending tasks found, sleeping"
         );
 
         select! {
             _ = self.token.cancelled() => {
-                warn!(worker = %self, "CustomDomains: stopped due to cancellation during idle");
+                warn!("Stopped due to cancellation during idle");
                 return Err(WorkerStopped);
             }
 
@@ -582,7 +557,7 @@ impl Worker {
                 // Update worker idle time for utilization metric
                 self.idle_sec_since_reset.fetch_add(
                     self.config.polling_interval_no_tasks.as_secs(),
-                    Ordering::Relaxed,
+                    Ordering::SeqCst,
                 );
             }
         }
@@ -592,15 +567,15 @@ impl Worker {
 
     /// Updates the worker utilization metric if the window has elapsed
     fn maybe_update_utilization_metric(&self) {
-        let total = self.total_sec_since_reset.load(Ordering::Relaxed);
+        let total = self.total_sec_since_reset.load(Ordering::SeqCst);
 
         if total < self.config.worker_utilization_window.as_secs() {
             return;
         }
 
         // Take values and reset
-        let idle = self.idle_sec_since_reset.swap(0, Ordering::Relaxed) as f64;
-        let total = self.total_sec_since_reset.swap(0, Ordering::Relaxed) as f64;
+        let idle = self.idle_sec_since_reset.swap(0, Ordering::SeqCst) as f64;
+        let total = self.total_sec_since_reset.swap(0, Ordering::SeqCst) as f64;
         if total == 0.0 {
             return;
         }
@@ -609,11 +584,10 @@ impl Worker {
         let utilization = (active * 1000.0 / total).round() / 10.0;
 
         debug!(
-            worker = %self,
             active_secs = total - idle,
             total_secs = total,
             utilization = utilization,
-            "CustomDomains: utilization metric published"
+            "Utilization metric published"
         );
 
         self.shared_metrics
@@ -625,7 +599,10 @@ impl Worker {
 
 #[async_trait]
 impl Run for Worker {
+    #[instrument(skip_all, name = "custom_domains_worker", fields(name = self.name))]
     async fn run(&self, _token: CancellationToken) -> Result<(), anyhow::Error> {
+        // Wait a bit until the rest is initialized
+        sleep(Duration::from_secs(15)).await;
         self.run().await;
         Ok(())
     }
@@ -639,16 +616,21 @@ async fn issue_task(
     task_kind: TaskKind,
 ) -> TaskResult {
     match validator.validate(&domain).await {
-        Ok(canister_id) => match issue_certificate(&domain, canister_id, acme_client).await {
-            Ok(output) => TaskResult::success(domain.clone(), output, task_id, task_kind),
-            Err(err) => {
-                let failure = match err.downcast_ref::<Error>() {
-                    Some(err) if err.rate_limited() => TaskFailReason::RateLimited,
-                    _ => TaskFailReason::GenericFailure(format_error_chain(&err)),
-                };
-                TaskResult::failure(domain, failure, task_id, task_kind)
+        Ok(canister_id) => {
+            Span::current().record("canister_id", canister_id.to_string());
+
+            match issue_certificate(&domain, canister_id, acme_client).await {
+                Ok(output) => TaskResult::success(domain.clone(), output, task_id, task_kind),
+                Err(err) => {
+                    let failure = match err.downcast_ref::<Error>() {
+                        Some(err) if err.rate_limited() => TaskFailReason::RateLimited,
+                        _ => TaskFailReason::GenericFailure(format_error_chain(&err)),
+                    };
+                    TaskResult::failure(domain, failure, task_id, task_kind)
+                }
             }
-        },
+        }
+
         Err(err) => TaskResult::failure(
             domain,
             TaskFailReason::ValidationFailed(err.to_string()),
@@ -658,6 +640,7 @@ async fn issue_task(
     }
 }
 
+#[instrument(skip_all, fields(domain = %domain, canister_id = %canister_id))]
 async fn issue_certificate(
     domain: &FQDN,
     canister_id: Principal,
@@ -669,13 +652,13 @@ async fn issue_certificate(
     let certificate = acme_client
         .issue(vec![domain_str.clone()], None)
         .await
-        .with_context(|| "Certificate issuance failed")?;
+        .context("certificate issuance failed")?;
 
     // Parse certificate chain
-    let pem_str = std::str::from_utf8(&certificate.cert)
-        .with_context(|| "Certificate contains invalid UTF-8")?;
+    let pem_str =
+        std::str::from_utf8(&certificate.cert).context("certificate contains invalid UTF-8")?;
 
-    let pems = parse_many(pem_str).with_context(|| "Failed to parse PEM certificates")?;
+    let pems = parse_many(pem_str).context("failed to parse PEM certificates")?;
 
     let Some(first_cert) = pems.first() else {
         bail!("No certificates found in PEM chain");
@@ -683,13 +666,13 @@ async fn issue_certificate(
 
     // Extract validity period
     let (_, cert) = parse_x509_certificate(first_cert.contents())
-        .with_context(|| "Failed to parse X509 certificate")?;
+        .context("failed to parse X509 certificate")?;
 
     // Validate that issued certificate is for the requested domain
     let subject_alt_names = cert
         .subject_alternative_name()?
         .map(|ext| &ext.value.general_names)
-        .with_context(|| "Certificate has no Subject Alternative Name")?;
+        .context("certificate has no Subject Alternative Name")?;
 
     let cert_domains: Vec<String> = subject_alt_names
         .iter()
@@ -728,8 +711,10 @@ async fn update_task(
 ) -> TaskResult {
     match validator.validate(&domain).await {
         Ok(canister_id) => {
+            Span::current().record("canister_id", canister_id.to_string());
             TaskResult::success(domain, TaskOutput::Update(canister_id), task_id, task_kind)
         }
+
         Err(err) => TaskResult::failure(
             domain,
             TaskFailReason::ValidationFailed(err.to_string()),
@@ -745,10 +730,8 @@ async fn revoke_certificate(
     acme_client: Arc<dyn AcmeCertificateClient>,
 ) -> anyhow::Result<()> {
     // Parse certificate chain
-    let pem_str =
-        std::str::from_utf8(cert).with_context(|| "Certificate contains invalid UTF-8")?;
-
-    let pems = parse_many(pem_str).with_context(|| "Failed to parse PEM certificates")?;
+    let pem_str = std::str::from_utf8(cert).context("certificate contains invalid UTF-8")?;
+    let pems = parse_many(pem_str).context("failed to parse PEM certificates")?;
 
     let Some(first_cert) = pems.first() else {
         bail!("No certificates found in PEM chain");
@@ -765,11 +748,12 @@ async fn revoke_certificate(
     acme_client
         .revoke(&revocation_request)
         .await
-        .with_context(|| "certificate revocation failed")?;
+        .context("certificate revocation failed")?;
 
     Ok(())
 }
 
+#[instrument(skip_all, fields(domain = %domain))]
 async fn revoke_certificate_with_metrics_update(
     domain: FQDN,
     certificate: &[u8],
@@ -778,14 +762,15 @@ async fn revoke_certificate_with_metrics_update(
 ) {
     match revoke_certificate(certificate, acme_client).await {
         Ok(_) => {
-            info!(domain = %domain, "Certificate revocation succeeded");
+            info!("Certificate revocation succeeded");
             metrics
                 .certificate_revocations
                 .with_label_values(&["success"])
                 .inc();
         }
+
         Err(err) => {
-            error!(domain = %domain, error = ?err, "Certificate revocation failed");
+            error!(error = %err, "Certificate revocation failed");
             metrics
                 .certificate_revocations
                 .with_label_values(&["failure"])
