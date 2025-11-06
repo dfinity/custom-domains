@@ -13,6 +13,7 @@ canister-api = { path = "../canister/api" }
 derive-new = { workspace = true }
 fqdn = { workspace = true }
 ic-bn-lib = { workspace = true }
+ic-bn-lib-common = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

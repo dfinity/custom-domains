@@ -2,15 +2,15 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
 use ic_bn_lib::{
-    http::dns::{Options as DnsOptions, Resolver},
+    http::dns::Resolver,
     reqwest::Url,
     tls::acme::{
         client::{Client, ClientBuilder},
         dns::{cloudflare::Cloudflare, TokenManagerDns},
         instant_acme::AccountCredentials,
-        AcmeUrl,
     },
 };
+use ic_bn_lib_common::types::{acme::AcmeUrl, dns::Options as DnsOptions};
 
 const DEFAULT_POLL_ORDER_TIMEOUT: Duration = Duration::from_secs(140);
 const DEFAULT_POLL_TOKEN_TIMEOUT: Duration = Duration::from_secs(140);

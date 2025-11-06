@@ -35,11 +35,10 @@ use canister_api::{
 };
 use derive_new::new;
 use fqdn::FQDN;
-use ic_bn_lib::{
-    custom_domains::{CustomDomain, ProvidesCustomDomains},
-    ic_agent::Agent,
-    tasks::Run,
-    tls::providers::{Pem, ProvidesCertificates},
+use ic_bn_lib::ic_agent::Agent;
+use ic_bn_lib_common::{
+    traits::{custom_domains::ProvidesCustomDomains, tls::ProvidesCertificates, Run},
+    types::{tls::Pem, CustomDomain},
 };
 use tokio::{
     select,

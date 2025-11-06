@@ -14,11 +14,11 @@ use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::{
     rustls::pki_types::CertificateDer,
-    tasks::Run,
-    tls::acme::{
-        client::{AcmeCertificateClient, Error},
-        instant_acme::{RevocationReason, RevocationRequest},
-    },
+    tls::acme::instant_acme::{RevocationReason, RevocationRequest},
+};
+use ic_bn_lib_common::{
+    traits::{acme::AcmeCertificateClient, Run},
+    types::acme::Error as AcmeError,
 };
 use pem::parse_many;
 use prometheus::{
@@ -622,7 +622,7 @@ async fn issue_task(
             match issue_certificate(&domain, canister_id, acme_client).await {
                 Ok(output) => TaskResult::success(domain.clone(), output, task_id, task_kind),
                 Err(err) => {
-                    let failure = match err.downcast_ref::<Error>() {
+                    let failure = match err.downcast_ref::<AcmeError>() {
                         Some(err) if err.rate_limited() => TaskFailReason::RateLimited,
                         _ => TaskFailReason::GenericFailure(format_error_chain(&err)),
                     };
@@ -849,9 +849,10 @@ mod tests {
     use async_trait::async_trait;
     use candid::Principal;
     use fqdn::FQDN;
-    use ic_bn_lib::tls::acme::{
-        client::{AcmeCertificateClient, Cert, Error as InstantAcmeError},
-        instant_acme::RevocationRequest,
+    use ic_bn_lib::tls::acme::instant_acme::RevocationRequest;
+    use ic_bn_lib_common::{
+        traits::acme::AcmeCertificateClient,
+        types::acme::{AcmeCert, Error as AcmeError},
     };
     use prometheus::Registry;
     use rcgen::{CertificateParams, DnType, KeyPair};
@@ -882,7 +883,7 @@ mod tests {
             &self,
             names: Vec<String>,
             _private_key: Option<Vec<u8>>,
-        ) -> Result<Cert, InstantAcmeError> {
+        ) -> Result<AcmeCert, AcmeError> {
             // Simulate some delay to make sure executor switching can happen
             sleep(Duration::from_millis(10)).await;
 
@@ -897,16 +898,13 @@ mod tests {
             let cert = params.self_signed(&key_pair).unwrap();
             let cert_pem = cert.pem();
 
-            Ok(Cert {
+            Ok(AcmeCert {
                 cert: cert_pem.into_bytes(),
                 key: vec![],
             })
         }
 
-        async fn revoke<'a>(
-            &self,
-            _request: &RevocationRequest<'a>,
-        ) -> Result<(), InstantAcmeError> {
+        async fn revoke<'a>(&self, _request: &RevocationRequest<'a>) -> Result<(), AcmeError> {
             // Simulate some delay to make sure executor switching can happen
             sleep(Duration::from_millis(10)).await;
             Ok(())

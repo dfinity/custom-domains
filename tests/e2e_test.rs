@@ -21,11 +21,10 @@ use ic_bn_lib::{
     ic_agent::{identity::BasicIdentity, Agent, Identity},
     reqwest::{self, Url},
     tests::pebble::{dns::TokenManagerPebble, Env},
-    tls::acme::{
-        client::{AcmeCertificateClient, ClientBuilder},
-        AcmeUrl, TokenManager,
-    },
+    tls::acme::client::ClientBuilder,
 };
+use ic_bn_lib_common::traits::acme::{AcmeCertificateClient, TokenManager};
+use ic_bn_lib_common::types::acme::AcmeUrl;
 use pem::parse_many;
 use prometheus::Registry;
 use tokio::{spawn, time::sleep};

@@ -17,11 +17,11 @@ use base64::{prelude::BASE64_STANDARD, Engine};
 use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::Key;
 use ic_bn_lib::{
-    http::dns::Options as DnsOptions,
     ic_agent::{identity::Secp256k1Identity, Agent},
     reqwest,
     tls::acme::instant_acme::AccountCredentials,
 };
+use ic_bn_lib_common::types::dns::Options as DnsOptions;
 use prometheus::Registry;
 use tokio::fs;
 

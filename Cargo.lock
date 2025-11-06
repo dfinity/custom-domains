@@ -368,6 +368,7 @@ dependencies = [
  "derive-new",
  "fqdn",
  "ic-bn-lib",
+ "ic-bn-lib-common",
  "prometheus",
  "serde",
  "serde_json",
@@ -411,6 +412,7 @@ dependencies = [
  "hickory-resolver",
  "humantime",
  "ic-bn-lib",
+ "ic-bn-lib-common",
  "mockall",
  "pem 3.0.6",
  "prometheus",
@@ -674,6 +676,7 @@ dependencies = [
  "derive-new",
  "fqdn",
  "ic-bn-lib",
+ "ic-bn-lib-common",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1029,6 +1032,7 @@ dependencies = [
  "fqdn",
  "hex",
  "ic-bn-lib",
+ "ic-bn-lib-common",
  "pem 3.0.6",
  "pocket-ic",
  "prometheus",
@@ -2097,7 +2101,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.1.0"
-source = "git+https://github.com/dfinity/ic-bn-lib?rev=b5cd9d68c2c5ac3482c8a4f4a4dfb366f8ffdcff#b5cd9d68c2c5ac3482c8a4f4a4dfb366f8ffdcff"
+source = "git+https://github.com/dfinity/ic-bn-lib?rev=2ffeef7574eab1be8db77f77cff23c751a31488d#2ffeef7574eab1be8db77f77cff23c751a31488d"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2129,12 +2133,12 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "ic-agent",
+ "ic-bn-lib-common",
  "indoc",
  "instant-acme",
  "itertools 0.14.0",
  "moka",
  "nix",
- "parse-size",
  "ppp",
  "prometheus",
  "rand 0.8.5",
@@ -2172,6 +2176,44 @@ dependencies = [
  "x509-parser",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "ic-bn-lib-common"
+version = "0.1.0"
+source = "git+https://github.com/dfinity/ic-bn-lib?rev=2ffeef7574eab1be8db77f77cff23c751a31488d#2ffeef7574eab1be8db77f77cff23c751a31488d"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "candid",
+ "clap",
+ "cloudflare",
+ "derive-new",
+ "fqdn",
+ "hickory-proto",
+ "hickory-resolver",
+ "http",
+ "http-body",
+ "humantime",
+ "hyper",
+ "hyper-util",
+ "ic-agent",
+ "instant-acme",
+ "parse-size",
+ "prometheus",
+ "rcgen",
+ "reqwest",
+ "rustls",
+ "serde",
+ "socket2 0.6.1",
+ "strum 0.27.2",
+ "strum_macros 0.27.2",
+ "thiserror 2.0.17",
+ "tokio-util",
+ "tower-service",
+ "url",
+ "uuid",
 ]
 
 [[package]]

@@ -10,11 +10,14 @@ use fqdn::{fqdn, FQDN};
 use hickory_resolver::proto::rr::RecordType;
 use ic_bn_lib::{
     http::{
-        client::Options as HttpOptions,
-        dns::{Options as DnsOptions, Resolver, Resolves, SingleResolver},
-        Client, ReqwestClient,
+        dns::{Resolver, SingleResolver},
+        ReqwestClient,
     },
     reqwest::{Method, Request, Url},
+};
+use ic_bn_lib_common::{
+    traits::{dns::Resolves, http::Client},
+    types::{dns::Options as DnsOptions, http::ClientOptions},
 };
 use tracing::{debug, info, instrument, Span};
 
@@ -82,7 +85,7 @@ impl Validator {
         dns_opts.cache_size = 0;
         let resolver = Resolver::new(dns_opts);
 
-        let http_opts = HttpOptions::default();
+        let http_opts = ClientOptions::default();
         let http_resolver = SingleResolver::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
         let client = ReqwestClient::new(http_opts, Some(http_resolver))
             .context("unable to create HTTP client")?;
