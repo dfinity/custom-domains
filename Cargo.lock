@@ -2101,7 +2101,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.1.0"
-source = "git+https://github.com/dfinity/ic-bn-lib?rev=2ffeef7574eab1be8db77f77cff23c751a31488d#2ffeef7574eab1be8db77f77cff23c751a31488d"
+source = "git+https://github.com/dfinity/ic-bn-lib?rev=23f515ec05b65960a5fea41888177467146a8cec#23f515ec05b65960a5fea41888177467146a8cec"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2181,7 +2181,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib-common"
 version = "0.1.0"
-source = "git+https://github.com/dfinity/ic-bn-lib?rev=2ffeef7574eab1be8db77f77cff23c751a31488d#2ffeef7574eab1be8db77f77cff23c751a31488d"
+source = "git+https://github.com/dfinity/ic-bn-lib?rev=23f515ec05b65960a5fea41888177467146a8cec#23f515ec05b65960a5fea41888177467146a8cec"
 dependencies = [
  "anyhow",
  "async-trait",

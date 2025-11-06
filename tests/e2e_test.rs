@@ -23,8 +23,10 @@ use ic_bn_lib::{
     tests::pebble::{dns::TokenManagerPebble, Env},
     tls::acme::client::ClientBuilder,
 };
-use ic_bn_lib_common::traits::acme::{AcmeCertificateClient, TokenManager};
-use ic_bn_lib_common::types::acme::AcmeUrl;
+use ic_bn_lib_common::{
+    traits::acme::{AcmeCertificateClient, TokenManager},
+    types::acme::AcmeUrl,
+};
 use pem::parse_many;
 use prometheus::Registry;
 use tokio::{spawn, time::sleep};
