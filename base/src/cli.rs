@@ -4,7 +4,8 @@ use candid::Principal;
 use clap::Args;
 use fqdn::FQDN;
 use humantime::parse_duration;
-use ic_bn_lib::{reqwest::Url, tls::acme::AcmeUrl};
+use ic_bn_lib::reqwest::Url;
+use ic_bn_lib_common::types::acme::AcmeUrl;
 
 #[derive(Debug, Args)]
 pub struct CustomDomainsCli {

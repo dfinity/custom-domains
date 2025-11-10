@@ -20,6 +20,7 @@ fqdn = { workspace = true }
 hickory-resolver = { workspace = true }
 humantime = { workspace = true }
 ic-bn-lib = { workspace = true }
+ic-bn-lib-common = { workspace = true }
 mockall = { workspace = true }
 pem = { workspace = true }
 prometheus = { workspace = true }

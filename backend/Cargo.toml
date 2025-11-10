@@ -20,6 +20,7 @@ clap = { workspace = true }
 derive-new = { workspace = true }
 fqdn = { workspace = true, features = ["punycode"] }
 ic-bn-lib = { workspace = true }
+ic-bn-lib-common = { workspace = true }
 prometheus = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
