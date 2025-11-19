@@ -38,13 +38,16 @@ pub fn create_router(
     metrics_registry: Registry,
     rate_limits: RateLimitConfig,
     with_metrics_endpoint: bool,
+    bypass_token: Option<String>,
 ) -> Router {
     let backend_service = BackendService::new(repository, validator);
     let response = (StatusCode::TOO_MANY_REQUESTS, "Too many requests");
 
     // Use ic-bn-lib rate limiting middleware, with key by IP address.
     let create_rate_limiter = |limit: Option<u32>, response| {
-        option_layer(limit.map(|lim| layer_by_ip(lim, 2 * lim, response, None).unwrap()))
+        option_layer(
+            limit.map(|lim| layer_by_ip(lim, 2 * lim, response, bypass_token.clone()).unwrap()),
+        )
     };
 
     let rl_get = create_rate_limiter(rate_limits.limit_get, response);
@@ -149,6 +152,7 @@ mod tests {
             registry,
             RateLimitConfig::default(),
             true,
+            None,
         )
     }
 
@@ -164,6 +168,7 @@ mod tests {
             registry,
             rate_limits,
             true,
+            None,
         )
     }
 
