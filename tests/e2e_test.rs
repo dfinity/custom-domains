@@ -267,6 +267,7 @@ async fn spawn_api_server(
             prometheus_registry,
             RateLimitConfig::default(),
             true,
+            None,
         );
         info!("Starting API server at http://{}", api_addr);
         axum_server::bind(api_addr)

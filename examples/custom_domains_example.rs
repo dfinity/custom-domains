@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         registry,
         RateLimitConfig::default(),
         true,
+        None,
     );
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
 
