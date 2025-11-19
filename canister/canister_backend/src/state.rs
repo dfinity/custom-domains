@@ -213,7 +213,7 @@ impl CanisterState {
         // - find the oldest pending task
         for entry in self.domains.iter() {
             let domain = entry.key();
-            let mut domain_entry = entry.value().clone();
+            let mut domain_entry = entry.value();
 
             if let Some(task_kind) = next_pending_task(&domain_entry, now) {
                 // Create Renew task
@@ -538,7 +538,7 @@ impl CanisterState {
         }
 
         // Update the domain entry
-        self.domains.insert(domain.to_string(), entry);
+        self.domains.insert(domain, entry);
 
         Ok(())
     }
