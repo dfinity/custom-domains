@@ -46,6 +46,7 @@ pub async fn setup(
     token: CancellationToken,
     hostname: &str,
     metrics_registry: Registry,
+    rate_limiter_bypass_token: Option<String>,
 ) -> Result<(Vec<Worker>, Router, Arc<CanisterClient>), anyhow::Error> {
     let cipher = {
         let key = BASE64_STANDARD
@@ -56,7 +57,6 @@ pub async fn setup(
             return Err(anyhow!("encryption key must be exactly 32 bytes long"));
         }
 
-        #[allow(deprecated)]
         let key = Key::from_slice(&key);
         let cipher = CertificateCipher::new(key);
         Arc::new(cipher)
@@ -150,6 +150,7 @@ pub async fn setup(
         metrics_registry,
         RateLimitConfig::default(),
         false,
+        rate_limiter_bypass_token,
     );
 
     Ok((workers, router, repository))
