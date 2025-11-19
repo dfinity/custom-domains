@@ -56,7 +56,6 @@ pub async fn setup(
             return Err(anyhow!("encryption key must be exactly 32 bytes long"));
         }
 
-        #[allow(deprecated)]
         let key = Key::from_slice(&key);
         let cipher = CertificateCipher::new(key);
         Arc::new(cipher)
