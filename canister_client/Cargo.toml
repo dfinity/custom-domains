@@ -12,8 +12,8 @@ derive-new = { workspace = true }
 fqdn = { workspace = true }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
-ic-custom-domains-base = { path = "../base" }
-ic-custom-domains-canister-api = { path = "../canister/api" }
+ic-custom-domains-base = { workspace = true }
+ic-custom-domains-canister-api = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

@@ -19,8 +19,8 @@ derive-new = { workspace = true }
 fqdn = { workspace = true, features = ["punycode"] }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
-ic-custom-domains-base = { path = "../base" }
-ic-custom-domains-canister-client = { path = "../canister_client" }
+ic-custom-domains-base = { workspace = true }
+ic-custom-domains-canister-client = { workspace = true }
 prometheus = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

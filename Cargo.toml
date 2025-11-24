@@ -23,7 +23,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.0.0-git"
+version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
@@ -52,6 +52,10 @@ ic-bn-lib = { version = "0.1", features = [
 ic-bn-lib-common = "0.1"
 ic-cdk = "0.17"
 ic-cdk-timers = "0.11"
+ic-custom-domains-backend = { version = "0.1", path = "./backend" }
+ic-custom-domains-base = { version = "0.1", path = "./base" }
+ic-custom-domains-canister-api = { version = "0.1", path = "./canister/api" }
+ic-custom-domains-canister-client = { version = "0.1", path = "./canister_client" }
 ic-http-types = "0.1.0"
 ic-stable-structures = "0.7.0"
 mockall = "0.13.1"
@@ -85,10 +89,10 @@ fqdn = { workspace = true }
 hex = { workspace = true }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
-ic-custom-domains-backend = { path = "./backend" }
-ic-custom-domains-base = { path = "./base" }
-ic-custom-domains-canister-api = { path = "./canister/api" }
-ic-custom-domains-canister-client = { path = "./canister_client" }
+ic-custom-domains-backend = { workspace = true }
+ic-custom-domains-base = { workspace = true }
+ic-custom-domains-canister-api = { workspace = true }
+ic-custom-domains-canister-client = { workspace = true }
 pem = { workspace = true }
 pocket-ic = { workspace = true }
 prometheus = { workspace = true }

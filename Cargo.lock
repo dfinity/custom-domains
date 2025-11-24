@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "custom-domains"
-version = "0.0.0-git"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2177,7 +2177,7 @@ dependencies = [
 
 [[package]]
 name = "ic-custom-domains-backend"
-version = "0.0.0-git"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2210,7 +2210,7 @@ dependencies = [
 
 [[package]]
 name = "ic-custom-domains-base"
-version = "0.0.0-git"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2242,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "ic-custom-domains-canister"
-version = "0.0.0-git"
+version = "0.1.0"
 dependencies = [
  "candid",
  "candid_parser",
@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "ic-custom-domains-canister-api"
-version = "0.0.0-git"
+version = "0.1.0"
 dependencies = [
  "candid",
  "derive-new",
@@ -2271,7 +2271,7 @@ dependencies = [
 
 [[package]]
 name = "ic-custom-domains-canister-client"
-version = "0.0.0-git"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
