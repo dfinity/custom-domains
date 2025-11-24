@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use candid::{Decode, Encode, Principal};
-use canister_api::{
+use ic_custom_domains_canister_api::{
     DomainStatus, HasNextTaskError, HasNextTaskResult, IssueCertificateOutput, RegistrationStatus,
     ScheduledTask, SubmitTaskError, TaskFailReason, TaskKind, TaskOutcome, TaskOutput, TaskResult,
     CERTIFICATE_VALIDITY_FRACTION, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
@@ -411,7 +411,7 @@ async fn submit_successful_task_result(
 
 async fn simulate_task_timeout_and_rescheduling(
     env: &TestEnv,
-    task: &canister_api::ScheduledTask,
+    task: &ic_custom_domains_canister_api::ScheduledTask,
     canister_id: Principal,
 ) -> anyhow::Result<ScheduledTask> {
     assert_has_no_next_task(env).await?;
@@ -505,7 +505,7 @@ async fn simulate_retries_after_generic_failures(
 }
 
 fn create_failure_task_result(
-    task: &canister_api::ScheduledTask,
+    task: &ic_custom_domains_canister_api::ScheduledTask,
     failure_reason: TaskFailReason,
 ) -> TaskResult {
     TaskResult {

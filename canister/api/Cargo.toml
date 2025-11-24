@@ -1,5 +1,5 @@
 [package]
-name = "canister-api"
+name = "ic-custom-domains-canister-api"
 version.workspace = true
 edition.workspace = true
 

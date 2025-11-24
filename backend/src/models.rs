@@ -1,4 +1,4 @@
-use base::{
+use ic_custom_domains_base::{
     traits::{repository::RepositoryError, validation::ValidationError},
     types::domain::RegistrationStatus,
 };

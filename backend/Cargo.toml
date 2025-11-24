@@ -1,5 +1,5 @@
 [package]
-name = "backend"
+name = "ic-custom-domains-backend"
 version.workspace = true
 edition.workspace = true
 
@@ -11,16 +11,16 @@ anyhow = { workspace = true }
 axum = { workspace = true }
 axum-server = { workspace = true }
 axum-extra = { workspace = true }
-base = { path = "../base" }
 base64 = { workspace = true }
 candid = { workspace = true }
-canister-client = { path = "../canister_client" }
 chacha20poly1305 = { workspace = true }
 clap = { workspace = true }
 derive-new = { workspace = true }
 fqdn = { workspace = true, features = ["punycode"] }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
+ic-custom-domains-base = { path = "../base" }
+ic-custom-domains-canister-client = { path = "../canister_client" }
 prometheus = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

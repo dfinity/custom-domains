@@ -1,20 +1,20 @@
-use canister_api::{
-    FetchTaskError, FetchTaskResult, GetDomainEntryError, GetDomainEntryResult,
-    GetDomainStatusError, GetDomainStatusResult, GetLastChangeTimeError, GetLastChangeTimeResult,
-    HasNextTaskError, HasNextTaskResult, InitArg, InputTask, ListCertificatesPageError,
-    ListCertificatesPageInput, ListCertificatesPageResult, SubmitTaskError, SubmitTaskResult,
-    TaskResult, TryAddTaskError, TryAddTaskResult, STALE_DOMAINS_CLEANUP_INTERVAL,
-};
 use ic_cdk::{
     api::{call::accept_message, time},
     caller, init, inspect_message, post_upgrade, query, trap, update,
 };
 use ic_cdk_timers::set_timer_interval;
+use ic_custom_domains_canister_api::{
+    FetchTaskError, FetchTaskResult, GetDomainEntryError, GetDomainEntryResult,
+    GetDomainStatusError, GetDomainStatusResult, GetLastChangeTimeError, GetLastChangeTimeResult,
+    HasNextTaskError, HasNextTaskResult, InitArg, InputTask, ListCertificatesPageError,
+    ListCertificatesPageInput, ListCertificatesPageResult, STALE_DOMAINS_CLEANUP_INTERVAL,
+    SubmitTaskError, SubmitTaskResult, TaskResult, TryAddTaskError, TryAddTaskResult,
+};
 use ic_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 
 use crate::{
-    metrics::{export_metrics_as_http_response, METRICS},
-    state::{with_state, with_state_mut, UtcTimestamp},
+    metrics::{METRICS, export_metrics_as_http_response},
+    state::{UtcTimestamp, with_state, with_state_mut},
     storage::AUTHORIZED_PRINCIPAL,
 };
 
@@ -25,11 +25,12 @@ pub mod storage;
 // Inspect ingress messages in the pre-consensus phase and reject early, if the caller is unauthorized
 #[inspect_message]
 fn inspect_message() {
-    if let Some(authorized_principal) = AUTHORIZED_PRINCIPAL.with(|p| *p.borrow()) {
-        if authorized_principal != caller() {
-            trap("message_inspection_failed: unauthorized call");
-        }
+    if let Some(authorized_principal) = AUTHORIZED_PRINCIPAL.with(|p| *p.borrow())
+        && authorized_principal != caller()
+    {
+        trap("message_inspection_failed: unauthorized call");
     }
+
     accept_message()
 }
 
@@ -38,11 +39,12 @@ pub fn get_time_secs() -> UtcTimestamp {
 }
 
 fn validate_caller<T>(unauthorized_error: T) -> Result<(), T> {
-    if let Some(authorized_principal) = AUTHORIZED_PRINCIPAL.with(|p| *p.borrow()) {
-        if authorized_principal != caller() {
-            return Err(unauthorized_error);
-        }
+    if let Some(authorized_principal) = AUTHORIZED_PRINCIPAL.with(|p| *p.borrow())
+        && authorized_principal != caller()
+    {
+        return Err(unauthorized_error);
     }
+
     Ok(())
 }
 
@@ -135,7 +137,7 @@ fn http_request(request: HttpRequest) -> HttpResponse {
 mod tests {
     use std::{env, fs::read_to_string, path::PathBuf};
 
-    use candid_parser::utils::{service_equal, CandidSource};
+    use candid_parser::utils::{CandidSource, service_equal};
 
     use super::*;
 

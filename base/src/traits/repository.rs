@@ -1,13 +1,13 @@
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use canister_api::{
+use fqdn::FQDN;
+use ic_custom_domains_canister_api::{
     FetchTaskError as ApiFetchTaskError, GetDomainStatusError as ApiGetDomainStatusError,
     GetLastChangeTimeError as ApiGetLastChangeTimeError, HasNextTaskError as ApiHasNextTaskError,
     ListCertificatesPageError as ApiListCertificatesPageError,
     SubmitTaskError as ApiSubmitTaskError, TryAddTaskError as ApiTryAddTaskError,
 };
-use fqdn::FQDN;
 use mockall::automock;
 use strum::IntoStaticStr;
 use thiserror::Error;

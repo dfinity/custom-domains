@@ -1,5 +1,5 @@
 [package]
-name = "canister"
+name = "ic-custom-domains-canister"
 version.workspace = true
 edition.workspace = true
 
@@ -8,10 +8,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 candid = { workspace = true }
-canister-api = { path = "../api" }
 fqdn = { workspace = true }
 ic-cdk = { workspace = true }
 ic-cdk-timers = { workspace = true }
+ic-custom-domains-canister-api = { path = "../api" }
 ic-http-types = { workspace = true }
 ic-stable-structures = { workspace = true }
 prometheus = { workspace = true }

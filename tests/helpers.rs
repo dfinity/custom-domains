@@ -2,12 +2,12 @@ use std::{fs, path::PathBuf, sync::Once};
 
 use anyhow::anyhow;
 use candid::{Decode, Encode};
-use canister_api::{
+use hex::encode;
+use ic_bn_lib::ic_agent::export::Principal;
+use ic_custom_domains_canister_api::{
     FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult, HasNextTaskResult, InitArg,
     InputTask, SubmitTaskResult, TaskKind, TaskResult, TryAddTaskResult,
 };
-use hex::encode;
-use ic_bn_lib::ic_agent::export::Principal;
 use pocket_ic::{nonblocking::PocketIc, PocketIcBuilder};
 use tracing::info;
 

@@ -361,39 +361,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "backend"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "axum-extra",
- "axum-server",
- "base",
- "base64 0.22.1",
- "candid",
- "canister-client",
- "chacha20poly1305",
- "clap",
- "derive-new",
- "fqdn",
- "ic-bn-lib",
- "ic-bn-lib-common",
- "prometheus",
- "serde",
- "serde_json",
- "strum 0.27.2",
- "thiserror 2.0.17",
- "tokio",
- "tokio-util",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "utoipa",
- "utoipa-swagger-ui",
-]
-
-[[package]]
 name = "backoff"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -402,38 +369,6 @@ dependencies = [
  "getrandom 0.2.16",
  "instant",
  "rand 0.8.5",
-]
-
-[[package]]
-name = "base"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "candid",
- "canister-api",
- "chacha20poly1305",
- "chrono",
- "clap",
- "derive-new",
- "fqdn",
- "hickory-resolver",
- "humantime",
- "ic-bn-lib",
- "ic-bn-lib-common",
- "mockall",
- "pem 3.0.6",
- "prometheus",
- "rcgen",
- "serde",
- "strum 0.27.2",
- "thiserror 2.0.17",
- "tokio",
- "tokio-util",
- "tracing",
- "utoipa",
- "x509-parser",
 ]
 
 [[package]]
@@ -641,54 +576,6 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "toml",
-]
-
-[[package]]
-name = "canister"
-version = "0.1.0"
-dependencies = [
- "candid",
- "candid_parser",
- "canister-api",
- "fqdn",
- "ic-cdk",
- "ic-cdk-timers",
- "ic-http-types",
- "ic-stable-structures",
- "prometheus",
- "serde",
- "serde_cbor",
- "strum 0.27.2",
-]
-
-[[package]]
-name = "canister-api"
-version = "0.1.0"
-dependencies = [
- "candid",
- "derive-new",
- "serde",
- "strum 0.27.2",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "canister-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "async-trait",
- "base",
- "candid",
- "canister-api",
- "derive-new",
- "fqdn",
- "ic-bn-lib",
- "ic-bn-lib-common",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -1026,22 +913,22 @@ dependencies = [
 
 [[package]]
 name = "custom-domains"
-version = "0.1.0"
+version = "0.0.0-git"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
  "axum-server",
- "backend",
- "base",
  "candid",
- "canister-api",
- "canister-client",
  "chacha20poly1305",
  "fqdn",
  "hex",
  "ic-bn-lib",
  "ic-bn-lib-common",
+ "ic-custom-domains-backend",
+ "ic-custom-domains-base",
+ "ic-custom-domains-canister-api",
+ "ic-custom-domains-canister-client",
  "pem 3.0.6",
  "pocket-ic",
  "prometheus",
@@ -2286,6 +2173,119 @@ dependencies = [
  "serde",
  "serde_bytes",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "ic-custom-domains-backend"
+version = "0.0.0-git"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-extra",
+ "axum-server",
+ "base64 0.22.1",
+ "candid",
+ "chacha20poly1305",
+ "clap",
+ "derive-new",
+ "fqdn",
+ "ic-bn-lib",
+ "ic-bn-lib-common",
+ "ic-custom-domains-base",
+ "ic-custom-domains-canister-client",
+ "prometheus",
+ "serde",
+ "serde_json",
+ "strum 0.27.2",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-swagger-ui",
+]
+
+[[package]]
+name = "ic-custom-domains-base"
+version = "0.0.0-git"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "candid",
+ "chacha20poly1305",
+ "chrono",
+ "clap",
+ "derive-new",
+ "fqdn",
+ "hickory-resolver",
+ "humantime",
+ "ic-bn-lib",
+ "ic-bn-lib-common",
+ "ic-custom-domains-canister-api",
+ "mockall",
+ "pem 3.0.6",
+ "prometheus",
+ "rcgen",
+ "serde",
+ "strum 0.27.2",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "utoipa",
+ "x509-parser",
+]
+
+[[package]]
+name = "ic-custom-domains-canister"
+version = "0.0.0-git"
+dependencies = [
+ "candid",
+ "candid_parser",
+ "fqdn",
+ "ic-cdk",
+ "ic-cdk-timers",
+ "ic-custom-domains-canister-api",
+ "ic-http-types",
+ "ic-stable-structures",
+ "prometheus",
+ "serde",
+ "serde_cbor",
+ "strum 0.27.2",
+]
+
+[[package]]
+name = "ic-custom-domains-canister-api"
+version = "0.0.0-git"
+dependencies = [
+ "candid",
+ "derive-new",
+ "serde",
+ "strum 0.27.2",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "ic-custom-domains-canister-client"
+version = "0.0.0-git"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "candid",
+ "derive-new",
+ "fqdn",
+ "ic-bn-lib",
+ "ic-bn-lib-common",
+ "ic-custom-domains-base",
+ "ic-custom-domains-canister-api",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

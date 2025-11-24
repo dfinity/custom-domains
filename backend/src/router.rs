@@ -7,8 +7,8 @@ use axum::{
     Router,
 };
 use axum_extra::middleware::option_layer;
-use base::traits::{repository::Repository, validation::ValidatesDomains};
 use ic_bn_lib::{http::middleware::rate_limiter::layer_by_ip, reqwest::StatusCode};
+use ic_custom_domains_base::traits::{repository::Repository, validation::ValidatesDomains};
 use prometheus::Registry;
 use tower_http::{
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -114,7 +114,7 @@ pub fn create_router(
 
 #[cfg(test)]
 mod tests {
-    use base::{
+    use ic_custom_domains_base::{
         traits::{
             repository::{MockRepository, RepositoryError},
             validation::{MockValidatesDomains, ValidationError},

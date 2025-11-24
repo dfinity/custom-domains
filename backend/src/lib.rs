@@ -14,7 +14,6 @@ use std::{
 use anyhow::{anyhow, Context};
 use axum::Router;
 use base64::{prelude::BASE64_STANDARD, Engine};
-use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::Key;
 use ic_bn_lib::{
     ic_agent::{identity::Secp256k1Identity, Agent},
@@ -22,10 +21,7 @@ use ic_bn_lib::{
     tls::acme::instant_acme::AccountCredentials,
 };
 use ic_bn_lib_common::types::dns::Options as DnsOptions;
-use prometheus::Registry;
-use tokio::fs;
-
-use base::{
+use ic_custom_domains_base::{
     cli::CustomDomainsCli,
     types::{
         acme::AcmeClientConfig,
@@ -34,6 +30,9 @@ use base::{
         worker::{Worker, WorkerConfig, WorkerMetrics},
     },
 };
+use ic_custom_domains_canister_client::canister_client::CanisterClient;
+use prometheus::Registry;
+use tokio::fs;
 use tokio_util::sync::CancellationToken;
 
 use crate::router::{create_router, RateLimitConfig};

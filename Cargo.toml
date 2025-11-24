@@ -23,8 +23,8 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
-edition = "2021"
+version = "0.0.0-git"
+edition = "2024"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
@@ -79,16 +79,16 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 axum-server = { workspace = true }
-backend = { path = "./backend" }
-base = { path = "./base" }
 candid = { workspace = true }
-canister-api = { path = "./canister/api" }
-canister-client = { path = "./canister_client" }
 chacha20poly1305 = { workspace = true }
 fqdn = { workspace = true }
 hex = { workspace = true }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
+ic-custom-domains-backend = { path = "./backend" }
+ic-custom-domains-base = { path = "./base" }
+ic-custom-domains-canister-api = { path = "./canister/api" }
+ic-custom-domains-canister-client = { path = "./canister_client" }
 pem = { workspace = true }
 pocket-ic = { workspace = true }
 prometheus = { workspace = true }
