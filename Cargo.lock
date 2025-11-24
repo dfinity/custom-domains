@@ -912,37 +912,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "custom-domains"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "axum-server",
- "candid",
- "chacha20poly1305",
- "fqdn",
- "hex",
- "ic-bn-lib",
- "ic-bn-lib-common",
- "ic-custom-domains-backend",
- "ic-custom-domains-base",
- "ic-custom-domains-canister-api",
- "ic-custom-domains-canister-client",
- "pem 3.0.6",
- "pocket-ic",
- "prometheus",
- "rcgen",
- "serde_json",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "x509-parser",
-]
-
-[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2173,6 +2142,37 @@ dependencies = [
  "serde",
  "serde_bytes",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "ic-custom-domains"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-server",
+ "candid",
+ "chacha20poly1305",
+ "fqdn",
+ "hex",
+ "ic-bn-lib",
+ "ic-bn-lib-common",
+ "ic-custom-domains-backend",
+ "ic-custom-domains-base",
+ "ic-custom-domains-canister-api",
+ "ic-custom-domains-canister-client",
+ "pem 3.0.6",
+ "pocket-ic",
+ "prometheus",
+ "rcgen",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "x509-parser",
 ]
 
 [[package]]

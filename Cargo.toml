@@ -1,7 +1,11 @@
 [package]
-name = "custom-domains"
+name = "ic-custom-domains"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license-file.workspace = true
 
 resolver = "2"
 
