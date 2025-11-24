@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf, sync::Once};
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use candid::{Decode, Encode};
 use hex::encode;
 use ic_bn_lib::ic_agent::export::Principal;
@@ -8,7 +8,7 @@ use ic_custom_domains_canister_api::{
     FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult, HasNextTaskResult, InitArg,
     InputTask, SubmitTaskResult, TaskKind, TaskResult, TryAddTaskResult,
 };
-use pocket_ic::{nonblocking::PocketIc, PocketIcBuilder};
+use pocket_ic::{PocketIcBuilder, nonblocking::PocketIc};
 use tracing::info;
 
 static INIT_LOGGING: Once = Once::new();
@@ -47,11 +47,13 @@ impl TestEnv {
         let wasm_path =
             std::env::var("CANISTER_WASM_PATH").expect("CANISTER_WASM_PATH env var not set");
 
-        let wasm = fs::read(PathBuf::from(wasm_path))?;
+        let wasm = fs::read(PathBuf::from(wasm_path)).context("unable to load WASM")?;
 
         let controller = Principal::from_text("2vxsx-fae")?;
 
-        let canister_id = install_canister(&pic, controller, authorized_principal, wasm).await?;
+        let canister_id = install_canister(&pic, controller, authorized_principal, wasm)
+            .await
+            .context("unable to install canister")?;
 
         Ok(Self {
             pic,

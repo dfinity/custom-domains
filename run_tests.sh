@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -eEuo pipefail
 
-readonly POCKETIC_VERSION="9.0.1"
+readonly POCKETIC_VERSION="9.0.3"
 readonly POCKETIC_URL="https://github.com/dfinity/pocketic/releases/download/${POCKETIC_VERSION}/pocket-ic-x86_64-linux.gz"
-readonly POCKETIC_CHECKSUM="237272216498074e5250a0685813b96632963ff9abbc51a7030d9b625985028d"
+readonly POCKETIC_CHECKSUM="cbf40823baa872cecaa43e3d9990ed22d26e06942e46d09f59057e8e12b52f8e"
 readonly WORKDIR="$(pwd)"
 export POCKET_IC_BIN="${WORKDIR}/pocket-ic"
 export CARGO_TARGET_DIR="${WORKDIR}/target"
-readonly CANISTER_DIR="${WORKDIR}/canister/canister_backend"
-export CANISTER_WASM_PATH="${CARGO_TARGET_DIR}/wasm32-unknown-unknown/release/canister.wasm"
+export CANISTER_WASM_PATH="${CARGO_TARGET_DIR}/wasm32-unknown-unknown/release/ic_custom_domains_canister.wasm"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >&2; }
 
@@ -27,8 +26,7 @@ chmod +x "${POCKET_IC_BIN}" || { log "Failed to make PocketIC executable"; exit 
 log "PocketIC setup completed"
 
 log "Building the canister wasm"
-cd "${CANISTER_DIR}"
-cargo build --target wasm32-unknown-unknown --release || { log "Failed to build the canister wasm"; exit 1; }
+cargo build --package ic-custom-domains-canister --target wasm32-unknown-unknown --release || { log "Failed to build the canister wasm"; exit 1; }
 log "Canister wasm built successfully at ${CANISTER_WASM_PATH}"
 
 log "Running unit tests using all features enabled"
