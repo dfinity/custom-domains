@@ -25,6 +25,10 @@ default-members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
+description = "Internet Computer Custom Domains feature crates"
+homepage = "https://internetcomputer.org/"
+repository = "https://github.com/dfinity/custom-domains"
 
 [workspace.dependencies]
 anyhow = "1.0.98"

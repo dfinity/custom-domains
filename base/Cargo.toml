@@ -2,6 +2,12 @@
 name = "ic-custom-domains-base"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license-file.workspace = true
+
+documentation = "https://docs.rs/ic-custom-domains-base"
 
 [features]
 openapi = ["utoipa"]
