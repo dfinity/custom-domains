@@ -44,12 +44,12 @@ fqdn = "0.4.6"
 hex = "0.4.3"
 hickory-resolver = "0.25"
 humantime = "2.2.0"
-ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", rev = "ec9963d0d425b353c32e612ab56974d269487230", features = [
+ic-bn-lib = { version = "0.1", features = [
     "acme-dns",
     "cert-providers",
     "custom-domains",
 ] }
-ic-bn-lib-common = { git = "https://github.com/dfinity/ic-bn-lib", rev = "2ab3e0998b7ffddc7a01bb8fca688fed2fbe0afc" }
+ic-bn-lib-common = "0.1"
 ic-cdk = "0.17"
 ic-cdk-timers = "0.11"
 ic-http-types = "0.1.0"
