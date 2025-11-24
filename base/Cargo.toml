@@ -1,7 +1,13 @@
 [package]
-name = "base"
+name = "ic-custom-domains-base"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license-file.workspace = true
+
+documentation = "https://docs.rs/ic-custom-domains-base"
 
 [features]
 openapi = ["utoipa"]
@@ -11,7 +17,6 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 candid = { workspace = true }
-canister-api = { path = "../canister/api" }
 chacha20poly1305 = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
@@ -21,6 +26,7 @@ hickory-resolver = { workspace = true }
 humantime = { workspace = true }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
+ic-custom-domains-canister-api = { workspace = true }
 mockall = { workspace = true }
 pem = { workspace = true }
 prometheus = { workspace = true }

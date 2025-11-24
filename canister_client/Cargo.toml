@@ -1,19 +1,25 @@
 [package]
-name = "canister-client"
+name = "ic-custom-domains-canister-client"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license-file.workspace = true
+
+documentation = "https://docs.rs/ic-custom-domains-canister-client"
 
 [dependencies]
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
-base = { path = "../base" }
 candid = { workspace = true }
-canister-api = { path = "../canister/api" }
 derive-new = { workspace = true }
 fqdn = { workspace = true }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
+ic-custom-domains-base = { workspace = true }
+ic-custom-domains-canister-api = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

@@ -3,18 +3,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
-use backend::router::{create_router, RateLimitConfig};
-use base::traits::repository::Repository;
-use base::types::domain::RegistrationStatus;
-use base::{
-    traits::validation::{ValidatesDomains, ValidationError},
-    types::{
-        cipher::CertificateCipher,
-        worker::{Worker, WorkerConfig, WorkerMetrics},
-    },
-};
 use candid::Principal;
-use canister_client::canister_client::CanisterClient;
 use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
 use fqdn::FQDN;
 use ic_bn_lib::{
@@ -27,6 +16,19 @@ use ic_bn_lib_common::{
     traits::acme::{AcmeCertificateClient, TokenManager},
     types::acme::AcmeUrl,
 };
+use ic_custom_domains_backend::router::{create_router, RateLimitConfig};
+use ic_custom_domains_base::{
+    traits::{
+        repository::Repository,
+        validation::{ValidatesDomains, ValidationError},
+    },
+    types::{
+        cipher::CertificateCipher,
+        domain::RegistrationStatus,
+        worker::{Worker, WorkerConfig, WorkerMetrics},
+    },
+};
+use ic_custom_domains_canister_client::canister_client::CanisterClient;
 use pem::parse_many;
 use prometheus::Registry;
 use tokio::{spawn, time::sleep};

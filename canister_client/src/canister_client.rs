@@ -15,7 +15,15 @@ use std::{
 use anyhow::{anyhow, Context};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use base::{
+use candid::{CandidType, Decode, Deserialize, Encode, Principal};
+use derive_new::new;
+use fqdn::FQDN;
+use ic_bn_lib::ic_agent::Agent;
+use ic_bn_lib_common::{
+    traits::{custom_domains::ProvidesCustomDomains, tls::ProvidesCertificates, Run},
+    types::{tls::Pem, CustomDomain},
+};
+use ic_custom_domains_base::{
     traits::{
         cipher::CiphersCertificates,
         repository::{Repository, RepositoryError},
@@ -26,19 +34,11 @@ use base::{
         task::{InputTask, ScheduledTask, TaskOutcome, TaskOutput, TaskResult},
     },
 };
-use candid::{CandidType, Decode, Deserialize, Encode, Principal};
-use canister_api::{
+use ic_custom_domains_canister_api::{
     CertificatesPage, DomainStatus as DomainStatusApi, FetchTaskError, GetDomainStatusError,
     GetLastChangeTimeError, HasNextTaskError, InputTask as InputTaskApi, ListCertificatesPageError,
     ListCertificatesPageInput, ScheduledTask as ScheduledTaskApi, SubmitTaskError,
     TaskResult as TaskResultApi,
-};
-use derive_new::new;
-use fqdn::FQDN;
-use ic_bn_lib::ic_agent::Agent;
-use ic_bn_lib_common::{
-    traits::{custom_domains::ProvidesCustomDomains, tls::ProvidesCertificates, Run},
-    types::{tls::Pem, CustomDomain},
 };
 use tokio::{
     select,
@@ -311,7 +311,7 @@ impl Repository for CanisterClient {
 
     async fn try_add_task(&self, input_task: InputTask) -> Result<(), RepositoryError> {
         let response = self
-            .update::<InputTaskApi, (), canister_api::TryAddTaskError>(
+            .update::<InputTaskApi, (), ic_custom_domains_canister_api::TryAddTaskError>(
                 "try_add_task",
                 &InputTaskApi::from(input_task),
             )

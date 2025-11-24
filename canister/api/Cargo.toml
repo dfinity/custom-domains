@@ -1,7 +1,13 @@
 [package]
-name = "canister-api"
+name = "ic-custom-domains-canister-api"
 version.workspace = true
 edition.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license-file.workspace = true
+
+documentation = "https://docs.rs/ic-custom-domains-canister-api"
 
 [dependencies]
 candid = { workspace = true }

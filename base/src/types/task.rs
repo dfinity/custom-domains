@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use candid::Principal;
-use canister_api::{
+use derive_new::new;
+use fqdn::FQDN;
+use ic_custom_domains_canister_api::{
     InputTask as ApiInputTask, IssueCertificateOutput as ApiIssueCertificateOutput,
     TaskFailReason as ApiTaskFailReason, TaskKind as ApiTaskKind, TaskOutcome as ApiTaskOutcome,
     TaskOutput as ApiTaskOutput, TaskResult as ApiTaskResult,
 };
-use derive_new::new;
-use fqdn::FQDN;
 use strum::{AsRefStr, Display, IntoStaticStr};
 
 use crate::traits::time::UtcTimestamp;

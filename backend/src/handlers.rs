@@ -1,4 +1,4 @@
-use base::types::task::TaskKind;
+use ic_custom_domains_base::types::task::TaskKind;
 
 use crate::{
     backend_service::BackendService,

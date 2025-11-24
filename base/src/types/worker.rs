@@ -1,12 +1,12 @@
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use async_trait::async_trait;
 use candid::Principal;
 use chrono::{DateTime, Utc};
@@ -17,20 +17,20 @@ use ic_bn_lib::{
     tls::acme::instant_acme::{RevocationReason, RevocationRequest},
 };
 use ic_bn_lib_common::{
-    traits::{acme::AcmeCertificateClient, Run},
+    traits::{Run, acme::AcmeCertificateClient},
     types::acme::Error as AcmeError,
 };
 use pem::parse_many;
 use prometheus::{
-    register_gauge_vec_with_registry, register_histogram_vec_with_registry,
-    register_int_counter_vec_with_registry, GaugeVec, HistogramVec, IntCounterVec, Registry,
+    GaugeVec, HistogramVec, IntCounterVec, Registry, register_gauge_vec_with_registry,
+    register_histogram_vec_with_registry, register_int_counter_vec_with_registry,
 };
 use tokio::{
     select,
     time::{self, sleep},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{debug, error, info, instrument, warn, Span};
+use tracing::{Span, debug, error, info, instrument, warn};
 use x509_parser::{parse_x509_certificate, prelude::GeneralName};
 
 use crate::{
@@ -310,7 +310,7 @@ impl Worker {
                 )
             }
 
-            TaskOutcome::Failure(ref err) => {
+            TaskOutcome::Failure(err) => {
                 error!(
                     duration = task_result.duration.as_secs(),
                     error = ?err,

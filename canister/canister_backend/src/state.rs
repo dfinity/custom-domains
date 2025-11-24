@@ -1,16 +1,16 @@
 use candid::Principal;
-use canister_api::{
-    CertificatesPage, DomainStatus, FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult,
+use ic_custom_domains_canister_api::{
+    CERT_EXPIRATION_ALERT_THRESHOLD, CERTIFICATE_VALIDITY_FRACTION, CertificatesPage,
+    DEFAULT_PAGE_LIMIT, DomainStatus, FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult,
     GetLastChangeTimeResult, HasNextTaskResult, InputTask, ListCertificatesPageInput,
-    ListCertificatesPageResult, RegisteredDomain, RegistrationStatus, ScheduledTask,
-    SubmitTaskError, SubmitTaskResult, TaskFailReason, TaskKind, TaskOutcome, TaskOutput,
-    TaskResult, TryAddTaskError, TryAddTaskResult, CERTIFICATE_VALIDITY_FRACTION,
-    CERT_EXPIRATION_ALERT_THRESHOLD, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MAX_TASK_FAILURES,
-    MIN_TASK_RETRY_DELAY, TASK_TIMEOUT, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
+    ListCertificatesPageResult, MAX_PAGE_LIMIT, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
+    RegisteredDomain, RegistrationStatus, ScheduledTask, SubmitTaskError, SubmitTaskResult,
+    TASK_TIMEOUT, TaskFailReason, TaskKind, TaskOutcome, TaskOutput, TaskResult, TryAddTaskError,
+    TryAddTaskResult, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
 };
 use ic_stable_structures::{
-    memory_manager::VirtualMemory, storable::Bound, DefaultMemoryImpl, StableBTreeMap, StableCell,
-    Storable,
+    DefaultMemoryImpl, StableBTreeMap, StableCell, Storable, memory_manager::VirtualMemory,
+    storable::Bound,
 };
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
@@ -224,11 +224,11 @@ impl CanisterState {
                 }
 
                 // Keep track of the oldest task
-                if let Some(task_created_at) = domain_entry.task_created_at {
-                    if task_created_at < oldest_task_created_at {
-                        oldest_task_created_at = task_created_at;
-                        oldest_candidate_task = Some((domain.clone(), domain_entry.clone()));
-                    }
+                if let Some(task_created_at) = domain_entry.task_created_at
+                    && task_created_at < oldest_task_created_at
+                {
+                    oldest_task_created_at = task_created_at;
+                    oldest_candidate_task = Some((domain.clone(), domain_entry.clone()));
                 }
             }
         }
@@ -284,16 +284,13 @@ impl CanisterState {
             }
 
             // Check if the domain is nearing expiration
-            if let Some(not_after) = entry.not_after {
-                if let Some(not_before) = entry.not_before {
-                    let validity_interval = not_after.saturating_sub(not_before);
-                    let remaining_validity = not_after.saturating_sub(now);
-                    if validity_interval != 0 {
-                        let remaining_percentage =
-                            remaining_validity as f64 / validity_interval as f64;
-                        if remaining_percentage < CERT_EXPIRATION_ALERT_THRESHOLD {
-                            domains_nearing_expiration += 1;
-                        }
+            if let (Some(not_after), Some(not_before)) = (entry.not_after, entry.not_before) {
+                let validity_interval = not_after.saturating_sub(not_before);
+                let remaining_validity = not_after.saturating_sub(now);
+                if validity_interval != 0 {
+                    let remaining_percentage = remaining_validity as f64 / validity_interval as f64;
+                    if remaining_percentage < CERT_EXPIRATION_ALERT_THRESHOLD {
+                        domains_nearing_expiration += 1;
                     }
                 }
             }
@@ -454,13 +451,13 @@ impl CanisterState {
                 .with_label_values(&[SUBMIT_TASK_RESULT_FUNC, status, task_kind, error])
                 .inc();
 
-            if result.is_ok() {
-                if let TaskOutcome::Failure(error) = task_result.outcome {
-                    metrics
-                        .task_failures
-                        .with_label_values(&[task_kind, error.into()])
-                        .inc();
-                }
+            if result.is_ok()
+                && let TaskOutcome::Failure(error) = task_result.outcome
+            {
+                metrics
+                    .task_failures
+                    .with_label_values(&[task_kind, error.into()])
+                    .inc();
             }
         });
 
@@ -689,10 +686,9 @@ fn next_pending_task(entry: &DomainEntry, now: UtcTimestamp) -> Option<TaskKind>
         entry.enc_cert.as_ref(),
         entry.not_before,
         entry.not_after,
-    ) {
-        if renewal_needed(not_before, not_after, now) {
-            return Some(TaskKind::Renew);
-        }
+    ) && renewal_needed(not_before, not_after, now)
+    {
+        return Some(TaskKind::Renew);
     }
 
     None
@@ -755,9 +751,9 @@ pub fn with_state_mut<R>(f: impl FnOnce(&mut CanisterState) -> R) -> R {
     STATE.with(|s| f(&mut s.borrow_mut()))
 }
 
-impl From<DomainEntry> for canister_api::DomainEntry {
+impl From<DomainEntry> for ic_custom_domains_canister_api::DomainEntry {
     fn from(entry: DomainEntry) -> Self {
-        canister_api::DomainEntry {
+        ic_custom_domains_canister_api::DomainEntry {
             task: entry.task,
             last_fail_time: entry.last_fail_time,
             last_failure_reason: entry.last_failure_reason.clone(),
@@ -779,7 +775,7 @@ impl From<DomainEntry> for canister_api::DomainEntry {
 mod tests {
     use super::*;
     use candid::Principal;
-    use canister_api::IssueCertificateOutput;
+    use ic_custom_domains_canister_api::IssueCertificateOutput;
     use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 
     fn create_test_empty_state() -> CanisterState {
@@ -1486,16 +1482,16 @@ mod tests {
 
         // Act + Assert: fetch tasks one by one, the older comes first
         let task = state.fetch_next_task(now).unwrap();
-        let expected_task = Some(canister_api::ScheduledTask::new(
-            canister_api::TaskKind::Issue,
+        let expected_task = Some(ic_custom_domains_canister_api::ScheduledTask::new(
+            ic_custom_domains_canister_api::TaskKind::Issue,
             "task1.com".to_string(),
             now,
             None,
         ));
         assert_eq!(task, expected_task);
         let task = state.fetch_next_task(now).unwrap();
-        let expected_task = Some(canister_api::ScheduledTask::new(
-            canister_api::TaskKind::Issue,
+        let expected_task = Some(ic_custom_domains_canister_api::ScheduledTask::new(
+            ic_custom_domains_canister_api::TaskKind::Issue,
             "task2.com".to_string(),
             now,
             None,
@@ -1522,8 +1518,8 @@ mod tests {
         let result = state.fetch_next_task(now - 4000).unwrap();
         assert!(result.is_none(), "No renewal needed yet");
         let result = state.fetch_next_task(now - 3000).unwrap();
-        let expected_task = Some(canister_api::ScheduledTask::new(
-            canister_api::TaskKind::Renew,
+        let expected_task = Some(ic_custom_domains_canister_api::ScheduledTask::new(
+            ic_custom_domains_canister_api::TaskKind::Renew,
             "renewal.com".to_string(),
             now - 3000,
             Some(b"cert_data".to_vec()),
