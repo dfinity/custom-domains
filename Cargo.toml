@@ -5,7 +5,7 @@ edition.workspace = true
 description.workspace = true
 homepage.workspace = true
 repository.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 resolver = "2"
 
@@ -29,7 +29,7 @@ default-members = [
 [workspace.package]
 version = "0.0.0-git"
 edition = "2024"
-license-file = "LICENSE"
+license = "Apache-2.0"
 description = "Internet Computer Custom Domains feature crates"
 homepage = "https://internetcomputer.org/"
 repository = "https://github.com/dfinity/custom-domains"
