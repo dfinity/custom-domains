@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -eEuo pipefail
 
-readonly POCKETIC_VERSION="9.0.3"
+readonly POCKETIC_VERSION="11.0.0"
 readonly POCKETIC_URL="https://github.com/dfinity/pocketic/releases/download/${POCKETIC_VERSION}/pocket-ic-x86_64-linux.gz"
-readonly POCKETIC_CHECKSUM="cbf40823baa872cecaa43e3d9990ed22d26e06942e46d09f59057e8e12b52f8e"
+readonly POCKETIC_CHECKSUM="c5ba1ae43fe59281bc68cde0d45442452ecb1d04aefdf3f320c94d6f08612db3"
 readonly WORKDIR="$(pwd)"
 export POCKET_IC_BIN="${WORKDIR}/pocket-ic"
 export CARGO_TARGET_DIR="${WORKDIR}/target"
