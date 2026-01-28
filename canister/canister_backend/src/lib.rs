@@ -14,7 +14,7 @@ use ic_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 
 use crate::{
     metrics::{METRICS, export_metrics_as_http_response},
-    state::{UtcTimestamp, with_state, with_state_mut},
+    state::{UtcTimestamp, export_expiring_domains_as_http_response, with_state, with_state_mut},
     storage::AUTHORIZED_PRINCIPAL,
 };
 
@@ -129,6 +129,7 @@ fn http_request(request: HttpRequest) -> HttpResponse {
     let now = get_time_secs();
     match request.path() {
         "/metrics" => export_metrics_as_http_response(now),
+        "/expired_domains" => export_expiring_domains_as_http_response(now),
         _ => HttpResponseBuilder::not_found().build(),
     }
 }
