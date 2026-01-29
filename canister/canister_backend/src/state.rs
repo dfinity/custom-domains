@@ -318,12 +318,8 @@ impl CanisterState {
         let mut result: Vec<String> = self
             .domains
             .iter()
-            .filter_map(|entry| {
-                entry
-                    .value()
-                    .is_nearing_expiration(now)
-                    .then(|| entry.key().clone())
-            })
+            .filter(|entry| entry.value().is_nearing_expiration(now))
+            .map(|entry| entry.key().clone())
             .collect();
 
         result.sort();
