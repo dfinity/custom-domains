@@ -8,6 +8,7 @@ use ic_custom_domains_canister_api::{
     TASK_TIMEOUT, TaskFailReason, TaskKind, TaskOutcome, TaskOutput, TaskResult, TryAddTaskError,
     TryAddTaskResult, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
 };
+use ic_http_types::{HttpResponse, HttpResponseBuilder};
 use ic_stable_structures::{
     DefaultMemoryImpl, StableBTreeMap, StableCell, Storable, memory_manager::VirtualMemory,
     storable::Bound,
@@ -147,6 +148,21 @@ impl DomainEntry {
 
         None
     }
+
+    /// Returns true if this entry's certificate is close to expire at time `now`,
+    /// i.e. remaining validity < CERT_EXPIRATION_ALERT_THRESHOLD of total validity.
+    /// Returns false if not_before or not_after is missing.
+    pub fn is_nearing_expiration(&self, now: UtcTimestamp) -> bool {
+        let Some((start, end)) = self.not_before.zip(self.not_after) else {
+            return false;
+        };
+
+        let total = end.saturating_sub(start);
+        let remaining = end.saturating_sub(now);
+
+        // Multiply the threshold to avoid division and zero-checks
+        (remaining as f64) < (total as f64 * CERT_EXPIRATION_ALERT_THRESHOLD)
+    }
 }
 
 impl Storable for DomainEntry {
@@ -283,16 +299,9 @@ impl CanisterState {
                     .or_insert(1);
             }
 
-            // Check if the domain is nearing expiration
-            if let (Some(not_after), Some(not_before)) = (entry.not_after, entry.not_before) {
-                let validity_interval = not_after.saturating_sub(not_before);
-                let remaining_validity = not_after.saturating_sub(now);
-                if validity_interval != 0 {
-                    let remaining_percentage = remaining_validity as f64 / validity_interval as f64;
-                    if remaining_percentage < CERT_EXPIRATION_ALERT_THRESHOLD {
-                        domains_nearing_expiration += 1;
-                    }
-                }
+            // Check how many domains are getting close to their certificate expiration
+            if entry.is_nearing_expiration(now) {
+                domains_nearing_expiration += 1;
             }
         }
 
@@ -301,6 +310,20 @@ impl CanisterState {
             tasks: task_statuses,
             domains_nearing_expiration,
         }
+    }
+
+    /// Returns the names of all domains whose certificate is close to expire
+    /// (remaining validity < CERT_EXPIRATION_ALERT_THRESHOLD of total validity).
+    pub fn domains_nearing_expiration(&self, now: UtcTimestamp) -> Vec<String> {
+        let mut result: Vec<String> = self
+            .domains
+            .iter()
+            .filter(|entry| entry.value().is_nearing_expiration(now))
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        result.sort();
+        result
     }
 
     pub fn get_domain_status(&self, domain: String, now: UtcTimestamp) -> GetDomainStatusResult {
@@ -751,6 +774,17 @@ pub fn with_state_mut<R>(f: impl FnOnce(&mut CanisterState) -> R) -> R {
     STATE.with(|s| f(&mut s.borrow_mut()))
 }
 
+/// Returns an HTTP response listing all domain names whose certificate is close to expire,
+/// one domain per line (text/plain).
+pub fn export_expiring_domains_as_http_response(now: UtcTimestamp) -> HttpResponse {
+    let body = with_state(|state| state.domains_nearing_expiration(now).join("\n")); // This returns a String
+
+    HttpResponseBuilder::ok()
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .with_body_and_content_length(body.into_bytes()) // Consumes String, no new allocation
+        .build()
+}
+
 impl From<DomainEntry> for ic_custom_domains_canister_api::DomainEntry {
     fn from(entry: DomainEntry) -> Self {
         ic_custom_domains_canister_api::DomainEntry {
@@ -859,6 +893,82 @@ mod tests {
         state.domains.insert("dfinity.org".to_string(), domain6);
 
         state
+    }
+
+    #[test]
+    fn test_is_nearing_expiration_cases() {
+        // threshold = 0.2
+        let cases = [
+            // (not_before, not_after, now, expected, "description")
+            (None, Some(2500), 2000, false, "missing before"),
+            (Some(1500), None, 2000, false, "missing after"),
+            (None, None, 2000, false, "missing both"),
+            (Some(1500), Some(2500), 2000, false, "far from expiry (50%)"),
+            (
+                Some(1500),
+                Some(2500),
+                2300,
+                false,
+                "exactly at threshold (20%)",
+            ),
+            (Some(1500), Some(2500), 2301, true, "just under threshold"),
+            (Some(1500), Some(2500), 2400, true, "well past threshold"),
+            (Some(1500), Some(2500), 2500, true, "at expiration"),
+            (Some(1500), Some(2500), 2600, true, "past expiration"),
+            (
+                Some(2000),
+                Some(2000),
+                2000,
+                false,
+                "zero validity interval",
+            ),
+        ];
+
+        for (nb, na, now, expected, desc) in cases {
+            let mut entry = DomainEntry::new(None, 1000);
+            entry.not_before = nb;
+            entry.not_after = na;
+
+            assert_eq!(
+                entry.is_nearing_expiration(now),
+                expected,
+                "Failed test case: {}",
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_domains_nearing_expiration_scenarios() {
+        let state = create_test_populated_state();
+
+        let cases = [
+            (2000, vec![], "none nearing - plenty of time"),
+            (2400, vec!["example.com"], "single domain nearing"),
+            (
+                2500,
+                vec!["example.com", "test.org"],
+                "multiple nearing and sorted",
+            ),
+            (
+                3000,
+                vec!["dfinity.org", "example.com", "test.org", "website.io"],
+                "all certs expired, missing certs excluded",
+            ),
+        ];
+
+        // Test populated state
+        for (now, expected, desc) in cases {
+            let result = state.domains_nearing_expiration(now);
+            assert_eq!(result, expected, "Failed populated state: {}", desc);
+        }
+
+        // Test empty state edge case
+        let empty_state = create_test_empty_state();
+        assert!(
+            empty_state.domains_nearing_expiration(2000).is_empty(),
+            "Empty state should return empty vec"
+        );
     }
 
     #[test]
