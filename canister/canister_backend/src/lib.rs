@@ -7,7 +7,8 @@ use ic_custom_domains_canister_api::{
     FetchTaskError, FetchTaskResult, GetDomainEntryError, GetDomainEntryResult,
     GetDomainStatusError, GetDomainStatusResult, GetLastChangeTimeError, GetLastChangeTimeResult,
     HasNextTaskError, HasNextTaskResult, InitArg, InputTask, ListCertificatesPageError,
-    ListCertificatesPageInput, ListCertificatesPageResult, STALE_DOMAINS_CLEANUP_INTERVAL,
+    ListCertificatesPageInput, ListCertificatesPageResult, ListDomainsPageError,
+    ListDomainsPageInput, ListDomainsPageResult, STALE_DOMAINS_CLEANUP_INTERVAL,
     SubmitTaskError, SubmitTaskResult, TaskResult, TryAddTaskError, TryAddTaskResult,
 };
 use ic_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
@@ -122,6 +123,12 @@ async fn get_last_change_time() -> GetLastChangeTimeResult {
 async fn list_certificates_page(input: ListCertificatesPageInput) -> ListCertificatesPageResult {
     validate_caller(ListCertificatesPageError::Unauthorized)?;
     with_state(|state| state.list_certificates_page(input))
+}
+
+#[query]
+async fn list_domains_page(input: ListDomainsPageInput) -> ListDomainsPageResult {
+    validate_caller(ListDomainsPageError::Unauthorized)?;
+    with_state(|state| state.list_domains_page(input))
 }
 
 #[query(decoding_quota = 10000)]

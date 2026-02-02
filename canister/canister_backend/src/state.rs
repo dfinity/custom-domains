@@ -1,9 +1,10 @@
 use candid::Principal;
 use ic_custom_domains_canister_api::{
     CERT_EXPIRATION_ALERT_THRESHOLD, CERTIFICATE_VALIDITY_FRACTION, CertificatesPage,
-    DEFAULT_PAGE_LIMIT, DomainStatus, FetchTaskResult, GetDomainEntryResult, GetDomainStatusResult,
-    GetLastChangeTimeResult, HasNextTaskResult, InputTask, ListCertificatesPageInput,
-    ListCertificatesPageResult, MAX_PAGE_LIMIT, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
+    DEFAULT_PAGE_LIMIT, DomainStatus, DomainsPage, FetchTaskResult, GetDomainEntryResult,
+    GetDomainStatusResult, GetLastChangeTimeResult, HasNextTaskResult, InputTask,
+    ListCertificatesPageInput, ListCertificatesPageResult, ListDomainsPageInput,
+    ListDomainsPageResult, MAX_PAGE_LIMIT, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
     RegisteredDomain, RegistrationStatus, ScheduledTask, SubmitTaskError, SubmitTaskResult,
     TASK_TIMEOUT, TaskFailReason, TaskKind, TaskOutcome, TaskOutput, TaskResult, TryAddTaskError,
     TryAddTaskResult, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
@@ -618,6 +619,34 @@ impl CanisterState {
         let page = CertificatesPage::new(registered_domains, next_key);
 
         Ok(page)
+    }
+
+    pub fn list_domains_page(&self, input: ListDomainsPageInput) -> ListDomainsPageResult {
+        let limit = input
+            .limit
+            .filter(|&lim| lim > 0)
+            .unwrap_or(DEFAULT_PAGE_LIMIT)
+            .min(MAX_PAGE_LIMIT) as usize;
+
+        let range = match &input.start_key {
+            Some(k) => self.domains.range(k..),
+            None => self.domains.range(..),
+        };
+
+        // Use take(limit + 1) to get the limit entries to return and peek at the next key for pagination
+        let mut entries = range.take(limit + 1);
+
+        // Collect the first 'limit' items
+        let items: Vec<_> = entries
+            .by_ref()
+            .take(limit)
+            .map(|entry| entry.value().clone().into())
+            .collect();
+
+        // If there is an extra item, it becomes the next_key
+        let next_key = entries.next().map(|entry| entry.key().clone());
+
+        Ok(DomainsPage::new(items, next_key))
     }
 }
 
