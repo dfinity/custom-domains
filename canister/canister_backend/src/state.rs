@@ -1166,6 +1166,147 @@ mod tests {
     }
 
     #[test]
+    fn test_list_domains_page_basic_functionality() {
+        let state = create_test_populated_state();
+
+        let input = ListDomainsPageInput {
+            start_key: None,
+            limit: None,
+        };
+        let result = state.list_domains_page(input).unwrap();
+
+        // Should return all 6 domains (no filtering by certificate), in lexicographic order
+        assert_eq!(result.items.len(), 6);
+        assert_eq!(result.next_key, None);
+
+        // Spot-check first entry (dfinity.org - first lexicographically)
+        let first = &result.items[0];
+        assert_eq!(
+            first.canister_id,
+            Some(Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap())
+        );
+        assert_eq!(first.enc_cert.as_deref(), Some(b"cert6_data".as_slice()));
+        assert_eq!(first.enc_priv_key.as_deref(), Some(b"key6_data".as_slice()));
+        assert_eq!(first.created_at, 1300);
+        assert_eq!(first.task, None);
+
+        // Spot-check entry for domain without cert (incomplete.dev is 3rd lexicographically)
+        let without_cert = &result.items[2];
+        assert_eq!(without_cert.enc_cert, None);
+        assert_eq!(without_cert.created_at, 1400);
+    }
+
+    #[test]
+    fn test_list_domains_page_with_limit() {
+        let state = create_test_populated_state();
+
+        let input = ListDomainsPageInput {
+            start_key: None,
+            limit: Some(2),
+        };
+        let result = state.list_domains_page(input).unwrap();
+
+        assert_eq!(result.items.len(), 2);
+        assert_eq!(result.items[0].created_at, 1300); // dfinity.org
+        assert_eq!(result.items[1].created_at, 1000); // example.com
+        assert_eq!(result.next_key, Some("incomplete.dev".to_string()));
+    }
+
+    #[test]
+    fn test_list_domains_page_pagination_with_start_key() {
+        let state = create_test_populated_state();
+
+        let input = ListDomainsPageInput {
+            start_key: Some("pending.net".to_string()),
+            limit: None,
+        };
+        let result = state.list_domains_page(input).unwrap();
+
+        assert_eq!(result.items.len(), 3); // pending.net, test.org, website.io
+        assert_eq!(result.items[0].created_at, 1200); // pending.net
+        assert_eq!(result.items[1].created_at, 1100); // test.org
+        assert_eq!(result.items[2].created_at, 1300); // website.io
+        assert_eq!(result.next_key, None);
+    }
+
+    #[test]
+    fn test_list_domains_page_pagination_continuation() {
+        let state = create_test_populated_state();
+
+        let input1 = ListDomainsPageInput {
+            start_key: None,
+            limit: Some(2),
+        };
+        let result1 = state.list_domains_page(input1).unwrap();
+        assert_eq!(result1.items.len(), 2);
+        assert_eq!(result1.next_key, Some("incomplete.dev".to_string()));
+
+        let input2 = ListDomainsPageInput {
+            start_key: result1.next_key,
+            limit: Some(2),
+        };
+        let result2 = state.list_domains_page(input2).unwrap();
+        assert_eq!(result2.items.len(), 2);
+        assert_eq!(result2.items[0].created_at, 1400); // incomplete.dev
+        assert_eq!(result2.items[1].created_at, 1200); // pending.net
+        assert_eq!(result2.next_key, Some("test.org".to_string()));
+
+        let input3 = ListDomainsPageInput {
+            start_key: result2.next_key,
+            limit: Some(10),
+        };
+        let result3 = state.list_domains_page(input3).unwrap();
+        assert_eq!(result3.items.len(), 2); // test.org, website.io
+        assert_eq!(result3.next_key, None);
+    }
+
+    #[test]
+    fn test_list_domains_page_nonexistent_start_key() {
+        let state = create_test_populated_state();
+
+        let input = ListDomainsPageInput {
+            start_key: Some("middle.com".to_string()),
+            limit: None,
+        };
+        let result = state.list_domains_page(input).unwrap();
+
+        // Lexicographically after "middle.com": pending.net, test.org, website.io
+        assert_eq!(result.items.len(), 3);
+        assert_eq!(result.items[0].created_at, 1200);
+        assert_eq!(result.items[1].created_at, 1100);
+        assert_eq!(result.items[2].created_at, 1300);
+    }
+
+    #[test]
+    fn test_list_domains_page_empty_state() {
+        let state = create_test_empty_state();
+
+        let input = ListDomainsPageInput {
+            start_key: None,
+            limit: None,
+        };
+        let result = state.list_domains_page(input).unwrap();
+
+        assert_eq!(result.items.len(), 0);
+        assert_eq!(result.next_key, None);
+    }
+
+    #[test]
+    fn test_list_domains_page_start_key_at_end() {
+        let state = create_test_populated_state();
+
+        let input = ListDomainsPageInput {
+            start_key: Some("website.io".to_string()),
+            limit: None,
+        };
+        let result = state.list_domains_page(input).unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].created_at, 1300);
+        assert_eq!(result.next_key, None);
+    }
+
+    #[test]
     fn text_next_pending_task() {
         let created_at = 1000;
         let domain = DomainEntry::new(None, created_at);
