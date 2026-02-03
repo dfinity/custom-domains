@@ -370,6 +370,11 @@ impl CanisterState {
         for domain in domains_to_remove {
             self.domains.remove(&domain);
         }
+
+        METRICS.with(|cell| {
+            let metrics = cell.borrow();
+            metrics.last_stale_domains_cleanup_time.set(now as i64);
+        });
     }
 
     pub fn try_add_task_with_metrics(
