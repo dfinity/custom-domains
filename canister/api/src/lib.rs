@@ -53,6 +53,7 @@ pub type GetDomainStatusResult = Result<Option<DomainStatus>, GetDomainStatusErr
 pub type GetDomainEntryResult = Result<Option<DomainEntry>, GetDomainEntryError>;
 pub type GetLastChangeTimeResult = Result<UtcTimestamp, GetLastChangeTimeError>;
 pub type ListCertificatesPageResult = Result<CertificatesPage, ListCertificatesPageError>;
+pub type ListDomainsPageResult = Result<DomainsPage, ListDomainsPageError>;
 pub type HasNextTaskResult = Result<bool, HasNextTaskError>;
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
@@ -221,6 +222,51 @@ pub struct RegisteredDomain {
     pub canister_id: Principal,
     pub enc_cert: Vec<u8>,
     pub enc_priv_key: Vec<u8>,
+}
+
+/// A page of domain entries with pagination information
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+pub struct DomainsPage {
+    pub items: Vec<DomainEntry>,
+    pub next_key: Option<String>,
+}
+
+impl DomainsPage {
+    pub fn new(items: Vec<DomainEntry>, next_key: Option<String>) -> Self {
+        Self { items, next_key }
+    }
+}
+
+/// Input for paginated domain listing
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
+pub struct ListDomainsPageInput {
+    /// Optional starting point for pagination (domain name to start from)
+    pub start_key: Option<String>,
+    /// Maximum number of items to return per page
+    pub limit: Option<u32>,
+}
+
+impl ListDomainsPageInput {
+    pub fn new() -> Self {
+        Self {
+            start_key: None,
+            limit: None,
+        }
+    }
+}
+
+impl Default for ListDomainsPageInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(CandidType, Deserialize, Serialize, Debug, Clone, Error)]
+pub enum ListDomainsPageError {
+    #[error("Unauthorized")]
+    Unauthorized,
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone, Error)]

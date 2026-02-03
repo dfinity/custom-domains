@@ -312,6 +312,32 @@ type ListCertificatesPageResult = variant {
   Err: ListCertificatesPageError;
 };
 
+// Input parameters for paginated domain entry listing
+type ListDomainsPageInput = record {
+  // Optional starting point for pagination (domain name to start from, inclusive)
+  start_key: opt Domain;
+  // Maximum number of items to return per page
+  limit: opt nat32;
+};
+
+// A page of domain entries with pagination information
+type DomainsPage = record {
+  items: vec DomainEntry;
+  next_key: opt text;
+};
+
+// Errors that can occur when listing domains paginated
+type ListDomainsPageError = variant {
+  Unauthorized;
+  InternalError: text;
+};
+
+// Result type for domain pagination requests
+type ListDomainsPageResult = variant {
+  Ok: DomainsPage;
+  Err: ListDomainsPageError;
+};
+
 type HttpRequest = record {
   method: text;
   url: text;
@@ -370,6 +396,19 @@ service: (InitArg) -> {
   // Maximum limit: 400 domains per page
   // Minimum limit: 1 domain per page
   list_certificates_page: (input: ListCertificatesPageInput) -> (ListCertificatesPageResult) query;
+
+  // Retrieves a paginated list of all domain entries (content of CanisterState domains).
+  //
+  // Pagination uses cursor-based approach with lexicographically ordered domain names.
+  // The `start_key` parameter specifies the domain to start from (inclusive), and
+  // `limit` controls the maximum number of items returned per page.
+  //
+  // The response includes a `next_key` field that can be used as `start_key`
+  // for the following page. When `next_key` is null, there are no more results.
+  //
+  // Default limit: 100 domains per page
+  // Maximum limit: 400 domains per page
+  list_domains_page: (input: ListDomainsPageInput) -> (ListDomainsPageResult) query;
 
   // Canister metrics (Http Interface)
   http_request: (HttpRequest) -> (HttpResponse) query;
