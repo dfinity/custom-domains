@@ -640,7 +640,7 @@ impl CanisterState {
         let items: Vec<_> = entries
             .by_ref()
             .take(limit)
-            .map(|entry| entry.value().clone().into())
+            .map(|entry| entry.value().into())
             .collect();
 
         // If there is an extra item, it becomes the next_key
