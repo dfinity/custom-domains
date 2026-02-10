@@ -166,6 +166,24 @@ pub struct DomainEntry {
     pub not_after: Option<UtcTimestamp>,
 }
 
+/// Domain entry as returned by list_domains_page: includes domain name and all entry fields except enc_cert and enc_priv_key.
+#[derive(CandidType, Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
+pub struct ListedDomainEntry {
+    /// Fully qualified domain name (FQDN)
+    pub domain: String,
+    pub task: Option<TaskKind>,
+    pub last_fail_time: Option<UtcTimestamp>,
+    pub last_failure_reason: Option<TaskFailReason>,
+    pub failures_count: u32,
+    pub rate_limit_failures_count: u32,
+    pub canister_id: Option<Principal>,
+    pub created_at: UtcTimestamp,
+    pub taken_at: Option<UtcTimestamp>,
+    pub task_created_at: Option<UtcTimestamp>,
+    pub not_before: Option<UtcTimestamp>,
+    pub not_after: Option<UtcTimestamp>,
+}
+
 #[derive(
     CandidType, Clone, Deserialize, Serialize, Debug, EnumIter, IntoStaticStr, PartialEq, Eq,
 )]
@@ -224,15 +242,15 @@ pub struct RegisteredDomain {
     pub enc_priv_key: Vec<u8>,
 }
 
-/// A page of domain entries with pagination information
+/// A page of domain entries with pagination information (items exclude enc_cert and enc_priv_key).
 #[derive(CandidType, Clone, Deserialize, Serialize, Debug)]
 pub struct DomainsPage {
-    pub items: Vec<DomainEntry>,
+    pub items: Vec<ListedDomainEntry>,
     pub next_key: Option<String>,
 }
 
 impl DomainsPage {
-    pub fn new(items: Vec<DomainEntry>, next_key: Option<String>) -> Self {
+    pub fn new(items: Vec<ListedDomainEntry>, next_key: Option<String>) -> Self {
         Self { items, next_key }
     }
 }

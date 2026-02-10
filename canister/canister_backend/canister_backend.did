@@ -134,6 +134,22 @@ type DomainEntry = record {
   not_after: opt UtcTimestamp;
 };
 
+// Domain entry as returned by list_domains_page: includes domain (FQDN) and entry fields except enc_cert and enc_priv_key. Field meaning/usage is the same as in DomainEntry.
+type ListedDomainEntry = record {
+  domain: text;
+  task: opt TaskKind;
+  last_fail_time: opt UtcTimestamp;
+  last_failure_reason: opt TaskFailReason;
+  failures_count: nat32;
+  rate_limit_failures_count: nat32;
+  canister_id: opt principal;
+  created_at: UtcTimestamp;
+  taken_at: opt UtcTimestamp;
+  task_created_at: opt UtcTimestamp;
+  not_before: opt UtcTimestamp;
+  not_after: opt UtcTimestamp;
+};
+
 // Current registration status of a custom domain
 type RegistrationStatus = variant {
   // The registration is currently being processed
@@ -320,9 +336,9 @@ type ListDomainsPageInput = record {
   limit: opt nat32;
 };
 
-// A page of domain entries with pagination information
+// A page of domain entries with pagination information (items are ListedDomainEntry, no enc_cert/enc_priv_key)
 type DomainsPage = record {
-  items: vec DomainEntry;
+  items: vec ListedDomainEntry;
   next_key: opt text;
 };
 

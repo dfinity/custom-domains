@@ -4,10 +4,10 @@ use ic_custom_domains_canister_api::{
     DEFAULT_PAGE_LIMIT, DomainStatus, DomainsPage, FetchTaskResult, GetDomainEntryResult,
     GetDomainStatusResult, GetLastChangeTimeResult, HasNextTaskResult, InputTask,
     ListCertificatesPageInput, ListCertificatesPageResult, ListDomainsPageInput,
-    ListDomainsPageResult, MAX_PAGE_LIMIT, MAX_TASK_FAILURES, MIN_TASK_RETRY_DELAY,
-    RegisteredDomain, RegistrationStatus, ScheduledTask, SubmitTaskError, SubmitTaskResult,
-    TASK_TIMEOUT, TaskFailReason, TaskKind, TaskOutcome, TaskOutput, TaskResult, TryAddTaskError,
-    TryAddTaskResult, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
+    ListDomainsPageResult, ListedDomainEntry, MAX_PAGE_LIMIT, MAX_TASK_FAILURES,
+    MIN_TASK_RETRY_DELAY, RegisteredDomain, RegistrationStatus, ScheduledTask, SubmitTaskError,
+    SubmitTaskResult, TASK_TIMEOUT, TaskFailReason, TaskKind, TaskOutcome, TaskOutput, TaskResult,
+    TryAddTaskError, TryAddTaskResult, UNREGISTERED_DOMAIN_EXPIRATION_TIME,
 };
 use ic_http_types::{HttpResponse, HttpResponseBuilder};
 use ic_stable_structures::{
@@ -638,17 +638,34 @@ impl CanisterState {
             None => self.domains.range(..),
         };
 
-        // Use take(limit + 1) to get the limit entries to return and peek at the next key for pagination
+        // get the limit entries and one more to peek at the next key for pagination
         let mut entries = range.take(limit + 1);
 
-        // Collect the first 'limit' items
-        let items: Vec<_> = entries
+        // collect the first limit items (without enc_cert/enc_priv_key)
+        let items: Vec<ListedDomainEntry> = entries
             .by_ref()
             .take(limit)
-            .map(|entry| entry.value().into())
+            .map(|range_entry| {
+                let domain = range_entry.key().clone();
+                let e = range_entry.value();
+                ListedDomainEntry {
+                    domain,
+                    task: e.task,
+                    last_fail_time: e.last_fail_time,
+                    last_failure_reason: e.last_failure_reason.clone(),
+                    failures_count: e.failures_count,
+                    rate_limit_failures_count: e.rate_limit_failures_count,
+                    canister_id: e.canister_id,
+                    created_at: e.created_at,
+                    taken_at: e.taken_at,
+                    task_created_at: e.task_created_at,
+                    not_before: e.not_before,
+                    not_after: e.not_after,
+                }
+            })
             .collect();
 
-        // If there is an extra item, it becomes the next_key
+        // if there is an extra item, it is the next_key
         let next_key = entries.next().map(|entry| entry.key().clone());
 
         Ok(DomainsPage::new(items, next_key))
@@ -1186,18 +1203,17 @@ mod tests {
 
         // Spot-check first entry (dfinity.org - first lexicographically)
         let first = &result.items[0];
+        assert_eq!(first.domain, "dfinity.org");
         assert_eq!(
             first.canister_id,
             Some(Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap())
         );
-        assert_eq!(first.enc_cert.as_deref(), Some(b"cert6_data".as_slice()));
-        assert_eq!(first.enc_priv_key.as_deref(), Some(b"key6_data".as_slice()));
         assert_eq!(first.created_at, 1300);
         assert_eq!(first.task, None);
 
         // Spot-check entry for domain without cert (incomplete.dev is 3rd lexicographically)
         let without_cert = &result.items[2];
-        assert_eq!(without_cert.enc_cert, None);
+        assert_eq!(without_cert.domain, "incomplete.dev");
         assert_eq!(without_cert.created_at, 1400);
     }
 
