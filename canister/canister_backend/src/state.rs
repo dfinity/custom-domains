@@ -364,8 +364,8 @@ impl CanisterState {
             // Remove domain if
             // - unregistered too long
             // - certificate expired
-            if should_remove_unregistered_domain(&domain_entry, now)
-                || should_remove_expired_domains(&domain_entry, now)
+            if unregistered_for_too_long(&domain_entry, now)
+                || certificate_expired(&domain_entry, now)
             {
                 domains_to_remove.push(domain);
             }
@@ -734,7 +734,7 @@ impl CanisterState {
 }
 
 /// Check if the domain has remained unregistered too long since creation
-fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> bool {
+fn unregistered_for_too_long(entry: &DomainEntry, now: UtcTimestamp) -> bool {
     // If the domain has a certificate or a pending task, it should not be removed
     if entry.enc_cert.is_some() || entry.task.is_some() {
         return false;
@@ -748,12 +748,9 @@ fn should_remove_unregistered_domain(entry: &DomainEntry, now: UtcTimestamp) -> 
 }
 
 /// Check if the domain's certificate expired
-fn should_remove_expired_domains(entry: &DomainEntry, now: UtcTimestamp) -> bool {
+fn certificate_expired(entry: &DomainEntry, now: UtcTimestamp) -> bool {
     // If the domain has a certificate and it has expired, it should be removed
-    if let Some(not_after) = entry.not_after {
-        return now >= not_after;
-    }
-    false
+    entry.not_after.is_some_and(|not_after| not_after <= now)
 }
 
 /// Determines the next pending task for a domain entry based on current state and time.
@@ -1431,7 +1428,7 @@ mod tests {
     }
 
     #[test]
-    fn test_should_remove_unregistered_domain() {
+    fn test_unregistered_for_too_long() {
         let created_at = 1000;
         let expiration_time = UNREGISTERED_DOMAIN_EXPIRATION_TIME.as_secs();
 
@@ -1440,14 +1437,14 @@ mod tests {
             let mut domain = DomainEntry::new(None, created_at);
             domain.enc_cert = Some(b"cert_data".to_vec());
             let now = created_at + expiration_time + 1000; // past expiration
-            assert!(!should_remove_unregistered_domain(&domain, now));
+            assert!(!unregistered_for_too_long(&domain, now));
         }
 
         // Domain with pending task should not be removed
         {
             let domain = DomainEntry::new(Some(TaskKind::Issue), created_at);
             let now = created_at + expiration_time + 1000; // past expiration
-            assert!(!should_remove_unregistered_domain(&domain, now));
+            assert!(!unregistered_for_too_long(&domain, now));
         }
 
         // Domain with both certificate and task should not be removed
@@ -1455,60 +1452,60 @@ mod tests {
             let mut domain = DomainEntry::new(Some(TaskKind::Update), created_at);
             domain.enc_cert = Some(b"cert_data".to_vec());
             let now = created_at + expiration_time + 1000; // past expiration
-            assert!(!should_remove_unregistered_domain(&domain, now));
+            assert!(!unregistered_for_too_long(&domain, now));
         }
 
         // Unregistered domain before expiration should not be removed
         {
             let domain = DomainEntry::new(None, created_at);
             let now = created_at + expiration_time - 1; // 1 second before expiration
-            assert!(!should_remove_unregistered_domain(&domain, now));
+            assert!(!unregistered_for_too_long(&domain, now));
         }
 
         // Unregistered domain exactly at expiration should be removed
         {
             let domain = DomainEntry::new(None, created_at);
             let now = created_at + expiration_time;
-            assert!(should_remove_unregistered_domain(&domain, now));
+            assert!(unregistered_for_too_long(&domain, now));
         }
     }
 
     #[test]
-    fn test_should_remove_expired_domains() {
+    fn test_certificate_expired() {
         let now = 2000u64;
 
         // Certificate validity unknown (no not_after): should not be removed
         {
             let domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
-            assert!(!should_remove_expired_domains(&domain, now));
+            assert!(!certificate_expired(&domain, now));
         }
 
         // Certificate is still valid (not_after in the future): should not be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(2500);
-            assert!(!should_remove_expired_domains(&domain, now));
+            assert!(!certificate_expired(&domain, now));
         }
 
         // Certificate has just expired (now exactly at not_after): should be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(now);
-            assert!(should_remove_expired_domains(&domain, now));
+            assert!(certificate_expired(&domain, now));
         }
 
         // Certificate hs expired a while ago (now past not_after): should be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(1500);
-            assert!(should_remove_expired_domains(&domain, now));
+            assert!(certificate_expired(&domain, now));
         }
 
         // Certificate is still valid (now just before not_after): should not be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(now + 1);
-            assert!(!should_remove_expired_domains(&domain, now));
+            assert!(!certificate_expired(&domain, now));
         }
     }
 
