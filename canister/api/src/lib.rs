@@ -30,6 +30,9 @@ pub const TASK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 // If no certificate has been issued, the domain entry is removed after this duration.
 pub const UNREGISTERED_DOMAIN_EXPIRATION_TIME: Duration = Duration::from_secs(24 * 60 * 60);
 
+// If a domain has failed to renew and its certificate expired, it is removed after this duration.
+pub const EXPIRED_DOMAIN_EXPIRATION_TIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 // If a task fails this many times with a recoverable error, it is no longer rescheduled.
 // User is expected to resubmit the task.
 pub const MAX_TASK_FAILURES: u32 = 20;
