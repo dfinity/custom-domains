@@ -1477,34 +1477,34 @@ mod tests {
     fn test_should_remove_expired_domains() {
         let now = 2000u64;
 
-        // No not_after: should not be removed (cert validity unknown)
+        // Certificate validity unknown (no not_after): should not be removed
         {
             let domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             assert!(!should_remove_expired_domains(&domain, now));
         }
 
-        // not_after in the future: should not be removed
+        // Certificate is still valid (not_after in the future): should not be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(2500);
             assert!(!should_remove_expired_domains(&domain, now));
         }
 
-        // now exactly at not_after: should be removed
+        // Certificate has just expired (now exactly at not_after): should be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(now);
             assert!(should_remove_expired_domains(&domain, now));
         }
 
-        // now past not_after: should be removed
+        // Certificate hs expired a while ago (now past not_after): should be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(1500);
             assert!(should_remove_expired_domains(&domain, now));
         }
 
-        // now just before not_after: should not be removed
+        // Certificate is still valid (now just before not_after): should not be removed
         {
             let mut domain = DomainEntry::new(Some(TaskKind::Renew), 1000);
             domain.not_after = Some(now + 1);
