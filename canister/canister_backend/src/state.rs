@@ -361,12 +361,12 @@ impl CanisterState {
             let domain = entry.key().clone();
             let domain_entry = entry.value();
 
-            // Remove domain if unregistered too long
-            if should_remove_unregistered_domain(&domain_entry, now) {
-                domains_to_remove.push(domain);
-            }
-            // Remove domain if certificate expired
-            else if should_remove_expired_domains(&domain_entry, now) {
+            // Remove domain if
+            // - unregistered too long
+            // - certificate expired
+            if should_remove_unregistered_domain(&domain_entry, now)
+                || should_remove_expired_domains(&domain_entry, now)
+            {
                 domains_to_remove.push(domain);
             }
         }
@@ -753,7 +753,7 @@ fn should_remove_expired_domains(entry: &DomainEntry, now: UtcTimestamp) -> bool
     if let Some(not_after) = entry.not_after {
         return now >= not_after;
     }
-    return false;
+    false
 }
 
 /// Determines the next pending task for a domain entry based on current state and time.
