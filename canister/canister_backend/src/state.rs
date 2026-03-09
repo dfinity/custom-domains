@@ -427,14 +427,22 @@ impl CanisterState {
         let domain = task.domain;
         let domain_entry = match self.domains.get(&domain) {
             Some(mut entry) => {
-                // Prevent scheduling concurrent tasks for domain
-                if entry.task.is_some() {
+                // Prevent scheduling concurrent tasks for domain if:
+                // - there is already a task for the domain that is not a renewal task
+                // - there is a renewal task for the domain that is not yet near expiration or already taken
+                if (entry.task.is_some() && entry.task != Some(TaskKind::Renew))
+                    || (entry.task == Some(TaskKind::Renew)
+                        && (!entry.is_nearing_expiration(now) || entry.taken_at.is_some()))
+                {
                     return Err(TryAddTaskError::AnotherTaskInProgress(domain));
                 }
 
-                // Prevent explicit certificate re-issuance
+                // Prevent explicit certificate re-issuance (if the domain is not near expiration)
                 // Note: to reissue certificate, submit `Renew` task instead
-                if task.kind == TaskKind::Issue && entry.enc_cert.is_some() {
+                if task.kind == TaskKind::Issue
+                    && entry.enc_cert.is_some()
+                    && !entry.is_nearing_expiration(now)
+                {
                     return Err(TryAddTaskError::CertificateAlreadyIssued(domain));
                 }
 
