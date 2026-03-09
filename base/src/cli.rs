@@ -9,11 +9,14 @@ use ic_bn_lib_common::types::acme::AcmeUrl;
 
 #[derive(Debug, Args)]
 pub struct CustomDomainsCli {
-    /// Domain name to access the IC.
-    /// It is used to interact with the Custom Domains management canister and
-    /// also to perform domain validation by accessing https://<canister-id>.<hostname>/.well-known/ic-domains
+    /// Domain name to access the IC (used to interact with the Custom Domains management canister).
     #[clap(env, long, default_value = "icp0.io")]
     pub custom_domains_ic_domain: FQDN,
+
+    /// Comma-separated validation domains used to verify canister ownership via
+    /// https://<canister-id>.<validation-domain>/.well-known/ic-domains (tried in order until one succeeds).
+    #[clap(env, long, value_delimiter = ',', default_value = "icp0.io")]
+    pub custom_domains_validation_domains: Vec<FQDN>,
 
     /// Path to an IC identity file (PEM-encoded)
     #[clap(env, long, required = false)]

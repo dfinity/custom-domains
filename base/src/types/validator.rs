@@ -3,15 +3,15 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use candid::Principal;
-use fqdn::{fqdn, FQDN};
+use fqdn::{FQDN, fqdn};
 use hickory_resolver::proto::rr::RecordType;
 use ic_bn_lib::{
     http::{
-        dns::{Resolver, SingleResolver},
         ReqwestClient,
+        dns::{Resolver, SingleResolver},
     },
     reqwest::{Method, Request, Url},
 };
@@ -19,7 +19,7 @@ use ic_bn_lib_common::{
     traits::{dns::Resolves, http::Client},
     types::{dns::Options as DnsOptions, http::ClientOptions},
 };
-use tracing::{debug, info, instrument, Span};
+use tracing::{Span, debug, info, instrument};
 
 use crate::traits::validation::{ValidatesDomains, ValidationError};
 
@@ -31,7 +31,7 @@ pub struct Validator {
     client: Arc<dyn Client>,
     resolver: Arc<dyn Resolves>,
     delegation_domain: FQDN,
-    validation_domain: FQDN,
+    validation_domains: Vec<FQDN>,
 }
 
 impl std::fmt::Debug for Validator {
@@ -65,7 +65,12 @@ impl ValidatesDomains for Validator {
 
 impl Default for Validator {
     fn default() -> Self {
-        Self::new(fqdn!("icp2.io"), fqdn!("icp0.io"), DnsOptions::default()).unwrap()
+        Self::new(
+            fqdn!("icp2.io"),
+            vec![fqdn!("icp0.io"), fqdn!("ic0.app")],
+            DnsOptions::default(),
+        )
+        .unwrap()
     }
 }
 
@@ -73,12 +78,17 @@ impl Validator {
     /// Create a new Validator
     pub fn new(
         delegation_domain: FQDN,
-        validation_domain: FQDN,
+        validation_domains: Vec<FQDN>,
         mut dns_opts: DnsOptions,
     ) -> Result<Self, ValidationError> {
         if delegation_domain.is_root() {
             return Err(ValidationError::UnexpectedError(anyhow!(
                 "Delegation domain cannot be empty"
+            )));
+        }
+        if validation_domains.is_empty() {
+            return Err(ValidationError::UnexpectedError(anyhow!(
+                "At least one validation domain is required"
             )));
         }
 
@@ -94,7 +104,7 @@ impl Validator {
             client: Arc::new(client),
             resolver: Arc::new(resolver),
             delegation_domain,
-            validation_domain,
+            validation_domains,
         })
     }
 
@@ -102,42 +112,64 @@ impl Validator {
     ///
     /// Checks the /.well-known/ic-domains asset of the canister to verify
     /// that the domain is listed as a known domain for that canister.
+    /// Tries each validation domain in order until one succeeds.
     async fn validate_canister_owner(
         &self,
         canister_id: Principal,
         domain: &FQDN,
     ) -> Result<(), ValidationError> {
-        // Verify domain name is stored inside the canister, confirming canister ownership
-        // TODO: verify ic-certification is handled already
-        let url = format!(
-            "https://{canister_id}.{}/.well-known/ic-domains",
-            self.validation_domain
-        );
+        let mut last_error = None;
+        let domain_str = domain.to_string();
 
-        debug!("checking canister owner, calling '{url}'");
+        for validation_domain in &self.validation_domains {
+            // Verify domain name is stored inside the canister, confirming canister ownership
+            let url = format!("https://{canister_id}.{validation_domain}/.well-known/ic-domains");
+            debug!("checking canister owner, calling '{url}'");
 
-        let request = Request::new(
-            Method::GET,
-            Url::parse(&url).map_err(|e| ValidationError::UnexpectedError(e.into()))?,
-        );
+            match self
+                .fetch_and_verify_domain_ownership(&url, &domain_str, canister_id)
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => last_error = Some(e),
+            }
+        }
+
+        Err(last_error.unwrap_or(ValidationError::MissingKnownDomains {
+            id: canister_id.to_string(),
+        }))
+    }
+
+    /// Helper to handle the request/parsing logic for a single domain
+    async fn fetch_and_verify_domain_ownership(
+        &self,
+        url: &str,
+        domain_to_check: &str,
+        canister_id: Principal,
+    ) -> Result<(), ValidationError> {
+        let url_parsed = Url::parse(url).map_err(|e| ValidationError::UnexpectedError(e.into()))?;
 
         let response = self
             .client
-            .execute(request)
+            .execute(Request::new(Method::GET, url_parsed))
             .await
             .map_err(|e| ValidationError::KnownDomainsUnavailable {
                 id: canister_id.to_string(),
                 error: e.to_string(),
-            })?
+            })?;
+
+        let text = response
             .text()
             .await
-            .map_err(|err| ValidationError::UnexpectedError(err.into()))?;
+            .map_err(|e| ValidationError::UnexpectedError(e.into()))?;
 
-        response.contains(&domain.to_string()).then_some(()).ok_or(
-            ValidationError::MissingKnownDomains {
+        if text.contains(domain_to_check) {
+            Ok(())
+        } else {
+            Err(ValidationError::MissingKnownDomains {
                 id: canister_id.to_string(),
-            },
-        )
+            })
+        }
     }
 
     /// Validates that there are no existing canister ID TXT records for the domain.
