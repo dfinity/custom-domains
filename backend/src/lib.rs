@@ -94,7 +94,7 @@ pub async fn setup(
         Arc::new(
             Validator::new(
                 cli.custom_domains_delegation_domain.clone(),
-                cli.custom_domains_ic_domain.clone(),
+                cli.custom_domains_validation_domains.clone(),
                 dns_opts.clone(),
             )
             .context("unable to create validator")?,
