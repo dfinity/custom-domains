@@ -15,7 +15,7 @@ pub struct CustomDomainsCli {
 
     /// Comma-separated validation domains used to verify canister ownership via
     /// https://<canister-id>.<validation-domain>/.well-known/ic-domains (tried in order until one succeeds).
-    #[clap(env, long, value_delimiter = ',', default_value = "icp0.io")]
+    #[clap(env, long, value_delimiter = ',', default_values = ["icp0.io", "ic0.app"])]
     pub custom_domains_validation_domains: Vec<FQDN>,
 
     /// Path to an IC identity file (PEM-encoded)
