@@ -1,7 +1,5 @@
 use std::{fs, path::PathBuf, sync::Once};
 
-use rustls;
-
 use anyhow::{Context, anyhow};
 use candid::{Decode, Encode};
 use hex::encode;
