@@ -16,8 +16,7 @@ use axum::Router;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use chacha20poly1305::Key;
 use ic_bn_lib::{
-    ic_agent::{identity::Secp256k1Identity, Agent},
-    reqwest,
+    ic_agent::{export::reqwest, identity::Secp256k1Identity, Agent},
     tls::acme::instant_acme::AccountCredentials,
 };
 use ic_bn_lib_common::types::dns::Options as DnsOptions;
