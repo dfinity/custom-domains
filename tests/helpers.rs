@@ -1,5 +1,7 @@
 use std::{fs, path::PathBuf, sync::Once};
 
+use rustls;
+
 use anyhow::{Context, anyhow};
 use candid::{Decode, Encode};
 use hex::encode;
@@ -15,6 +17,10 @@ static INIT_LOGGING: Once = Once::new();
 
 pub fn init_logging() {
     INIT_LOGGING.call_once(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .ok();
+
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
             .with_test_writer()
