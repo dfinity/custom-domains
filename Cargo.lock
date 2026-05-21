@@ -778,13 +778,12 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cloudflare"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1678b3295890df5895480a7c080430e73df2b7101f1763f62a3b32dd532f1d37"
+version = "0.14.1"
+source = "git+https://github.com/mraszyk/cloudflare-rs?rev=972f379e51ac923be9db648a75b101892a89453c#972f379e51ac923be9db648a75b101892a89453c"
 dependencies = [
  "chrono",
  "http",
- "reqwest 0.12.28",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -2236,7 +2235,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.0.0-git"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=877289a2aeec534ca9ab9ad89b5400d85fa61a6c#877289a2aeec534ca9ab9ad89b5400d85fa61a6c"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=8fd381ddb526670c4a3deafb31d9868d7dc2d51a#8fd381ddb526670c4a3deafb31d9868d7dc2d51a"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2320,7 +2319,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib-common"
 version = "0.1.8"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=877289a2aeec534ca9ab9ad89b5400d85fa61a6c#877289a2aeec534ca9ab9ad89b5400d85fa61a6c"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=8fd381ddb526670c4a3deafb31d9868d7dc2d51a#8fd381ddb526670c4a3deafb31d9868d7dc2d51a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4257,6 +4256,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime_guess",
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
