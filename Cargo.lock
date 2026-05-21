@@ -583,31 +583,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "801927ee168e17809ab8901d9f01f700cd7d8d6a6527997fee44e4b0327a253c"
 dependencies = [
  "ahash",
- "cached_proc_macro",
- "cached_proc_macro_types",
  "hashbrown 0.15.5",
  "once_cell",
  "thiserror 2.0.18",
  "web-time",
 ]
-
-[[package]]
-name = "cached_proc_macro"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9225bdcf4e4a9a4c08bf16607908eb2fbf746828d5e0b5e019726dbf6571f201"
-dependencies = [
- "darling 0.20.11",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "cached_proc_macro_types"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
 
 [[package]]
 name = "candid"
@@ -2204,57 +2184,6 @@ dependencies = [
 
 [[package]]
 name = "ic-agent"
-version = "0.46.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "223e34e74ee20df849226a45e14f6b47f4d53a97f34d571e7b6111728c965489"
-dependencies = [
- "arc-swap",
- "async-channel 2.5.0",
- "async-lock",
- "async-trait",
- "async-watch",
- "backoff",
- "bytes",
- "cached",
- "candid",
- "ecdsa",
- "ed25519-consensus",
- "elliptic-curve",
- "futures-util",
- "hex",
- "http",
- "http-body",
- "http-body-util",
- "ic-certification",
- "ic-ed25519",
- "ic-transport-types 0.46.2",
- "ic-verify-bls-signature",
- "ic_principal",
- "k256",
- "leb128",
- "p256",
- "pem",
- "pkcs8",
- "rand 0.10.1",
- "rangemap",
- "reqwest 0.13.2",
- "ring",
- "sec1",
- "serde",
- "serde_bytes",
- "serde_cbor",
- "serde_repr",
- "sha2 0.10.9",
- "stop-token",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tower-service",
- "url",
-]
-
-[[package]]
-name = "ic-agent"
 version = "0.47.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85dbab284eac1806b77833cff143d66ae97aae74d34b0e60fb4ab4edf3d6fa12"
@@ -2307,7 +2236,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.0.0-git"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=b930a015a9a460cfddca2d4bfa91000d9303a11a#b930a015a9a460cfddca2d4bfa91000d9303a11a"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=877289a2aeec534ca9ab9ad89b5400d85fa61a6c#877289a2aeec534ca9ab9ad89b5400d85fa61a6c"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2338,7 +2267,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "ic-agent 0.47.3",
+ "ic-agent",
  "ic-bn-lib-common",
  "indoc",
  "instant-acme",
@@ -2390,9 +2319,8 @@ dependencies = [
 
 [[package]]
 name = "ic-bn-lib-common"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaac13671e0e0e304c0ae7152efce9287a1486cbb49023970fd0542fb247d026"
+version = "0.1.8"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=877289a2aeec534ca9ab9ad89b5400d85fa61a6c#877289a2aeec534ca9ab9ad89b5400d85fa61a6c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2408,7 +2336,7 @@ dependencies = [
  "humantime",
  "hyper",
  "hyper-util",
- "ic-agent 0.46.2",
+ "ic-agent",
  "instant-acme",
  "parse-size",
  "prometheus",
@@ -2417,7 +2345,7 @@ dependencies = [
  "rustls",
  "serde",
  "socket2 0.6.3",
- "strum 0.27.2",
+ "strum 0.28.0",
  "thiserror 2.0.18",
  "tokio-util",
  "tower-service",
@@ -2698,24 +2626,6 @@ dependencies = [
 
 [[package]]
 name = "ic-transport-types"
-version = "0.46.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26448ff3dd1dc1afbfdd008153b2fde7ab117296e866cd7642c4a0cb9c88e421"
-dependencies = [
- "candid",
- "hex",
- "ic-certification",
- "leb128",
- "serde",
- "serde_bytes",
- "serde_cbor",
- "serde_repr",
- "sha2 0.10.9",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "ic-transport-types"
 version = "0.47.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2116182b3ec5a831d579db0a205b6cf9c2ca96616493bef99480532d0b3c2f5"
@@ -2963,7 +2873,6 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "rcgen",
- "ring",
  "rustls",
  "rustls-pki-types",
  "serde",
@@ -4335,7 +4244,6 @@ checksum = "ab3f43e3283ab1488b624b44b0e988d0acea0b3214e694730a055cb6b2efa801"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "encoding_rs",
  "futures-channel",
  "futures-core",
  "futures-util",
@@ -4349,7 +4257,6 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
- "mime",
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
