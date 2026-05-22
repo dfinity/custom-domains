@@ -6,7 +6,7 @@ use ic_bn_lib::{
     reqwest::Url,
     tls::acme::{
         client::{Client, ClientBuilder},
-        dns::{cloudflare::Cloudflare, TokenManagerDns},
+        dns::{TokenManagerDns, cloudflare::Cloudflare},
         instant_acme::AccountCredentials,
     },
 };
@@ -115,8 +115,9 @@ impl AcmeClientConfig {
         )?);
 
         // DNS resolver
-        self.dns_options.cache_size = 0;
-        let dns_resolver = Resolver::new(self.dns_options);
+        self.dns_options.opts.cache_size = 0;
+        let dns_resolver =
+            Resolver::new(self.dns_options).context("unable to create DNS Resolver")?;
         let token_manager = Arc::new(TokenManagerDns::new(
             Arc::new(dns_resolver),
             cloudflare,
