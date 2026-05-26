@@ -2239,7 +2239,6 @@ dependencies = [
  "rand 0.10.1",
  "rangemap",
  "reqwest",
- "ring",
  "sec1",
  "serde",
  "serde_bytes",
@@ -2257,7 +2256,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.0.0-git"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=8610ec9d938ae27c7b12d8c0c5300a15defc6c01#8610ec9d938ae27c7b12d8c0c5300a15defc6c01"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=be42b9b519d6a2b1f15fa6453453f9fd8fc353d9#be42b9b519d6a2b1f15fa6453453f9fd8fc353d9"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2341,7 +2340,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib-common"
 version = "0.1.8"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=8610ec9d938ae27c7b12d8c0c5300a15defc6c01#8610ec9d938ae27c7b12d8c0c5300a15defc6c01"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=be42b9b519d6a2b1f15fa6453453f9fd8fc353d9#be42b9b519d6a2b1f15fa6453453f9fd8fc353d9"
 dependencies = [
  "anyhow",
  "async-trait",
