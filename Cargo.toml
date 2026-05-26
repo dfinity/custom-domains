@@ -52,17 +52,12 @@ fqdn = "0.5.2"
 hex = "0.4.3"
 hickory-resolver = "0.26"
 humantime = "2.2.0"
-# ic-bn-lib = { version = "0.1", features = [
-#     "acme-dns",
-#     "cert-providers",
-#     "custom-domains",
-# ] }
-ic-bn-lib = { path = "../ic-bn-lib/ic-bn-lib", features = [
+ic-bn-lib = { version = "0.2", features = [
     "acme-dns",
     "cert-providers",
     "custom-domains",
 ] }
-ic-bn-lib-common = {version = "0.2", path = "../ic-bn-lib/ic-bn-lib-common"}
+ic-bn-lib-common = "0.2"
 ic-cdk = "0.17"
 ic-cdk-timers = "0.11"
 ic-custom-domains-backend = { version = "0.0.0-git", path = "./backend" }
