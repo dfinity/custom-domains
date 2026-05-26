@@ -39,18 +39,17 @@ anyhow = "1.0.98"
 arc-swap = { version = "1.7.1" }
 async-trait = "0.1.89"
 axum = "0.8.4"
-axum-extra = "0.10.1"
-axum-server = "0.7.2"
+axum-extra = { version = "0.12", features = ["middleware"] }
+axum-server = "0.8.0"
 base64 = "0.22.1"
 candid = "0.10.16"
-candid_parser = "0.2.1"
+candid_parser = "0.3"
 chacha20poly1305 = "0.10.1"
 chrono = "0.4"
 clap = { version = "4.5.20", features = ["derive", "string", "env"] }
 derive-new = "0.7.0"
 fqdn = "0.5.2"
 hex = "0.4.3"
-hickory-resolver = "0.26"
 humantime = "2.2.0"
 ic-bn-lib = { version = "0.2", features = [
     "acme-dns",
@@ -66,7 +65,7 @@ ic-custom-domains-canister-api = { version = "0.0.0-git", path = "./canister/api
 ic-custom-domains-canister-client = { version = "0.0.0-git", path = "./canister_client" }
 ic-http-types = "0.1.0"
 ic-stable-structures = "0.7.0"
-mockall = "0.13.1"
+mockall = "0.14"
 pem = "3.0.5"
 pocket-ic = "=12.0.0"
 prometheus = "0.14.0"
@@ -75,7 +74,7 @@ rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] 
 serde = { version = "1.0.219", features = ["derive"] }
 serde_cbor = "0.11.2"
 serde_json = "1.0.140"
-strum = { version = "0.27.1", features = ["derive"] }
+strum = { version = "0.28", features = ["derive"] }
 thiserror = "2.0.12"
 tokio = { version = "1.45.1" }
 tokio-util = "0.7.15"
@@ -85,7 +84,7 @@ tracing = {version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = "0.3.19"
 utoipa = { version = "5.4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
-x509-parser = "0.17.0"
+x509-parser = "0.18"
 
 [dev-dependencies]
 anyhow = { workspace = true }

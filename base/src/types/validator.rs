@@ -7,8 +7,8 @@ use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use candid::Principal;
 use fqdn::{FQDN, fqdn};
-use hickory_resolver::proto::rr::RecordType;
 use ic_bn_lib::{
+    hickory_resolver::proto::rr::RecordType,
     http::{
         ReqwestClient,
         dns::{Resolver, SingleResolver},

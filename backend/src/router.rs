@@ -1,25 +1,25 @@
 use std::sync::Arc;
 
 use axum::{
+    Router,
     extract::Request,
     middleware::from_fn_with_state,
     routing::{delete, get, patch, post},
-    Router,
 };
 use axum_extra::middleware::option_layer;
 use ic_bn_lib::{http::middleware::rate_limiter::layer_by_ip, reqwest::StatusCode};
 use ic_custom_domains_base::traits::{repository::Repository, validation::ValidatesDomains};
 use prometheus::Registry;
 use tower_http::{
-    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
     LatencyUnit,
+    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
 
 use crate::{
     backend_service::BackendService,
     handlers::{create_handler, delete_handler, get_handler, update_handler, validate_handler},
-    metrics::{metrics_handler, metrics_middleware, HttpMetrics},
+    metrics::{HttpMetrics, metrics_handler, metrics_middleware},
 };
 
 /// Options for configuring rate limits on various endpoints.
@@ -127,16 +127,16 @@ mod tests {
     use std::{str::FromStr, sync::Arc};
 
     use axum::{
-        body::{to_bytes, Body},
+        body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
     use candid::Principal;
     use fqdn::FQDN;
     use prometheus::Registry;
     use serde_json::Value;
-    use tower::{util::ServiceExt, Service};
+    use tower::{Service, util::ServiceExt};
 
-    use crate::router::{create_router, RateLimitConfig};
+    use crate::router::{RateLimitConfig, create_router};
 
     const BODY_LIMIT: usize = 5000;
 
@@ -324,10 +324,12 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response_json["status"], "error");
         assert_eq!(response_json["data"]["domain"], "invalid..domain");
-        assert!(response_json["errors"]
-            .as_str()
-            .unwrap()
-            .contains("Invalid domain"));
+        assert!(
+            response_json["errors"]
+                .as_str()
+                .unwrap()
+                .contains("Invalid domain")
+        );
     }
 
     #[tokio::test]
@@ -385,7 +387,10 @@ mod tests {
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(response_json["status"], "error");
         assert_eq!(response_json["data"]["domain"], "example.org");
-        assert_eq!(response_json["errors"], "internal_server_error: An unexpected error occurred. Please try again later or contact support.");
+        assert_eq!(
+            response_json["errors"],
+            "internal_server_error: An unexpected error occurred. Please try again later or contact support."
+        );
     }
 
     #[tokio::test]
@@ -569,10 +574,12 @@ mod tests {
             response_json["message"].as_str().unwrap(),
             "Registration status request failed"
         );
-        assert!(response_json["errors"]
-            .as_str()
-            .unwrap()
-            .contains("Invalid domain"));
+        assert!(
+            response_json["errors"]
+                .as_str()
+                .unwrap()
+                .contains("Invalid domain")
+        );
     }
 
     #[tokio::test]
@@ -862,7 +869,10 @@ mod tests {
             "Update domain registration request failed"
         );
         assert_eq!(response_json["data"]["domain"], "example.org");
-        assert_eq!(response_json["errors"].as_str().unwrap(), "bad_request: Cannot update domain-to-canister mapping: no valid certificate found for domain example.org.");
+        assert_eq!(
+            response_json["errors"].as_str().unwrap(),
+            "bad_request: Cannot update domain-to-canister mapping: no valid certificate found for domain example.org."
+        );
     }
 
     /// Helper function to make a DELETE request to /v1/{domain}
