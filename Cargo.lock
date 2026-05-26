@@ -2256,7 +2256,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.0.0-git"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=f9ef198ffc1aabf075621b303e0c99afe5504928#f9ef198ffc1aabf075621b303e0c99afe5504928"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=77e71cba5566bf904783dbc91487292150b15bf5#77e71cba5566bf904783dbc91487292150b15bf5"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2340,7 +2340,7 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib-common"
 version = "0.1.8"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=f9ef198ffc1aabf075621b303e0c99afe5504928#f9ef198ffc1aabf075621b303e0c99afe5504928"
+source = "git+https://github.com/mraszyk/ic-bn-lib?rev=77e71cba5566bf904783dbc91487292150b15bf5#77e71cba5566bf904783dbc91487292150b15bf5"
 dependencies = [
  "anyhow",
  "async-trait",
