@@ -115,8 +115,9 @@ impl AcmeClientConfig {
         )?);
 
         // DNS resolver
-        self.dns_options.cache_size = 0;
-        let dns_resolver = Resolver::new(self.dns_options);
+        self.dns_options.opts.cache_size = 0;
+        let dns_resolver = Resolver::new(self.dns_options)
+            .context("unable to create DNS resolver")?;
         let token_manager = Arc::new(TokenManagerDns::new(
             Arc::new(dns_resolver),
             cloudflare,

@@ -92,8 +92,9 @@ impl Validator {
             )));
         }
 
-        dns_opts.cache_size = 0;
-        let resolver = Resolver::new(dns_opts);
+        dns_opts.opts.cache_size = 0;
+        let resolver = Resolver::new(dns_opts)
+            .context("unable to create DNS resolver")?;
 
         let http_opts = ClientOptions::default();
         let http_resolver = SingleResolver::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
