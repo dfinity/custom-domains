@@ -50,14 +50,14 @@ clap = { version = "4.5.20", features = ["derive", "string", "env"] }
 derive-new = "0.7.0"
 fqdn = "0.5.2"
 hex = "0.4.3"
-hickory-resolver = "0.25"
+hickory-resolver = "0.26"
 humantime = "2.2.0"
-ic-bn-lib = { version = "0.1", features = [
+ic-bn-lib = { git = "https://github.com/mraszyk/ic-bn-lib", rev = "f9ef198ffc1aabf075621b303e0c99afe5504928", features = [
     "acme-dns",
     "cert-providers",
     "custom-domains",
 ] }
-ic-bn-lib-common = "0.1"
+ic-bn-lib-common = { git = "https://github.com/mraszyk/ic-bn-lib", rev = "f9ef198ffc1aabf075621b303e0c99afe5504928" }
 ic-cdk = "0.17"
 ic-cdk-timers = "0.11"
 ic-custom-domains-backend = { version = "0.0.0-git", path = "./backend" }
