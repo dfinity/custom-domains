@@ -68,7 +68,7 @@ ic-http-types = "0.1.0"
 ic-stable-structures = "0.7.0"
 mockall = "0.13.1"
 pem = "3.0.5"
-pocket-ic = { git = "https://github.com/dfinity/ic", rev = "855c5ea6fd70582ef28bc7b1182fe42dad51a829" }
+pocket-ic = "=12.0.0"
 prometheus = "0.14.0"
 rcgen = { version = "0.14" }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
