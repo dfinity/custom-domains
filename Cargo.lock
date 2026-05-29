@@ -160,6 +160,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 
 [[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "ascii-canvas"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -779,7 +785,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 [[package]]
 name = "cloudflare"
 version = "0.14.1"
-source = "git+https://github.com/mraszyk/cloudflare-rs?rev=972f379e51ac923be9db648a75b101892a89453c#972f379e51ac923be9db648a75b101892a89453c"
+source = "git+https://github.com/dfinity/cloudflare-rs?rev=7d10dca3b339e8a29cb663341dbc802fe51bf322#7d10dca3b339e8a29cb663341dbc802fe51bf322"
 dependencies = [
  "chrono",
  "http",
@@ -1390,15 +1396,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "encoding_rs"
-version = "0.8.35"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "enum-as-inner"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1692,16 +1689,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gethostname"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
-dependencies = [
- "rustix",
- "windows-link",
-]
-
-[[package]]
 name = "getrandom"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1849,18 +1836,6 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
-]
-
-[[package]]
-name = "hashify"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd1246c0e5493286aeb2dde35b1f4eb9c4ce00e628641210a5e553fc001a1f26"
-dependencies = [
- "indexmap 2.13.0",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -2256,11 +2231,12 @@ dependencies = [
 [[package]]
 name = "ic-bn-lib"
 version = "0.0.0-git"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=f9ef198ffc1aabf075621b303e0c99afe5504928#f9ef198ffc1aabf075621b303e0c99afe5504928"
+source = "git+https://github.com/dfinity/ic-bn-lib?rev=43c60f0810c8c110ad69f1ea67337538a365faea#43c60f0810c8c110ad69f1ea67337538a365faea"
 dependencies = [
  "ahash",
  "anyhow",
  "arc-swap",
+ "arrayvec 0.7.6",
  "async-channel 2.5.0",
  "async-trait",
  "axum",
@@ -2292,8 +2268,6 @@ dependencies = [
  "indoc",
  "instant-acme",
  "itertools 0.14.0",
- "mail-auth",
- "mail-parser",
  "moka",
  "nix",
  "ppp",
@@ -2312,7 +2286,6 @@ dependencies = [
  "serde_yaml_ng",
  "sha1",
  "sha2 0.11.0",
- "smtp-proto",
  "socket2 0.6.3",
  "strum 0.28.0",
  "strum_macros 0.28.0",
@@ -2339,8 +2312,8 @@ dependencies = [
 
 [[package]]
 name = "ic-bn-lib-common"
-version = "0.1.8"
-source = "git+https://github.com/mraszyk/ic-bn-lib?rev=f9ef198ffc1aabf075621b303e0c99afe5504928#f9ef198ffc1aabf075621b303e0c99afe5504928"
+version = "0.2.1"
+source = "git+https://github.com/dfinity/ic-bn-lib?rev=43c60f0810c8c110ad69f1ea67337538a365faea#43c60f0810c8c110ad69f1ea67337538a365faea"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3225,44 +3198,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
-name = "mail-auth"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c99f0db3f1292f72149bd50fcca0354d243defda0d26532ef7281ca716c77592"
-dependencies = [
- "aws-lc-rs",
- "flate2",
- "hashify",
- "hickory-resolver 0.26.1",
- "mail-builder",
- "mail-parser",
- "quick-xml",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "zip 8.6.0",
-]
-
-[[package]]
-name = "mail-builder"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900998f307338c4013a28ab14d760b784067324b164448c6d98a89e44810473b"
-dependencies = [
- "gethostname",
-]
-
-[[package]]
-name = "mail-parser"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8a2420e9ce11c2b0583ca97ddff7ab2398c8a613154e9b72e3bafdbf767f1d7"
-dependencies = [
- "encoding_rs",
- "hashify",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3877,7 +3812,7 @@ version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d22152487193190344590e4f30e219cf3fe140d9e7a3fdb683d82aa2c5f4156"
 dependencies = [
- "arrayvec",
+ "arrayvec 0.5.2",
  "typed-arena",
  "unicode-width 0.2.2",
 ]
@@ -3974,15 +3909,6 @@ dependencies = [
  "wasi",
  "web-sys",
  "winapi",
-]
-
-[[package]]
-name = "quick-xml"
-version = "0.39.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
@@ -4161,7 +4087,6 @@ checksum = "10b99e0098aa4082912d4c649628623db6aba77335e4f4569ff5083a6448b32e"
 dependencies = [
  "aws-lc-rs",
  "pem",
- "ring",
  "rustls-pki-types",
  "time",
  "x509-parser 0.18.1",
@@ -4993,12 +4918,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "smtp-proto"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97c9f5dd7ec5cc6d743f33fcb96de4eb91bb1cc51c5e0ba40cb285a9012043da"
-
-[[package]]
 name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5721,12 +5640,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
-name = "typed-path"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
-
-[[package]]
 name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5871,7 +5784,7 @@ dependencies = [
  "serde_json",
  "url",
  "utoipa",
- "zip 3.0.0",
+ "zip",
 ]
 
 [[package]]
@@ -6575,7 +6488,6 @@ dependencies = [
  "lazy_static",
  "nom",
  "oid-registry",
- "ring",
  "rusticata-macros",
  "thiserror 2.0.18",
  "time",
@@ -6729,19 +6641,6 @@ dependencies = [
  "indexmap 2.13.0",
  "memchr",
  "zopfli",
-]
-
-[[package]]
-name = "zip"
-version = "8.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
-dependencies = [
- "crc32fast",
- "flate2",
- "indexmap 2.13.0",
- "memchr",
- "typed-path",
 ]
 
 [[package]]

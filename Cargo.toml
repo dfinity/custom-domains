@@ -52,12 +52,12 @@ fqdn = "0.5.2"
 hex = "0.4.3"
 hickory-resolver = "0.26"
 humantime = "2.2.0"
-ic-bn-lib = { git = "https://github.com/mraszyk/ic-bn-lib", rev = "f9ef198ffc1aabf075621b303e0c99afe5504928", features = [
+ic-bn-lib = { git = "https://github.com/dfinity/ic-bn-lib", rev = "43c60f0810c8c110ad69f1ea67337538a365faea", features = [
     "acme-dns",
     "cert-providers",
     "custom-domains",
 ] }
-ic-bn-lib-common = { git = "https://github.com/mraszyk/ic-bn-lib", rev = "f9ef198ffc1aabf075621b303e0c99afe5504928" }
+ic-bn-lib-common = { git = "https://github.com/dfinity/ic-bn-lib", rev = "43c60f0810c8c110ad69f1ea67337538a365faea" }
 ic-cdk = "0.17"
 ic-cdk-timers = "0.11"
 ic-custom-domains-backend = { version = "0.0.0-git", path = "./backend" }
@@ -70,7 +70,11 @@ mockall = "0.13.1"
 pem = "3.0.5"
 pocket-ic = "=12.0.0"
 prometheus = "0.14.0"
-rcgen = { version = "0.14" }
+rcgen = { version = "0.14.3", default-features = false, features = [
+    "crypto",
+    "pem",
+    "aws_lc_rs",
+] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_cbor = "0.11.2"
