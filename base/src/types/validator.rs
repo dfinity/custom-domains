@@ -7,8 +7,8 @@ use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use candid::Principal;
 use fqdn::{FQDN, fqdn};
-use hickory_resolver::proto::rr::RecordType;
 use ic_bn_lib::{
+    hickory_resolver::proto::rr::RecordType,
     http::{
         ReqwestClient,
         dns::{Resolver, SingleResolver},
@@ -92,8 +92,8 @@ impl Validator {
             )));
         }
 
-        dns_opts.cache_size = 0;
-        let resolver = Resolver::new(dns_opts);
+        dns_opts.opts.cache_size = 0;
+        let resolver = Resolver::new(dns_opts).context("unable to create Resolver")?;
 
         let http_opts = ClientOptions::default();
         let http_resolver = SingleResolver::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
@@ -205,7 +205,7 @@ impl Validator {
             Ok(v) => {
                 // If there are records - check that all of them belong to the delegation domain
                 for rr in v {
-                    let name = rr.name().to_lowercase().to_ascii();
+                    let name = rr.name.to_lowercase().to_ascii();
                     debug!("got RR: '{name}'");
 
                     let name = FQDN::from_ascii_str(&name)
@@ -262,7 +262,7 @@ impl Validator {
         records
             .iter()
             .any(|rr| {
-                let cname_dst = rr.data().to_string();
+                let cname_dst = rr.data.to_string();
                 debug!("got CNAME dst: '{cname_dst}'");
                 cname_dst == expected_cname_dst
             })
@@ -307,7 +307,7 @@ impl Validator {
             return Err(ValidationError::MultipleDnsTxtCanisterId { src: hostname });
         }
 
-        let canister_id = records[0].data().to_string();
+        let canister_id = records[0].data.to_string();
         debug!("got canister ID: '{canister_id}'");
 
         // Parse canister ID

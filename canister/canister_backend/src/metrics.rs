@@ -1,17 +1,17 @@
 use std::{borrow::BorrowMut, cell::RefCell};
 
-use ic_cdk::api::{
-    canister_balance,
-    stable::{stable_size, WASM_PAGE_SIZE_IN_BYTES},
+use ic_cdk::{
+    api::canister_cycle_balance,
+    stable::{WASM_PAGE_SIZE_IN_BYTES, stable_size},
 };
 use ic_http_types::{HttpResponse, HttpResponseBuilder};
 use prometheus::{
-    register_counter_vec_with_registry, register_gauge_vec_with_registry,
-    register_gauge_with_registry, register_int_gauge_with_registry, CounterVec, Encoder, Gauge,
-    GaugeVec, IntGauge, Registry, Result as PrometheusResult, TextEncoder,
+    CounterVec, Encoder, Gauge, GaugeVec, IntGauge, Registry, Result as PrometheusResult,
+    TextEncoder, register_counter_vec_with_registry, register_gauge_vec_with_registry,
+    register_gauge_with_registry, register_int_gauge_with_registry,
 };
 
-use crate::state::{with_state, UtcTimestamp};
+use crate::state::{UtcTimestamp, with_state};
 
 pub const TRY_ADD_TASK_FUNC: &str = "try_add_task";
 pub const FETCH_NEXT_TASK_FUNC: &str = "fetch_next_task";
@@ -141,7 +141,7 @@ pub fn recompute_metrics(now: UtcTimestamp) {
 
         let mut cell = cell.borrow_mut();
         cell.stable_memory_size.borrow_mut().set(memory);
-        cell.cycle_balance.set(canister_balance() as f64);
+        cell.cycle_balance.set(canister_cycle_balance() as f64);
 
         let stats = with_state(|state| state.compute_stats(now));
 

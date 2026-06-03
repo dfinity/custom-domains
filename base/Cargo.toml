@@ -22,7 +22,6 @@ chrono = { workspace = true }
 clap = { workspace = true }
 derive-new = { workspace = true }
 fqdn = { workspace = true }
-hickory-resolver = { workspace = true }
 humantime = { workspace = true }
 ic-bn-lib = { workspace = true }
 ic-bn-lib-common = { workspace = true }
@@ -38,6 +37,3 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true, optional = true }
 x509-parser = { workspace = true }
-
-[dev-dependencies]
-rcgen = { workspace = true }

@@ -1,6 +1,6 @@
 use ic_cdk::{
-    api::{call::accept_message, time},
-    caller, init, inspect_message, post_upgrade, query, trap, update,
+    api::{accept_message, msg_caller, time},
+    init, inspect_message, post_upgrade, query, trap, update,
 };
 use ic_cdk_timers::set_timer_interval;
 use ic_custom_domains_canister_api::{
@@ -8,8 +8,8 @@ use ic_custom_domains_canister_api::{
     GetDomainStatusError, GetDomainStatusResult, GetLastChangeTimeError, GetLastChangeTimeResult,
     HasNextTaskError, HasNextTaskResult, InitArg, InputTask, ListCertificatesPageError,
     ListCertificatesPageInput, ListCertificatesPageResult, ListDomainsPageError,
-    ListDomainsPageInput, ListDomainsPageResult, STALE_DOMAINS_CLEANUP_INTERVAL,
-    SubmitTaskError, SubmitTaskResult, TaskResult, TryAddTaskError, TryAddTaskResult,
+    ListDomainsPageInput, ListDomainsPageResult, STALE_DOMAINS_CLEANUP_INTERVAL, SubmitTaskError,
+    SubmitTaskResult, TaskResult, TryAddTaskError, TryAddTaskResult,
 };
 use ic_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 
@@ -27,7 +27,7 @@ pub mod storage;
 #[inspect_message]
 fn inspect_message() {
     if let Some(authorized_principal) = AUTHORIZED_PRINCIPAL.with(|p| *p.borrow())
-        && authorized_principal != caller()
+        && authorized_principal != msg_caller()
     {
         trap("message_inspection_failed: unauthorized call");
     }
@@ -41,7 +41,7 @@ pub fn get_time_secs() -> UtcTimestamp {
 
 fn validate_caller<T>(unauthorized_error: T) -> Result<(), T> {
     if let Some(authorized_principal) = AUTHORIZED_PRINCIPAL.with(|p| *p.borrow())
-        && authorized_principal != caller()
+        && authorized_principal != msg_caller()
     {
         return Err(unauthorized_error);
     }
@@ -54,7 +54,7 @@ fn init(init_arg: InitArg) {
     // Initialize the authorized principal
     AUTHORIZED_PRINCIPAL.with(|p| *p.borrow_mut() = init_arg.authorized_principal);
 
-    set_timer_interval(STALE_DOMAINS_CLEANUP_INTERVAL, move || {
+    set_timer_interval(STALE_DOMAINS_CLEANUP_INTERVAL, async move || {
         let now = get_time_secs();
         with_state_mut(|state| state.cleanup_stale_domains(now));
     });
@@ -131,7 +131,7 @@ async fn list_domains_page(input: ListDomainsPageInput) -> ListDomainsPageResult
     with_state(|state| state.list_domains_page(input))
 }
 
-#[query(decoding_quota = 10000)]
+#[query]
 fn http_request(request: HttpRequest) -> HttpResponse {
     let now = get_time_secs();
     match request.path() {
