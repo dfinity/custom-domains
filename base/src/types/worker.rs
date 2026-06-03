@@ -849,13 +849,13 @@ mod tests {
     use async_trait::async_trait;
     use candid::Principal;
     use fqdn::FQDN;
+    use ic_bn_lib::rcgen::{CertificateParams, DnType, KeyPair};
     use ic_bn_lib::tls::acme::instant_acme::RevocationRequest;
     use ic_bn_lib_common::{
         traits::acme::AcmeCertificateClient,
         types::acme::{AcmeCert, Error as AcmeError},
     };
     use prometheus::Registry;
-    use rcgen::{CertificateParams, DnType, KeyPair};
     use std::{str::FromStr, sync::Arc, time::Duration};
     use tokio::{spawn, task, time::sleep};
     use tokio_util::sync::CancellationToken;
