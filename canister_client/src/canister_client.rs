@@ -283,8 +283,13 @@ impl Repository for CanisterClient {
                     RepositoryError::InternalError(anyhow!("Invalid domain from canister: {err}"))
                 })?;
 
-                let task =
-                    ScheduledTask::new(api_task.kind.into(), domain, api_task.id, certificate);
+                let task = ScheduledTask::new(
+                    api_task.kind.into(),
+                    domain,
+                    api_task.id,
+                    certificate,
+                    api_task.wildcard.unwrap_or(false),
+                );
                 Ok(Some(task))
             }
         }

@@ -61,6 +61,11 @@ pub struct DomainEntry {
     pub not_before: Option<UtcTimestamp>,
     // Certificate validity period end (as UNIX timestamp)
     pub not_after: Option<UtcTimestamp>,
+    // Whether to also issue a `*.domain` wildcard SAN in the certificate.
+    // `#[serde(default)]` keeps existing stable-storage entries deserializable
+    // after upgrade (they predate this field and default to `false`).
+    #[serde(default)]
+    pub wildcard: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, IntoStaticStr)]
@@ -267,6 +272,7 @@ impl CanisterState {
                     domain,
                     now,
                     domain_entry.enc_cert,
+                    Some(domain_entry.wildcard),
                 )))
             }
             None => Ok(None),
@@ -427,6 +433,13 @@ impl CanisterState {
         let domain = task.domain;
         let domain_entry = match self.domains.get(&domain) {
             Some(mut entry) => {
+                // The wildcard intent is only (re)set when issuing a certificate.
+                // Update/Delete/Renew must preserve the stored value, otherwise a later
+                // canister-generated Renew would drop the wildcard SAN.
+                if task.kind == TaskKind::Issue {
+                    entry.wildcard = task.wildcard.unwrap_or(false);
+                }
+
                 // Prevent scheduling concurrent tasks for domain if:
                 // - there is already a task for the domain that is not a renewal task
                 // - there is a renewal task for the domain that is not yet near expiration or already taken
@@ -470,6 +483,7 @@ impl CanisterState {
 
                 let mut entry = DomainEntry::new(Some(task.kind), now);
                 entry.task_created_at = Some(now);
+                entry.wildcard = task.wildcard.unwrap_or(false);
                 entry
             }
         };
@@ -683,6 +697,7 @@ impl CanisterState {
                     task_created_at: e.task_created_at,
                     not_before: e.not_before,
                     not_after: e.not_after,
+                    wildcard: Some(e.wildcard),
                 }
             })
             .collect();
@@ -860,6 +875,7 @@ impl From<DomainEntry> for ic_custom_domains_canister_api::DomainEntry {
             enc_priv_key: entry.enc_priv_key.clone(),
             not_before: entry.not_before,
             not_after: entry.not_after,
+            wildcard: Some(entry.wildcard),
         }
     }
 }
@@ -870,6 +886,59 @@ mod tests {
     use candid::Principal;
     use ic_custom_domains_canister_api::IssueCertificateOutput;
     use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+
+    /// Mirrors the `DomainEntry` layout *before* the `wildcard` field was added, so we can
+    /// produce stable-storage bytes exactly as a pre-upgrade canister would have written them.
+    #[derive(Serialize)]
+    struct LegacyDomainEntry {
+        task: Option<TaskKind>,
+        last_fail_time: Option<UtcTimestamp>,
+        last_failure_reason: Option<TaskFailReason>,
+        failures_count: u32,
+        rate_limit_failures_count: u32,
+        canister_id: Option<Principal>,
+        created_at: UtcTimestamp,
+        taken_at: Option<UtcTimestamp>,
+        task_created_at: Option<UtcTimestamp>,
+        enc_cert: Option<Vec<u8>>,
+        enc_priv_key: Option<Vec<u8>>,
+        not_before: Option<UtcTimestamp>,
+        not_after: Option<UtcTimestamp>,
+    }
+
+    /// A `DomainEntry` persisted before the `wildcard` field existed must still deserialize
+    /// after upgrade, defaulting `wildcard` to `false` (guards the `#[serde(default)]`).
+    #[test]
+    fn test_domain_entry_deserializes_legacy_bytes_without_wildcard() {
+        let legacy = LegacyDomainEntry {
+            task: Some(TaskKind::Issue),
+            last_fail_time: None,
+            last_failure_reason: None,
+            failures_count: 3,
+            rate_limit_failures_count: 1,
+            canister_id: Some(Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap()),
+            created_at: 1000,
+            taken_at: Some(2000),
+            task_created_at: Some(1500),
+            enc_cert: Some(b"cert".to_vec()),
+            enc_priv_key: Some(b"key".to_vec()),
+            not_before: Some(0),
+            not_after: Some(9999),
+        };
+
+        // Serialize using the same CBOR codec the `Storable` impl uses.
+        let legacy_bytes = to_vec(&legacy).expect("legacy serialization failed");
+
+        // Deserialize through the production `Storable` path.
+        let entry = DomainEntry::from_bytes(Cow::Owned(legacy_bytes));
+
+        assert!(!entry.wildcard, "legacy entries must default wildcard to false");
+        // Sanity check that the rest of the fields round-tripped correctly.
+        assert_eq!(entry.task, Some(TaskKind::Issue));
+        assert_eq!(entry.failures_count, 3);
+        assert_eq!(entry.created_at, 1000);
+        assert_eq!(entry.enc_cert, Some(b"cert".to_vec()));
+    }
 
     fn create_test_empty_state() -> CanisterState {
         let memory_manager = MemoryManager::init(DefaultMemoryImpl::default());
@@ -1435,6 +1504,7 @@ mod tests {
             let task = InputTask {
                 domain: domain_name.clone(),
                 kind: TaskKind::Issue,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(result.is_ok());
@@ -1453,10 +1523,54 @@ mod tests {
             let task = InputTask {
                 domain: "new.example.com".to_string(),
                 kind: TaskKind::Update,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(matches!(result, Err(TryAddTaskError::DomainNotFound(_))));
         }
+    }
+
+    #[test]
+    fn test_try_add_task_wildcard_intent() {
+        let mut state = create_test_empty_state();
+        let now = 1000;
+
+        // Issuing with wildcard = true stores the intent on a new entry.
+        let domain = "wildcard.example.com".to_string();
+        state
+            .try_add_task(
+                InputTask {
+                    domain: domain.clone(),
+                    kind: TaskKind::Issue,
+                    wildcard: Some(true),
+                },
+                now,
+            )
+            .expect("issue task should be accepted");
+        assert!(state.domains.get(&domain).unwrap().wildcard);
+
+        // A later Update (which the backend submits with wildcard = Some(false)) must
+        // NOT clobber the stored wildcard intent, otherwise a subsequent canister-
+        // generated Renew would re-issue without the wildcard SAN.
+        let mut entry = state.domains.get(&domain).unwrap();
+        entry.task = None; // simulate the issue task having completed
+        entry.enc_cert = Some(b"cert".to_vec()); // Update requires an existing certificate
+        state.domains.insert(domain.clone(), entry);
+
+        state
+            .try_add_task(
+                InputTask {
+                    domain: domain.clone(),
+                    kind: TaskKind::Update,
+                    wildcard: Some(false),
+                },
+                now,
+            )
+            .expect("update task should be accepted");
+        assert!(
+            state.domains.get(&domain).unwrap().wildcard,
+            "Update must preserve the stored wildcard intent"
+        );
     }
 
     #[test]
@@ -1474,6 +1588,7 @@ mod tests {
             let task = InputTask {
                 domain: domain.clone(),
                 kind: TaskKind::Update,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(matches!(
@@ -1492,6 +1607,7 @@ mod tests {
             let task = InputTask {
                 domain: domain.clone(),
                 kind: task_kind,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(matches!(
@@ -1524,6 +1640,7 @@ mod tests {
             let task = InputTask {
                 domain: domain.clone(),
                 kind: TaskKind::Update,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(result.is_ok());
@@ -1548,6 +1665,7 @@ mod tests {
             let task = InputTask {
                 domain: "issue.com".to_string(),
                 kind: TaskKind::Issue,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(result.is_ok());
@@ -1568,6 +1686,7 @@ mod tests {
             let task = InputTask {
                 domain: "update.com".to_string(),
                 kind: TaskKind::Update,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(result.is_ok());
@@ -1588,6 +1707,7 @@ mod tests {
             let task = InputTask {
                 domain: "delete.com".to_string(),
                 kind: TaskKind::Delete,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(result.is_ok());
@@ -1608,6 +1728,7 @@ mod tests {
             let task = InputTask {
                 domain: "renew.com".to_string(),
                 kind: TaskKind::Renew,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             assert!(result.is_ok());
@@ -1634,6 +1755,7 @@ mod tests {
             let task = InputTask {
                 domain: "update.com".to_string(),
                 kind: TaskKind::Update,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             // Should fail because certificate is required for Update
@@ -1654,6 +1776,7 @@ mod tests {
             let task = InputTask {
                 domain: "delete.com".to_string(),
                 kind: TaskKind::Delete,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             // Should succeed as Delete can work with just canister_id
@@ -1675,6 +1798,7 @@ mod tests {
             let task = InputTask {
                 domain: "issue.com".to_string(),
                 kind: TaskKind::Issue,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             // Should fail because Issue on already registered domain is not allowed
@@ -1696,6 +1820,7 @@ mod tests {
             let task = InputTask {
                 domain: "renew.com".to_string(),
                 kind: TaskKind::Renew,
+                wildcard: None,
             };
             let result = state.try_add_task(task, now);
             // Should succeed because Renew on registered domain is allowed
@@ -1733,10 +1858,12 @@ mod tests {
         let task_1 = InputTask {
             domain: "task1.com".to_string(),
             kind: TaskKind::Issue,
+            wildcard: None,
         };
         let task_2 = InputTask {
             domain: "task2.com".to_string(),
             kind: TaskKind::Issue,
+            wildcard: None,
         };
         state
             .try_add_task(task_1, now)
@@ -1752,6 +1879,7 @@ mod tests {
             "task1.com".to_string(),
             now,
             None,
+            Some(false),
         ));
         assert_eq!(task, expected_task);
         let task = state.fetch_next_task(now).unwrap();
@@ -1760,6 +1888,7 @@ mod tests {
             "task2.com".to_string(),
             now,
             None,
+            Some(false),
         ));
         assert_eq!(task, expected_task);
         let task = state.fetch_next_task(now).unwrap();
@@ -1788,6 +1917,7 @@ mod tests {
             "renewal.com".to_string(),
             now - 3000,
             Some(b"cert_data".to_vec()),
+            Some(false),
         ));
         assert_eq!(result, expected_task);
     }
@@ -2206,10 +2336,12 @@ mod tests {
         let task1 = InputTask {
             domain: "example.com".to_string(),
             kind: TaskKind::Issue,
+            wildcard: None,
         };
         let task2 = InputTask {
             domain: "example1.com".to_string(),
             kind: TaskKind::Issue,
+            wildcard: None,
         };
 
         // First task should succeed

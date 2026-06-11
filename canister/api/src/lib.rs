@@ -79,6 +79,8 @@ pub enum TaskKind {
 pub struct InputTask {
     pub kind: TaskKind,
     pub domain: String,
+    // Whether to also include a `*.domain` wildcard SAN in the certificate
+    pub wildcard: Option<bool>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Debug, Clone, PartialEq, Eq, new)]
@@ -87,6 +89,8 @@ pub struct ScheduledTask {
     pub domain: String,
     pub id: TaskId,
     pub enc_cert: Option<Vec<u8>>,
+    // Whether to also include a `*.domain` wildcard SAN in the certificate
+    pub wildcard: Option<bool>,
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
@@ -167,6 +171,8 @@ pub struct DomainEntry {
     pub not_before: Option<UtcTimestamp>,
     // Certificate validity period end (as UNIX timestamp)
     pub not_after: Option<UtcTimestamp>,
+    // Whether the certificate also includes a `*.domain` wildcard SAN
+    pub wildcard: Option<bool>,
 }
 
 /// Domain entry as returned by list_domains_page: includes domain name and all entry fields except enc_cert and enc_priv_key.
@@ -185,6 +191,7 @@ pub struct ListedDomainEntry {
     pub task_created_at: Option<UtcTimestamp>,
     pub not_before: Option<UtcTimestamp>,
     pub not_after: Option<UtcTimestamp>,
+    pub wildcard: Option<bool>,
 }
 
 #[derive(

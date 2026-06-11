@@ -80,7 +80,11 @@ impl TestEnv {
         domain: String,
         kind: TaskKind,
     ) -> anyhow::Result<TryAddTaskResult> {
-        let task = InputTask { domain, kind };
+        let task = InputTask {
+            domain,
+            kind,
+            wildcard: None,
+        };
         let arg = Encode!(&task)?;
 
         let result = self
