@@ -420,7 +420,7 @@ async fn wildcard_domain_e2e(ctx: &TestContext) -> anyhow::Result<()> {
     let registered_domains = ctx.canister_repository.all_registrations(false).await?;
     let registered = registered_domains
         .into_iter()
-        .find(|r| r.domain.to_string() == domain)
+        .find(|r| r.domain == domain)
         .with_context(|| format!("registered wildcard domain {domain} not found"))?;
 
     let sans = extract_all_sans_from_cert(registered.cert)?;
