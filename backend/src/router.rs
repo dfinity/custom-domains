@@ -201,9 +201,9 @@ mod tests {
         let subdomain_unicode = "тест.unicode.org";
 
         let expected_task_normal =
-            InputTask::new(TaskKind::Issue, FQDN::from_str(domain_normal).unwrap());
+            InputTask::new(TaskKind::Issue, FQDN::from_str(domain_normal).unwrap(), false);
         let expected_task_unicode =
-            InputTask::new(TaskKind::Issue, FQDN::from_str(subdomain_unicode).unwrap());
+            InputTask::new(TaskKind::Issue, FQDN::from_str(subdomain_unicode).unwrap(), false);
         mock_repository
             .expect_try_add_task()
             .withf(move |task| *task == expected_task_normal)
@@ -801,9 +801,9 @@ mod tests {
         let subdomain_unicode = "тест.unicode.org";
 
         let expected_task_normal =
-            InputTask::new(TaskKind::Update, FQDN::from_str(domain_normal).unwrap());
+            InputTask::new(TaskKind::Update, FQDN::from_str(domain_normal).unwrap(), false);
         let expected_task_unicode =
-            InputTask::new(TaskKind::Update, FQDN::from_str(subdomain_unicode).unwrap());
+            InputTask::new(TaskKind::Update, FQDN::from_str(subdomain_unicode).unwrap(), false);
         mock_repository
             .expect_try_add_task()
             .withf(move |task| *task == expected_task_normal)
@@ -905,9 +905,9 @@ mod tests {
         let subdomain_unicode = "тест.unicode.org";
 
         let expected_task_normal =
-            InputTask::new(TaskKind::Delete, FQDN::from_str(domain_normal).unwrap());
+            InputTask::new(TaskKind::Delete, FQDN::from_str(domain_normal).unwrap(), false);
         let expected_task_unicode =
-            InputTask::new(TaskKind::Delete, FQDN::from_str(subdomain_unicode).unwrap());
+            InputTask::new(TaskKind::Delete, FQDN::from_str(subdomain_unicode).unwrap(), false);
         mock_repository
             .expect_try_add_task()
             .withf(move |task| *task == expected_task_normal)

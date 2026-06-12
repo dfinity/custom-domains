@@ -25,6 +25,8 @@ type InputTask = record {
   kind: TaskKind;
   // Target domain for the task
   domain: text;
+  // Whether to also include a *.domain wildcard SAN in the certificate
+  wildcard: opt bool;
 };
 
 // Reasons why a task might fail
@@ -95,6 +97,8 @@ type ScheduledTask = record {
   id: TaskId;
   // Existing certificate (only for delete operation)
   enc_cert: opt blob;
+  // Whether to also include a *.domain wildcard SAN in the certificate
+  wildcard: opt bool;
 };
 
 // Status of a domain
@@ -132,6 +136,8 @@ type DomainEntry = record {
   not_before: opt UtcTimestamp;
   // Certificate validity period end (as UNIX timestamp)
   not_after: opt UtcTimestamp;
+  // Whether the certificate also includes a *.domain wildcard SAN
+  wildcard: opt bool;
 };
 
 // Domain entry as returned by list_domains_page: includes domain (FQDN) and entry fields except enc_cert and enc_priv_key. Field meaning/usage is the same as in DomainEntry.
@@ -148,6 +154,7 @@ type ListedDomainEntry = record {
   task_created_at: opt UtcTimestamp;
   not_before: opt UtcTimestamp;
   not_after: opt UtcTimestamp;
+  wildcard: opt bool;
 };
 
 // Current registration status of a custom domain

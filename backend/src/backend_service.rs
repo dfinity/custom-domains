@@ -25,11 +25,19 @@ pub struct BackendService {
 }
 
 impl BackendService {
-    /// Validates domain configuration and submits a task for further processing
-    pub async fn submit_task(&self, domain: &str, task: TaskKind) -> Result<Principal, ApiError> {
+    /// Validates domain configuration and submits a task for further processing.
+    ///
+    /// `wildcard` requests that the issued certificate also covers `*.domain`. It is
+    /// only meaningful for `Issue`; other task kinds should pass `false`.
+    pub async fn submit_task(
+        &self,
+        domain: &str,
+        task: TaskKind,
+        wildcard: bool,
+    ) -> Result<Principal, ApiError> {
         let fqdn = parse_domain(domain)?;
         let canister_id = self.validator.validate(&fqdn).await?;
-        let task = InputTask::new(task, fqdn);
+        let task = InputTask::new(task, fqdn, wildcard);
 
         match self.repository.try_add_task(task).await {
             Ok(()) => Ok(canister_id),
@@ -41,7 +49,7 @@ impl BackendService {
     pub async fn submit_delete_task(&self, domain: &str) -> Result<(), ApiError> {
         let fqdn = parse_domain(domain)?;
         self.validator.validate_deletion(&fqdn).await?;
-        let task = InputTask::new(TaskKind::Delete, fqdn);
+        let task = InputTask::new(TaskKind::Delete, fqdn, false);
 
         match self.repository.try_add_task(task).await {
             Ok(()) => Ok(()),

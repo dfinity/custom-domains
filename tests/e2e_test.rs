@@ -1,22 +1,22 @@
 use std::collections::HashSet;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
 use candid::Principal;
-use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
+use chacha20poly1305::{KeyInit, XChaCha20Poly1305, aead::OsRng};
 use fqdn::FQDN;
 use ic_bn_lib::{
-    ic_agent::{identity::BasicIdentity, Agent, Identity},
+    ic_agent::{Agent, Identity, identity::BasicIdentity},
     reqwest::{self, Url},
-    tests::pebble::{dns::TokenManagerPebble, Env},
+    tests::pebble::{Env, dns::TokenManagerPebble},
     tls::acme::client::ClientBuilder,
 };
 use ic_bn_lib_common::{
     traits::acme::{AcmeCertificateClient, TokenManager},
     types::acme::AcmeUrl,
 };
-use ic_custom_domains_backend::router::{create_router, RateLimitConfig};
+use ic_custom_domains_backend::router::{RateLimitConfig, create_router};
 use ic_custom_domains_base::{
     traits::{
         repository::Repository,
@@ -83,18 +83,23 @@ async fn e2e_pebble_test() -> anyhow::Result<()> {
     info!("Step 3: Downloading all certificates and verifying they match the requested domains");
     download_certificates_and_validate(&ctx, domains.clone()).await?;
 
-    info!("Step 4: Submitting half of the registered domains for deletion via the API calls");
+    info!("Step 4: Registering a wildcard domain and verifying its certificate carries both SANs");
+    wildcard_domain_e2e(&ctx).await?;
+
+    info!("Step 5: Submitting half of the registered domains for deletion via the API calls");
     let deleted_domains = delete_half_domains(&ctx, domains).await?;
 
-    info!("Step 5: Verifying all these domains are eventually deleted from the canister");
+    info!("Step 6: Verifying all these domains are eventually deleted from the canister");
     verify_domains_deletion(&ctx, deleted_domains).await?;
 
     info!(
-        "Step 6: Getting canister metrics and verifying the expected stats of domain registrations"
+        "Step 7: Getting canister metrics and verifying the expected stats of domain registrations"
     );
     verify_canister_metrics(&ctx).await?;
 
-    info!("Step 7: Getting workers metrics and verifying they all have processed more than one task each");
+    info!(
+        "Step 8: Getting workers metrics and verifying they all have processed more than one task each"
+    );
     verify_workers_metrics_with_retries(workers_metrics).await?;
 
     Ok(())
@@ -381,6 +386,61 @@ async fn download_certificates_and_validate(
     Ok(())
 }
 
+/// Registers a single domain with `wildcard=true`, waits for issuance, and verifies the
+/// resulting certificate contains both the bare domain and its `*.domain` wildcard SAN.
+///
+/// The domain is deleted again at the end so the canister state (and the registration
+/// counts asserted in later steps) is left exactly as it was before this step.
+async fn wildcard_domain_e2e(ctx: &TestContext) -> anyhow::Result<()> {
+    let domain = "wildcard-domain.example.com".to_string();
+    let wildcard_san = format!("*.{domain}");
+
+    let client = reqwest::Client::new();
+    let base_url = format!(
+        "http://{}:{}/v1/{domain}",
+        ctx.api_server_addr.ip(),
+        ctx.api_server_addr.port()
+    );
+
+    // Register the domain requesting a wildcard certificate
+    let response = client
+        .post(format!("{base_url}?wildcard=true"))
+        .send()
+        .await?;
+    assert!(
+        response.status().is_success(),
+        "wildcard registration request was rejected: {}",
+        response.status()
+    );
+
+    wait_for_all_tasks_completion(&ctx.canister_repository).await?;
+    verify_domains_registration(ctx, &vec![domain.clone()]).await?;
+
+    // Download the freshly issued certificate and verify both SANs are present
+    let registered_domains = ctx.canister_repository.all_registrations(false).await?;
+    let registered = registered_domains
+        .into_iter()
+        .find(|r| r.domain == domain)
+        .with_context(|| format!("registered wildcard domain {domain} not found"))?;
+
+    let sans = extract_all_sans_from_cert(registered.cert)?;
+    assert!(
+        sans.contains(&domain),
+        "certificate is missing the bare domain SAN {domain}; SANs: {sans:?}"
+    );
+    assert!(
+        sans.contains(&wildcard_san),
+        "certificate is missing the wildcard SAN {wildcard_san}; SANs: {sans:?}"
+    );
+
+    // Clean up so later registration-count assertions remain valid
+    let response = client.delete(&base_url).send().await?;
+    assert!(response.status().is_success());
+    verify_domains_deletion(ctx, vec![domain]).await?;
+
+    Ok(())
+}
+
 async fn delete_half_domains(
     ctx: &TestContext,
     domains: Vec<String>,
@@ -513,6 +573,12 @@ async fn verify_workers_metrics_with_retries(metrics: Arc<WorkerMetrics>) -> any
 }
 
 fn extract_domain_from_cert(cert: Vec<u8>) -> anyhow::Result<String> {
+    let cert_domains = extract_all_sans_from_cert(cert)?;
+    Ok(cert_domains[0].clone())
+}
+
+/// Extracts all DNS Subject Alternative Names from the first certificate in the PEM chain.
+fn extract_all_sans_from_cert(cert: Vec<u8>) -> anyhow::Result<Vec<String>> {
     // Parse certificate chain
     let pem_str =
         std::str::from_utf8(&cert).with_context(|| "Certificate contains invalid UTF-8")?;
@@ -527,7 +593,7 @@ fn extract_domain_from_cert(cert: Vec<u8>) -> anyhow::Result<String> {
     let (_, cert) = parse_x509_certificate(first_cert.contents())
         .with_context(|| "Failed to parse X509 certificate")?;
 
-    // Validate that issued certificate is for the requested domain
+    // Collect all DNS SANs from the issued certificate
     let subject_alt_names = cert
         .subject_alternative_name()?
         .map(|ext| &ext.value.general_names)
@@ -541,7 +607,7 @@ fn extract_domain_from_cert(cert: Vec<u8>) -> anyhow::Result<String> {
         })
         .collect();
 
-    Ok(cert_domains[0].clone())
+    Ok(cert_domains)
 }
 
 pub fn test_identity() -> BasicIdentity {

@@ -8,10 +8,19 @@ use crate::{
     },
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
+use serde::Deserialize;
 use tracing::warn;
+
+/// Query parameters for the domain registration endpoint.
+#[derive(Debug, Default, Deserialize)]
+pub struct CreateQuery {
+    /// When `true`, the issued certificate also covers `*.domain`.
+    #[serde(default)]
+    pub wildcard: bool,
+}
 
 fn log_error(err: &ApiError, domain: &str, operation: &str) {
     warn!(
@@ -30,7 +39,8 @@ fn log_error(err: &ApiError, domain: &str, operation: &str) {
         post,
         path = "/v1/{id}",
         params(
-            ("id" = String, Path, description = "Domain name to register")
+            ("id" = String, Path, description = "Domain name to register"),
+            ("wildcard" = Option<bool>, Query, description = "Also issue a *.domain wildcard SAN")
         ),
         responses(
             (status = 202, description = "Domain registration request accepted", body = crate::models::ApiResponse<CreateOrUpdateResponse>),
@@ -43,8 +53,12 @@ fn log_error(err: &ApiError, domain: &str, operation: &str) {
 pub async fn create_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
+    Query(query): Query<CreateQuery>,
 ) -> axum::response::Response {
-    match backend_service.submit_task(&domain, TaskKind::Issue).await {
+    match backend_service
+        .submit_task(&domain, TaskKind::Issue, query.wildcard)
+        .await
+    {
         Ok(canister_id) => success_response(
             StatusCode::ACCEPTED,
             CreateOrUpdateResponse {
@@ -91,7 +105,10 @@ pub async fn update_handler(
     State(backend_service): State<BackendService>,
     Path(domain): Path<String>,
 ) -> axum::response::Response {
-    match backend_service.submit_task(&domain, TaskKind::Update).await {
+    match backend_service
+        .submit_task(&domain, TaskKind::Update, false)
+        .await
+    {
         Ok(canister_id) => success_response(
             StatusCode::ACCEPTED,
             CreateOrUpdateResponse {

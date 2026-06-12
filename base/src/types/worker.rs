@@ -217,6 +217,7 @@ impl Worker {
         let task_id = task.task_id;
         let task_kind = task.kind;
         let certificate = task.cert;
+        let wildcard = task.wildcard;
 
         info!("Task execution started");
 
@@ -231,6 +232,7 @@ impl Worker {
                         self.acme_client.clone(),
                         task_id,
                         task_kind,
+                        wildcard,
                     )
                     .await
                 }
@@ -245,6 +247,7 @@ impl Worker {
                         self.acme_client.clone(),
                         task_id,
                         task_kind,
+                        wildcard,
                     )
                     .await;
 
@@ -614,12 +617,13 @@ async fn issue_task(
     acme_client: Arc<dyn AcmeCertificateClient>,
     task_id: UtcTimestamp,
     task_kind: TaskKind,
+    wildcard: bool,
 ) -> TaskResult {
     match validator.validate(&domain).await {
         Ok(canister_id) => {
             Span::current().record("canister_id", canister_id.to_string());
 
-            match issue_certificate(&domain, canister_id, acme_client).await {
+            match issue_certificate(&domain, canister_id, wildcard, acme_client).await {
                 Ok(output) => TaskResult::success(domain.clone(), output, task_id, task_kind),
                 Err(err) => {
                     let failure = match err.downcast_ref::<AcmeError>() {
@@ -644,13 +648,20 @@ async fn issue_task(
 async fn issue_certificate(
     domain: &FQDN,
     canister_id: Principal,
+    wildcard: bool,
     acme_client: Arc<dyn AcmeCertificateClient>,
 ) -> anyhow::Result<TaskOutput> {
     let domain_str = domain.to_string();
 
+    // Build the SAN list: always the bare domain, plus `*.domain` when wildcard is requested
+    let mut names = vec![domain_str.clone()];
+    if wildcard {
+        names.push(format!("*.{domain_str}"));
+    }
+
     // Issue certificate
     let certificate = acme_client
-        .issue(vec![domain_str.clone()], None)
+        .issue(names, None)
         .await
         .context("certificate issuance failed")?;
 
@@ -684,6 +695,10 @@ async fn issue_certificate(
 
     if !cert_domains.contains(&domain_str) {
         bail!("Certificate does not contain the requested domain: {domain_str}");
+    }
+
+    if wildcard && !cert_domains.contains(&format!("*.{domain_str}")) {
+        bail!("Certificate does not contain the requested wildcard domain: *.{domain_str}");
     }
 
     let validity = cert.validity();
@@ -925,6 +940,7 @@ mod tests {
                         FQDN::from_str("example.org").unwrap(),
                         123,
                         None,
+                        false,
                     )))
                 })
             });
@@ -1012,6 +1028,7 @@ mod tests {
                 FQDN::from_str("example.org").unwrap(),
                 123,
                 certificate.clone(),
+                false,
             );
 
             // Act
@@ -1068,6 +1085,7 @@ mod tests {
             FQDN::from_str("example.org").unwrap(),
             123,
             None,
+            false,
         );
 
         // Act
@@ -1117,6 +1135,7 @@ mod tests {
             FQDN::from_str("example.org").unwrap(),
             123,
             None,
+            false,
         );
 
         // Act
@@ -1160,6 +1179,7 @@ mod tests {
             FQDN::from_str("example.org").unwrap(),
             123,
             None,
+            false,
         );
 
         let task_result = TaskResult::success(
@@ -1251,6 +1271,7 @@ mod tests {
             FQDN::from_str("example.com").unwrap(),
             456,
             None,
+            false,
         );
 
         let task_result = TaskResult::failure(
@@ -1328,6 +1349,7 @@ mod tests {
             FQDN::from_str("example.net").unwrap(),
             123,
             None,
+            false,
         );
 
         let task_result = TaskResult::success(
@@ -1383,6 +1405,7 @@ mod tests {
             FQDN::from_str("example.org").unwrap(),
             123,
             Some(vec![]),
+            false,
         );
 
         let task_result = TaskResult::success(
