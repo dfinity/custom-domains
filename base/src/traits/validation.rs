@@ -20,8 +20,8 @@ pub enum ValidationError {
     #[error("missing DNS TXT record from {src} to a canister id")]
     MissingDnsTxtCanisterId { src: String },
     /// Multiple DNS TXT records found when only one is expected
-    #[error("multiple DNS TXT records for canister id at {src}")]
-    MultipleDnsTxtCanisterId { src: String },
+    #[error("multiple DNS TXT records for canister id at {src}: {records:?}")]
+    MultipleDnsTxtCanisterId { src: String, records: Vec<String> },
     /// DNS TXT record contains invalid canister ID
     #[error("invalid DNS TXT record from {src} to {id}")]
     InvalidDnsTxtCanisterId { src: String, id: String },
