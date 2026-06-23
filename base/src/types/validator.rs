@@ -11,7 +11,7 @@ use ic_bn_lib::{
     hickory_resolver::proto::rr::RecordType,
     http::{
         ReqwestClient,
-        dns::{Resolver, SingleResolver},
+        dns::{Resolver, SingleResolver, is_error_negative_lookup},
     },
     reqwest::{Method, Request, Url},
 };
@@ -182,7 +182,7 @@ impl Validator {
         match self.resolver.resolve(RecordType::TXT, &hostname).await {
             Ok(_) => Err(ValidationError::ExistingDnsTxtCanisterId { src: hostname }),
             Err(err) => {
-                if err.is_no_records_found() || err.is_nx_domain() {
+                if is_error_negative_lookup(&err) {
                     Ok(())
                 } else {
                     Err(ValidationError::UnexpectedError(anyhow!(
@@ -220,7 +220,7 @@ impl Validator {
             }
 
             Err(err) => {
-                if err.is_no_records_found() || err.is_nx_domain() {
+                if is_error_negative_lookup(&err) {
                     Ok(())
                 } else {
                     Err(ValidationError::UnexpectedError(anyhow!(
@@ -246,7 +246,7 @@ impl Validator {
             .resolve(RecordType::CNAME, &cname_src)
             .await
             .map_err(|err| {
-                if err.is_no_records_found() || err.is_nx_domain() {
+                if is_error_negative_lookup(&err) {
                     ValidationError::MissingDnsCname {
                         src: cname_src.clone(),
                         dst: expected_cname_dst.clone(),
@@ -261,6 +261,8 @@ impl Validator {
         // Validate expected CNAME record exists
         records
             .iter()
+            // Filter out non-CNAME records (e.g. RRSIG from DNSSEC)
+            .filter(|&x| x.data.record_type() == RecordType::CNAME)
             .any(|rr| {
                 let cname_dst = rr.data.to_string();
                 debug!("got CNAME dst: '{cname_dst}'");
@@ -287,7 +289,7 @@ impl Validator {
             .resolve(RecordType::TXT, &hostname)
             .await
             .map_err(|err| {
-                if err.is_no_records_found() || err.is_nx_domain() {
+                if is_error_negative_lookup(&err) {
                     ValidationError::MissingDnsTxtCanisterId {
                         src: hostname.clone(),
                     }
@@ -298,13 +300,23 @@ impl Validator {
                 }
             })?;
 
+        // Filter out non-TXT records (e.g. RRSIG from DNSSEC)
+        let records = records
+            .into_iter()
+            .filter(|x| x.data.record_type() == RecordType::TXT)
+            .collect::<Vec<_>>();
+
         // Make sure there's exactly one record
         if records.is_empty() {
             return Err(ValidationError::MissingDnsTxtCanisterId { src: hostname });
         }
 
         if records.len() > 1 {
-            return Err(ValidationError::MultipleDnsTxtCanisterId { src: hostname });
+            let records = records.into_iter().map(|x| x.data.to_string()).collect();
+            return Err(ValidationError::MultipleDnsTxtCanisterId {
+                src: hostname,
+                records,
+            });
         }
 
         let canister_id = records[0].data.to_string();
