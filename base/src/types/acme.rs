@@ -6,7 +6,10 @@ use ic_bn_lib::{
     reqwest::Url,
     tls::acme::{
         client::{Client, ClientBuilder},
-        dns::{TokenManagerDns, cloudflare::Cloudflare},
+        dns::{
+            TokenManagerDns,
+            cloudflare::{Cloudflare, DEFAULT_CLOUDFLARE_URL},
+        },
         instant_acme::AccountCredentials,
     },
 };
@@ -14,7 +17,6 @@ use ic_bn_lib_common::types::{acme::AcmeUrl, dns::Options as DnsOptions};
 
 const DEFAULT_POLL_ORDER_TIMEOUT: Duration = Duration::from_secs(140);
 const DEFAULT_POLL_TOKEN_TIMEOUT: Duration = Duration::from_secs(140);
-const DEFAULT_CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4/";
 
 /// Configuration for ACME client setup and certificate operations.
 pub struct AcmeClientConfig {

@@ -4,7 +4,7 @@ use candid::Principal;
 use clap::Args;
 use fqdn::FQDN;
 use humantime::parse_duration;
-use ic_bn_lib::reqwest::Url;
+use ic_bn_lib::{reqwest::Url, tls::acme::dns::cloudflare::DEFAULT_CLOUDFLARE_URL};
 use ic_bn_lib_common::types::acme::AcmeUrl;
 
 #[derive(Debug, Args)]
@@ -41,7 +41,7 @@ pub struct CustomDomainsCli {
     pub custom_domains_canister_refresh_interval: Duration,
 
     /// Cloudflare API URL
-    #[clap(env, long, default_value = "https://api.cloudflare.com/client/v4/")]
+    #[clap(env, long, default_value = DEFAULT_CLOUDFLARE_URL)]
     pub custom_domains_cloudflare_url: Url,
 
     /// Token to access Cloudflare API
