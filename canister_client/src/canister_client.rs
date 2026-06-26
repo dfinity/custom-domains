@@ -6,13 +6,13 @@
 use std::{
     str::FromStr,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use candid::{CandidType, Decode, Deserialize, Encode, Principal};
@@ -20,8 +20,8 @@ use derive_new::new;
 use fqdn::FQDN;
 use ic_bn_lib::ic_agent::Agent;
 use ic_bn_lib_common::{
-    traits::{custom_domains::ProvidesCustomDomains, tls::ProvidesCertificates, Run},
-    types::{tls::Pem, CustomDomain},
+    traits::{Run, custom_domains::ProvidesCustomDomains, tls::ProvidesCertificates},
+    types::{CustomDomain, tls::Pem},
 };
 use ic_custom_domains_base::{
     traits::{
@@ -409,6 +409,7 @@ impl Run for CanisterClient {
     #[instrument(skip_all, name = "canister_client")]
     async fn run(&self, token: CancellationToken) -> Result<(), anyhow::Error> {
         // Wait a bit until the rest is initialized
+        // TODO get rid of
         sleep(Duration::from_secs(15)).await;
 
         let mut interval_poll = interval(self.poll_interval);
