@@ -21,7 +21,7 @@ use fqdn::FQDN;
 use ic_bn_lib::ic_agent::Agent;
 use ic_bn_lib_common::{
     traits::{Run, custom_domains::ProvidesCustomDomains, tls::ProvidesCertificates},
-    types::{CustomDomain, tls::Pem},
+    types::{CustomDomain, DomainFlags, tls::Pem},
 };
 use ic_custom_domains_base::{
     traits::{
@@ -54,6 +54,8 @@ pub struct CanisterClient {
     certificate_cipher: Arc<dyn CiphersCertificates>,
     poll_interval: Duration,
     refresh_interval: Duration,
+    priority: u8,
+    custom_domain_flags: Option<DomainFlags>,
     #[new(default)]
     last_change_time: AtomicU64,
     #[new(default)]
@@ -124,6 +126,8 @@ impl CanisterClient {
                 name: d.domain,
                 canister_id: d.canister_id,
                 timestamp: 0,
+                priority: self.priority,
+                flags: self.custom_domain_flags,
             });
         }
 

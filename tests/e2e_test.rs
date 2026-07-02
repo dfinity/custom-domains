@@ -202,12 +202,12 @@ async fn setup_test_environment() -> anyhow::Result<(TestContext, Arc<WorkerMetr
         cipher,
         Duration::ZERO,
         Duration::ZERO,
+        0,
+        None,
     ));
 
     let prometheus_registry = Registry::new_custom(Some("custom_domains".into()), None).unwrap();
-
     let workers_metrics = Arc::new(WorkerMetrics::new(&prometheus_registry));
-
     let validator = Arc::new(MockValidator);
 
     spawn_workers(
