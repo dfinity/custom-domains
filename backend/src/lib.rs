@@ -11,12 +11,12 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use axum::Router;
-use base64::{prelude::BASE64_STANDARD, Engine};
+use base64::{Engine, prelude::BASE64_STANDARD};
 use chacha20poly1305::Key;
 use ic_bn_lib::{
-    ic_agent::{identity::Secp256k1Identity, Agent},
+    ic_agent::{Agent, identity::Secp256k1Identity},
     reqwest,
     tls::acme::instant_acme::AccountCredentials,
 };
@@ -35,7 +35,7 @@ use prometheus::Registry;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
 
-use crate::router::{create_router, RateLimitConfig};
+use crate::router::{RateLimitConfig, create_router};
 
 /// Sets up everything required to run Custom Domains.
 /// Returns Worker, Axum Router and a CanisterClient to access data.
@@ -107,6 +107,8 @@ pub async fn setup(
         cipher,
         cli.custom_domains_canister_poll_interval,
         cli.custom_domains_canister_refresh_interval,
+        0,
+        None,
     ));
 
     let acme_client = {

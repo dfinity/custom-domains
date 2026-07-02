@@ -1,8 +1,8 @@
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
-use chacha20poly1305::{aead::OsRng, KeyInit, XChaCha20Poly1305};
+use chacha20poly1305::{KeyInit, XChaCha20Poly1305, aead::OsRng};
 use ic_bn_lib::ic_agent::Agent;
-use ic_custom_domains_backend::router::{create_router, RateLimitConfig};
+use ic_custom_domains_backend::router::{RateLimitConfig, create_router};
 use ic_custom_domains_base::types::{
     acme::AcmeClientConfig,
     cipher::CertificateCipher,
@@ -45,6 +45,8 @@ async fn main() -> anyhow::Result<()> {
         cipher,
         Duration::ZERO,
         Duration::ZERO,
+        0,
+        None,
     ));
     let validator = Arc::new(Validator::default());
 
