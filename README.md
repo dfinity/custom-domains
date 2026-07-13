@@ -1,3 +1,7 @@
+# Repository archived
+
+All the functionality was moved into [ic-bn-lib](https://github.com/dfinity/ic-bn-lib) repository.
+
 # Custom Domains for Internet Computer
 
 An automated SSL certificate management system enabling registration of custom domains for canisters on the Internet Computer (IC) using the ACME protocol and Let's Encrypt.
